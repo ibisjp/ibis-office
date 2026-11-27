@@ -1552,7 +1552,7 @@ impl SlideEditor {
         if show.at_end {
             return;
         }
-        let Some(after) = self.document.presentation().slide(self.current_slide).and_then(|s| s.transition.as_ref()).and_then(|t| t.after.map(|a| a + t.duration)) else { return };
+        let Some(after) = self.document.presentation().slide(self.current_slide).and_then(|s| s.transition.as_ref()).and_then(|t| t.after.map(|a| a + t.played_ms())) else { return };
         let shown = show.shown;
         cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(std::time::Duration::from_millis(after as u64)).await;
@@ -1765,7 +1765,9 @@ impl SlideEditor {
             if clock.as_ref().is_none_or(|(played, _)| *played != show.played) {
                 *clock = Some((show.played, crate::clock::Instant::now()));
             }
-            show.anim_at.unwrap_or_else(|| clock.as_ref().map_or(0.0, |(_, at)| at.elapsed().as_secs_f32() * 1000.0))
+            // A slide that comes in by a transition plays its animations after it (PowerPoint, K0071): the time counts from its end.
+            let transition_ms = show.came_from.and_then(|id| self.presentation().slide(id)).and_then(|_| slide.transition.as_ref()).map_or(0, ibis_doc_model::Transition::played_ms) as f32;
+            show.anim_at.unwrap_or_else(|| clock.as_ref().map_or(0.0, |(_, at)| (at.elapsed().as_secs_f32() * 1000.0 - transition_ms).max(0.0)))
         };
         let page_layers = |slide: &ibis_doc_model::Slide, zoomed_scale: f32, backdrop: bool, all_shapes: bool| {
             set_theme_colors(&self.presentation().theme_colors);
@@ -1802,7 +1804,7 @@ impl SlideEditor {
         let page_at = |slide: &ibis_doc_model::Slide, zoomed_scale: f32| page_layers(slide, zoomed_scale, true, false);
         let page = |slide: &ibis_doc_model::Slide| page_at(slide, zoomed_scale);
         let before = show.came_from.and_then(|id| self.presentation().slide(id));
-        let transition = slide.transition.as_ref().filter(|t| !t.effect.is_empty() && (t.effect != "cut" || t.direction.as_deref() == Some("thruBlk")) && t.duration > 0);
+        let transition = slide.transition.as_ref().filter(|t| t.played_ms() > 0);
         // A ズーム being played: the card's rectangle grows into the slide (or the slide shrinks into it), the slide that is
         // not the card's drawn at its place, over the other one. Its time is counted from when the move on was made.
         let zoom_playing = show.zoom_anim.as_ref().filter(|z| z.changes == show.changes).and_then(|z| {
@@ -1940,6 +1942,89 @@ impl SlideEditor {
                             stack = if new_on_top { stack.child(old_el).child(new_el) } else { stack.child(new_el).child(old_el) };
                             stack.into_any_element()
                         }
+                        // ニュース速報: the old slide stands whole; the new one is painted once to a texture and drawn grown out of the middle,
+                        // turned about it, at its opacity as a whole (see `plan`).
+                        TransitionPlan::Spin { scale, turn, opacity } => {
+                            let spin_id = OffscreenId(0x5323);
+                            let texture = div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(spin_id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(slide, zoomed_scale, true, false))));
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .overflow_hidden()
+                                .child(page(old))
+                                .child(texture)
+                                .child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |bounds, _, window, _| {
+                                            let frame = Bounds { origin: bounds.origin, size: gpui_kit::size(px(zw), px(zh)) };
+                                            let (ox, oy) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+                                            let k = (scale as f32).max(0.001);
+                                            // The card's plane is the show's frame: about its middle, resized, then turned clockwise.
+                                            let transform = Transform3D::translate(-ox - zw / 2.0, -oy - zh / 2.0, 0.0)
+                                                .then(Transform3D::scale(k, k, 1.0))
+                                                .then(Transform3D::rotate_z((turn as f32).to_radians()))
+                                                .then(Transform3D::translate(ox + zw / 2.0, oy + zh / 2.0, 0.0));
+                                            window.paint_textured_quad(spin_id, frame, transform, opacity.clamp(0.0, 1.0) as f32, 1.0, [0.0, 0.0, 1.0, 1.0], false);
+                                        },
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                                .into_any_element()
+                        }
+                        // ワープ: both slides are painted once to a texture and drawn at their scale about the middle (the part of a slide that
+                        // is in the frame, by the texture's own rectangle), in the order of `plan`; with `additive` the new slide's rectangle
+                        // first shows the old slide whole again, so that the new slide laid over it at `k` adds to the dimmed old one.
+                        TransitionPlan::Dolly { old: old_look, new: new_look, new_on_top, additive, backdrop } => {
+                            let (old_id, new_id) = (OffscreenId(0x5324), OffscreenId(0x5325));
+                            let texture = |id: OffscreenId, s: &ibis_doc_model::Slide| div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(s, zoomed_scale, true, false))));
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .overflow_hidden()
+                                .bg(hsla(0.0, 0.0, backdrop as f32, 1.0))
+                                .child(texture(old_id, old))
+                                .child(texture(new_id, slide))
+                                .child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |bounds, _, window, _| {
+                                            // The rectangle of a slide at `dest` (a share of the frame, about its middle) cut to the frame, and the part of the
+                                            // texture of the slide at `tex` that lies there.
+                                            let place = |dest: f64, tex: f64| -> Option<(Bounds<Pixels>, [f32; 4])> {
+                                                let (half, tex_half) = ((dest * 0.5).min(0.5) as f32, (dest.min(1.0) * 0.5 / tex) as f32);
+                                                (half > 0.0 && tex_half > 0.0).then(|| {
+                                                    let frame = Bounds { origin: gpui_kit::point(bounds.origin.x + px(zw * (0.5 - half)), bounds.origin.y + px(zh * (0.5 - half))), size: gpui_kit::size(px(zw * 2.0 * half), px(zh * 2.0 * half)) };
+                                                    (frame, [0.5 - tex_half, 0.5 - tex_half, 2.0 * tex_half, 2.0 * tex_half])
+                                                })
+                                            };
+                                            let draw = |window: &mut Window, id: OffscreenId, dest: f64, tex: f64, alpha: f64| {
+                                                if let Some((frame, uv)) = place(dest, tex) {
+                                                    window.paint_textured_quad(id, frame, Transform3D::identity(), alpha.clamp(0.0, 1.0) as f32, 1.0, uv, false);
+                                                }
+                                            };
+                                            if new_on_top {
+                                                draw(window, old_id, old_look.0, old_look.0, old_look.1);
+                                                if additive {
+                                                    draw(window, old_id, new_look.0, old_look.0, 1.0);
+                                                }
+                                                draw(window, new_id, new_look.0, new_look.0, new_look.1);
+                                            } else {
+                                                draw(window, new_id, new_look.0, new_look.0, new_look.1);
+                                                draw(window, old_id, old_look.0, old_look.0, old_look.1);
+                                            }
+                                        },
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                                .into_any_element()
+                        }
                         // ズーム: the slide that scales (the old one shrinking, the new one growing) is painted once to a texture and drawn in
                         // pieces at their own opacity, so that its edge is soft (as PowerPoint's is); the other slide stands whole under it.
                         TransitionPlan::SoftScaled { old: old_k, new: new_k, .. } => {
@@ -1948,7 +2033,8 @@ impl SlideEditor {
                                 (None, Some(k)) => (k, slide, old, OffscreenId(0x5322)),
                                 (None, None) => (0.0, slide, old, OffscreenId(0x5322)),
                             };
-                            let pieces = ibis_doc_model::transition_plan::soft_scaled_pieces(k);
+                            // The slide keeps its size; it is seen through a hole that shrinks (old) or grows (new), measured on PowerPoint's frames.
+                            let pieces = ibis_doc_model::transition_plan::soft_masked_pieces(k);
                             let texture = div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(scaling, zoomed_scale, true, false))));
                             div()
                                 .absolute()
@@ -2004,10 +2090,14 @@ impl SlideEditor {
                                 (None, Turn3dKind::PageCurlDouble) => turn3d::page_curl_double(motion, q, zw, zh),
                                 (None, Turn3dKind::Airplane) => turn3d::airplane(motion, q, zw, zh),
                                 (None, Turn3dKind::Origami) => turn3d::origami(motion, q, zw, zh),
+                                (None, Turn3dKind::Crush) => crate::turn3d_crush::crush(q, zw, zh),
+                                (None, Turn3dKind::Fracture) => crate::turn3d_fracture::fracture(q, zw, zh),
+                                (None, Turn3dKind::Prestige) => crate::turn3d_cloth::prestige(q, zw, zh),
                                 (None, Turn3dKind::Ripple) => crate::turn3d_ripple::ripple(motion, q, zw, zh),
                                 (None, Turn3dKind::Comb) => crate::turn3d_tiles::comb(motion.0 != 0.0, q, zw, zh),
                                 (None, Turn3dKind::Doors { window }) => crate::turn3d_tiles::doors(window, motion.0 != 0.0, q, zw, zh),
                                 (None, Turn3dKind::Honeycomb) => crate::turn3d_tiles::honeycomb(q, zw, zh),
+                                (None, Turn3dKind::Glitter { diamond }) => crate::turn3d_tiles::glitter(diamond, (motion.0 as f32, motion.1 as f32), q, zw, zh),
                                 (None, Turn3dKind::Vortex) => crate::turn3d_tiles::vortex(motion, q, zw, zh),
                                 (None, Turn3dKind::Shred { particle }) => crate::turn3d_tiles::shred(particle, q, zw, zh),
                                 (None, Turn3dKind::Checker) => crate::turn3d_tiles::checker(motion.0 != 0.0, q, zw, zh),
@@ -2018,13 +2108,20 @@ impl SlideEditor {
                             // Rotate and orbit turn the shapes alone, over the slide's own background.
                             let content_only = prism.is_some_and(Prism::content_only) || kind == Turn3dKind::Conveyor;
                             // Black behind the cube, the box, the flip, the gallery and the switch (as in PowerPoint's video), white behind the others.
-                            let dark_background = !content_only && rigid.map_or(matches!(kind, Turn3dKind::Cube | Turn3dKind::Box | Turn3dKind::Flip | Turn3dKind::Gallery | Turn3dKind::Ripple | Turn3dKind::Checker | Turn3dKind::Honeycomb | Turn3dKind::Shred { .. } | Turn3dKind::Vortex | Turn3dKind::Doors { .. }), turn3d::Rigid::dark_background);
+                            let dark_background = !content_only && rigid.map_or(matches!(kind, Turn3dKind::Cube | Turn3dKind::Box | Turn3dKind::Flip | Turn3dKind::Gallery | Turn3dKind::Ripple | Turn3dKind::Crush | Turn3dKind::Fracture | Turn3dKind::Checker | Turn3dKind::Honeycomb | Turn3dKind::Glitter { .. } | Turn3dKind::Shred { .. } | Turn3dKind::Vortex | Turn3dKind::Doors { .. }), turn3d::Rigid::dark_background);
                             let (old_id, new_id, white_id) = (OffscreenId(0x5301), OffscreenId(0x5302), OffscreenId(0x5303));
                             let texture = |id: OffscreenId, s: &ibis_doc_model::Slide| {
                                 div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(s, zoomed_scale, !content_only, false))))
                             };
                             // Behind the cards of rotate and orbit: the slide's own background (the new one's from the middle of the turn).
                             let behind = if content_only && q < 0.5 { old } else { slide };
+                            // 回転 and 軌道's backdrop goes from the old slide's background to the new one's on a half cosine of the time (`Prism::background_mix`).
+                            let backdrop_mix = prism.and_then(|p| p.background_mix(progress)).and_then(|mix| {
+                                let own = |s: &ibis_doc_model::Slide| SlideEditor::slide_backdrop_rgb(s, &self.resources);
+                                let (a, b) = (own(old)?, own(slide)?);
+                                let channel = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * mix).round().clamp(0.0, 255.0) as u8;
+                                Some(ibis_doc_model::Rgb::from_rgb(channel(a.r(), b.r()), channel(a.g(), b.g()), channel(a.b(), b.b())))
+                            });
                             div()
                                 .absolute()
                                 .top_0()
@@ -2041,10 +2138,14 @@ impl SlideEditor {
                                         let c = ibis_doc_model::Rgb::from_rgb(channel(a.r(), b.r()), channel(a.g(), b.g()), channel(a.b(), b.b()));
                                         rgb(((c.r() as u32) << 16) | ((c.g() as u32) << 8) | c.b() as u32).into()
                                     }
+                                    None if backdrop_mix.is_some() => {
+                                        let c = backdrop_mix.unwrap_or(ibis_doc_model::Rgb::WHITE);
+                                        rgb(((c.r() as u32) << 16) | ((c.g() as u32) << 8) | c.b() as u32).into()
+                                    }
                                     None if dark_background => black(),
                                     None => white(),
                                 })
-                                .when(content_only, |d| d.child(div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(slide_backdrop(behind, zoomed_scale, &self.resources))))
+                                .when(content_only && backdrop_mix.is_none(), |d| d.child(div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(slide_backdrop(behind, zoomed_scale, &self.resources))))
                                 .child(texture(old_id, old))
                                 .child(texture(new_id, slide))
                                 .child(div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(white_id, div().w(px(zw)).h(px(zh)).bg(white()))))
@@ -2098,7 +2199,7 @@ impl SlideEditor {
                             stack = if new_on_top { stack.child(old_page).child(new_page) } else { stack.child(new_page).child(old_page) };
                             stack.into_any_element()
                         }
-                        TransitionPlan::StripMix { strips, backdrop } => {
+                        TransitionPlan::StripMix { strips, backdrop, scale } => {
                             // Both slides are painted once to a texture; each vertical strip of them is drawn over a flat backdrop at its own
                             // weights (as a texture's opacity is the slide's as a whole, not each of its elements').
                             let (old_id, new_id) = (OffscreenId(0x5313), OffscreenId(0x5314));
@@ -2109,6 +2210,7 @@ impl SlideEditor {
                                 .top_0()
                                 .left_0()
                                 .size_full()
+                                .overflow_hidden()
                                 .bg(rgb(((grey * 255.0).round() as u32) * 0x010101))
                                 .child(texture(old_id, old))
                                 .child(texture(new_id, slide))
@@ -2118,13 +2220,17 @@ impl SlideEditor {
                                         move |bounds, _, window, _| {
                                             for m in strips.iter() {
                                                 let r = m.rect;
-                                                let frame = Bounds { origin: gpui_kit::point(bounds.origin.x + px(r[0] as f32 * zw), bounds.origin.y + px(r[1] as f32 * zh)), size: gpui_kit::size(px((r[2] - r[0]) as f32 * zw), px((r[3] - r[1]) as f32 * zh)) };
+                                                // A slide drawn larger than whole is the strip's place scaled about the centre of the screen.
+                                                let place = |k: f64| {
+                                                    let at = |v: f64| 0.5 + (v - 0.5) * k;
+                                                    Bounds { origin: gpui_kit::point(bounds.origin.x + px(at(r[0]) as f32 * zw), bounds.origin.y + px(at(r[1]) as f32 * zh)), size: gpui_kit::size(px(((r[2] - r[0]) * k) as f32 * zw), px(((r[3] - r[1]) * k) as f32 * zh)) }
+                                                };
                                                 let uv = [r[0] as f32, r[1] as f32, (r[2] - r[0]) as f32, (r[3] - r[1]) as f32];
                                                 if m.old > 0.0 {
-                                                    window.paint_textured_quad(old_id, frame, Transform3D::identity(), m.old as f32, 1.0, uv, false);
+                                                    window.paint_textured_quad(old_id, place(scale.0), Transform3D::identity(), m.old as f32, 1.0, uv, false);
                                                 }
                                                 if m.new > 0.0 {
-                                                    window.paint_textured_quad(new_id, frame, Transform3D::identity(), m.new as f32, 1.0, uv, false);
+                                                    window.paint_textured_quad(new_id, place(scale.1), Transform3D::identity(), m.new as f32, 1.0, uv, false);
                                                 }
                                             }
                                         },
@@ -2733,7 +2839,7 @@ impl SlideEditor {
                     .on_click(cx.listener(|this, _, window, cx| this.step_slideshow(true, window, cx))),
             )
             .child(
-                btn("reading-exit-normal", "view_sidebar")
+                btn("reading-exit-normal", "vertical_split")
                     .on_click(cx.listener(|this, _, window, cx| this.request_end_slideshow(window, cx))),
             )
     }
@@ -3588,13 +3694,20 @@ fn animated_view(
                     .h(px(h))
                     .child(offscreen(id, div().relative().w(px(w)).h(px(h)).child(crate::render::shape_view::with_shear(shear, || element(&shown)))));
                 // The windows, as fractions of the picture (the slide's size); the frame's own fractions are those of the shape.
+                // What the line draws outside the frame (half its width) is part of the shape: the windows at the frame's own edges reach it, as the
+                // shape's whole look is what a filter uncovers (PowerPoint's first frame of a blinds exit has the line whole; clipped to the frame it
+                // lost its outer half the moment the effect began, a jump of 2.4 % of the change in one frame).
+                let ink = match &shape.kind {
+                    ibis_doc_model::ShapeKind::Auto(auto) => auto.stroke.as_ref().map_or(0.0, |st| st.width as f32 * scale / 2.0),
+                    _ => 0.0,
+                };
                 let windows: Vec<([f32; 4], f32)> = match &reveal {
                     None => vec![([0.0, 0.0, 1.0, 1.0], 1.0)],
                     Some(rects) => rects
                         .iter()
                         .filter_map(|(r, level)| {
-                            let (x0, y0) = ((frame.0 + r[0] as f32 * frame.2) / w, (frame.1 + r[1] as f32 * frame.3) / h);
-                            let (x1, y1) = ((frame.0 + r[2] as f32 * frame.2) / w, (frame.1 + r[3] as f32 * frame.3) / h);
+                            let (x0, y0) = ((frame.0 + r[0] as f32 * frame.2 - if r[0] <= 0.0 { ink } else { 0.0 }) / w, (frame.1 + r[1] as f32 * frame.3 - if r[1] <= 0.0 { ink } else { 0.0 }) / h);
+                            let (x1, y1) = ((frame.0 + r[2] as f32 * frame.2 + if r[2] >= 1.0 { ink } else { 0.0 }) / w, (frame.1 + r[3] as f32 * frame.3 + if r[3] >= 1.0 { ink } else { 0.0 }) / h);
                             let (x0, y0, x1, y1) = (x0.clamp(0.0, 1.0), y0.clamp(0.0, 1.0), x1.clamp(0.0, 1.0), y1.clamp(0.0, 1.0));
                             (x1 > x0 && y1 > y0).then_some(([x0, y0, x1, y1], *level as f32))
                         })
@@ -3745,7 +3858,7 @@ pub(crate) fn styled_shape(shape: &ibis_doc_model::Shape, motion: ShapeMotion, s
                             Fill::Linear { stops, .. } | Fill::Path { stops, .. } => (stops.first().map_or(Rgb::WHITE, |g| g.color.rgb), 255),
                             _ => (Rgb::WHITE, 255),
                         };
-                        auto.fill = Fill::Solid(Color { rgb: c.resolve(base, &theme), alpha });
+                        auto.fill = Fill::Solid(Color { rgb: c.resolve(base, &theme), alpha, theme: None });
                     }
                 }
                 ColorSlot::Line => {
@@ -4176,8 +4289,7 @@ pub(crate) fn ink_stroke_to_shape(
 
     let color = ibis_doc_model::Color {
         rgb: ibis_doc_model::Rgb(stroke.color & 0x00ffffff),
-        alpha: (stroke.opacity * 255.0).round().clamp(0.0, 255.0) as u8,
-    };
+        alpha: (stroke.opacity * 255.0).round().clamp(0.0, 255.0) as u8, theme: None };
     let emu_width = (stroke.width * 9_525.0).round() as i64;
     let mut stroke_style = ibis_doc_model::Stroke::solid(color, emu_width.max(12_700));
     stroke_style.cap = ibis_doc_model::LineCap::Round;

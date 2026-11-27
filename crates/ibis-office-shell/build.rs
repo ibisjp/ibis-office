@@ -5,7 +5,7 @@
 //! resources are kept: tasks/doc/crate-split-plan.md, 12.4) into the shell, so it serves them from memory on every
 //! platform (see `icons.rs`).
 //!
-//! It also gives the version the app shows (`IBIS_VERSION`, from version.txt) and sets `cfg(headless_export)` where the
+//! It also gives the version the app shows (`IBIS_VERSION`, from build-version.txt) and sets `cfg(headless_export)` where the
 //! export is built: with the `export` feature, on macOS, Windows and Linux, where GPUI draws without a window (the same
 //! rule as ibis-office-app's and ibis-office-render's build.rs).
 
@@ -46,10 +46,10 @@ fn main() {
     }
 }
 
-/// The version the app shows (`IBIS_VERSION`), the one version.txt (at the top of the repository: a platform, a tab and its
+/// The version the app shows (`IBIS_VERSION`), the one build-version.txt (at the top of the repository: a platform, a tab and its
 /// version, per line) gives the platform built for: Windows, macOS, Linux or wasm. The same as ibis-office-app's build.rs.
 fn app_version() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../version.txt");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../build-version.txt");
     println!("cargo:rerun-if-changed={}", path.display());
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let target = |name: &str| std::env::var(name).unwrap_or_default();
@@ -60,13 +60,13 @@ fn app_version() {
         ("android", _) => "Android",
         ("ios", _) => "iOS",
         (_, "wasm") => "wasm",
-        (os, _) => panic!("version.txt has no line for {os}"),
+        (os, _) => panic!("build-version.txt has no line for {os}"),
     };
     let version = text
         .lines()
         .filter_map(|line| line.trim_end_matches('\r').split_once('\t'))
         .find(|(name, _)| name.trim() == platform)
         .map(|(_, version)| version.trim().to_string())
-        .unwrap_or_else(|| panic!("version.txt has no {platform} line"));
+        .unwrap_or_else(|| panic!("build-version.txt has no {platform} line"));
     println!("cargo:rustc-env=IBIS_VERSION={version}");
 }

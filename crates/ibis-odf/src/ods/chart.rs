@@ -164,15 +164,22 @@ pub(crate) fn read_chart(content: &str, tables: &[(String, Node)]) -> Option<Cha
     for axis in children(plot, CHART, "axis") {
         let dim = attr(axis, CHART, "dimension").unwrap_or("");
         let st = style_of(axis);
-        let target = if dim == "y" { &mut out.value } else { &mut out.category };
+        // The secondary axes (`chart:name` "secondary-x"/"secondary-y", which the series attach to) are the second axis pair.
+        let secondary = attr(axis, CHART, "name").is_some_and(|n| n.to_ascii_lowercase().starts_with("secondary"));
+        let target = match (dim == "y", secondary) {
+            (true, false) => &mut out.value,
+            (true, true) => &mut out.value2,
+            (false, false) => &mut out.category,
+            (false, true) => &mut out.category2,
+        };
         if dim == "x" || dim == "y" {
             let num = |k: &str| st.get(k).and_then(|v| v.parse::<f64>().ok());
             *target = Axis { format: None, min: num("minimum"), max: num("maximum"), major: num("interval-major"), log: flag(&st, "logarithmic"), reversed: flag(&st, "reverse-direction"), grid: children(axis, CHART, "grid").next().is_some_and(|g| attr(g, CHART, "class") != Some("minor")), title: children(axis, CHART, "title").next().map(text_of).filter(|t| !t.is_empty()), display_unit: None };
         }
-        if dim == "y" && y_style.is_empty() {
+        if dim == "y" && !secondary && y_style.is_empty() {
             y_style = st.clone();
         }
-        if dim == "x" {
+        if dim == "x" && !secondary {
             if let Some(cat) = children(axis, CHART, "categories").next().and_then(|c| attr(c, TABLE, "cell-range-address")).and_then(|a| parse_ref(a, tables)) {
                 categories = Source::Ref(cat);
             }
@@ -192,17 +199,19 @@ pub(crate) fn read_chart(content: &str, tables: &[(String, Node)]) -> Option<Cha
             _ => return None,
         })
     };
-    let mut classes: Vec<String> = Vec::new();
+    let mut classes: Vec<(String, bool)> = Vec::new();
     // The column of the chart's own table each series names (`local-table.$D$1`), by series.
     let mut table_columns: Vec<Option<usize>> = Vec::new();
     let default_class = chart_class.clone();
     for (i, s) in children(plot, CHART, "series").enumerate() {
         let class = class_of(s).map(str::to_string).unwrap_or_else(|| default_class.clone());
         let Some((kind, filled, hole)) = kind_of(&class) else { continue };
-        let group = match classes.iter().position(|c| *c == class) {
+        let on_secondary = attr(s, CHART, "attached-axis").is_some_and(|a| a.to_ascii_lowercase().starts_with("secondary"));
+        let group = match classes.iter().position(|c| *c == (class.clone(), on_secondary)) {
             Some(g) => g,
             None => {
-                classes.push(class.clone());
+                classes.push((class.clone(), on_secondary));
+                out.group_secondary.push(on_secondary);
                 out.groups.push(Group {
                     kind,
                     horizontal: kind == Kind::Bar && flag(&plot_style, "vertical"),

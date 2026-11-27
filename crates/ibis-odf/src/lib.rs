@@ -9,6 +9,7 @@
 //! format as `ibis-formats` does).
 
 mod enhanced_geometry;
+mod odf;
 mod ods;
 mod ods_write;
 pub mod odp;

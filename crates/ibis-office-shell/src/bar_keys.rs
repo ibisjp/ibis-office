@@ -20,7 +20,9 @@ use crate::chrome::MenuId;
 #[derive(Default)]
 pub struct BarKeys {
     /// Alt is held (the letters are underlined).
-    pub(crate) alt_held: bool,
+    pub alt_held: bool,
+    /// A key was pressed while Alt was held: letting go of Alt is then not "Alt alone" (which puts the focus on the bar).
+    pub(crate) alt_combo: bool,
     /// The bar has the focus (F10): the index (into the bar's menus; `OVERFLOW_IX` for the ▾) the focus is on.
     pub focus: Option<usize>,
     /// The coloured menu Alt+J opened last (an index into the bar's menus), so that the next press goes to the next one.
@@ -28,6 +30,26 @@ pub struct BarKeys {
 }
 
 impl SlideEditor {
+    /// Alt went down or up (the modifiers changed): the access letters are underlined while it is down; let go with no key pressed in between
+    /// ("Alt alone"), it puts the focus on the bar, or takes it away (Windows: "ALT toggles in and out of menu bar mode").
+    pub(crate) fn bar_alt_changed(&mut self, alt: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !access_key::supported() || self.bar_keys.alt_held == alt {
+            return;
+        }
+        self.bar_keys.alt_held = alt;
+        if alt {
+            self.bar_keys.alt_combo = false;
+        } else if !self.bar_keys.alt_combo && self.bar_keys_active() {
+            if self.bar_keys.focus.is_some() {
+                self.bar_keys.focus = None;
+            } else if let Some(first) = self.bar_navigation(window).first().copied() {
+                self.close_menu(cx);
+                self.bar_keys.focus = Some(first);
+            }
+        }
+        cx.notify();
+    }
+
     /// The parts of the bar in the order they are drawn, as indices into the bar's menus (`OVERFLOW_IX` for the ▾): the visible
     /// static menus except Help, the visible coloured menus, the ▾ (when something is folded), then Help (when it shows).
     pub(crate) fn bar_navigation(&self, window: &Window) -> Vec<usize> {
@@ -44,7 +66,8 @@ impl SlideEditor {
 
     /// The keys of the bar are free to act: this OS has them, no dialog or message has the keys.
     fn bar_keys_active(&self) -> bool {
-        access_key::supported() && self.has_document && !self.interaction_layer().is_confirmation() && !self.dialog_is_modal()
+        // The start window has a bar too (`bar_items`): its keys work with no file open.
+        access_key::supported() && !self.interaction_layer().is_confirmation() && !self.dialog_is_modal()
     }
 
     /// Open the menu at index `ix` of the bar's menus (a folded one through the ▾).
@@ -58,11 +81,30 @@ impl SlideEditor {
 
     /// A key press, for the bar. True when the bar took it.
     pub(crate) fn bar_key_down(&mut self, key: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let m = &key.modifiers;
+        // A key pressed with Alt held makes it a combination: letting go of Alt is not "Alt alone".
+        if m.alt {
+            self.bar_keys.alt_combo = true;
+        }
         if !self.bar_keys_active() {
             return false;
         }
-        let m = &key.modifiers;
         let plain = !m.alt && !m.control && !m.platform && !m.shift;
+        // A menu is open (Alt+letter, F10 and ↓, or a press): ← and → go along the bar to the previous and the next menu, unless the menu itself takes the
+        // arrow (a submenu is selected).
+        if plain && matches!(key.key.as_str(), "left" | "right") && self.bar_keys.focus.is_none() {
+            let takes = self.open_menu.as_ref().is_some_and(|open| open.popup_entity().read(cx).arrow_goes_to_menu_bar());
+            if takes {
+                let order = self.bar_navigation(window);
+                let current = self.open_menu.as_ref().map(|open| open.index());
+                if let Some(position) = current.and_then(|c| order.iter().position(|ix| *ix == c)) {
+                    let next = if key.key == "right" { (position + 1) % order.len() } else { (position + order.len() - 1) % order.len() };
+                    self.close_menu(cx);
+                    self.open_bar_menu(order[next], window, cx);
+                    return true;
+                }
+            }
+        }
         // The bar has the focus: the arrows, Enter and Esc are its; any other key gives the focus back and goes on.
         if let Some(at) = self.bar_keys.focus {
             let order = self.bar_navigation(window);

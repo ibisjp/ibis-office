@@ -31,6 +31,8 @@ mod ui_refinements;
 mod layout_refinements;
 #[path = "tests/shell/xlsx_ink_followup.rs"]
 mod xlsx_ink_followup;
+#[path = "tests/shell/message_box_primary.rs"]
+mod message_box_primary;
 #[path = "tests/shell/ui_followup.rs"]
 mod ui_followup;
 #[path = "tests/shell/issues_33_plus.rs"]
@@ -69,6 +71,12 @@ mod menus_20261109_scenarios;
 mod menus_20261112_scenarios;
 #[path = "tests/shell/menus_20261114.rs"]
 mod menus_20261114_scenarios;
+#[path = "tests/shell/k0061_narrow.rs"]
+mod k0061_narrow_scenarios;
+#[path = "tests/shell/k0067_back_to_start.rs"]
+mod k0067_back_to_start_scenarios;
+#[path = "tests/shell/k0064_keyboard_toolbar.rs"]
+mod k0064_keyboard_toolbar_scenarios;
 #[path = "tests/shell/touch_gesture.rs"]
 mod touch_gesture_scenarios;
 #[path = "tests/shell/k0034_rest.rs"]
@@ -85,6 +93,52 @@ mod menu_contexts_scenarios;
 mod access_key_menus_scenarios;
 #[path = "tests/shell/bar_keys.rs"]
 mod bar_keys_scenarios;
+#[path = "tests/shell/ios_edit_marks.rs"]
+mod ios_edit_marks;
+#[path = "tests/shell/k0066_emoji.rs"]
+mod k0066_emoji;
+#[path = "tests/shell/issue229_law_save.rs"]
+mod issue229_law_save;
+#[path = "tests/shell/k0065_touch_scroll.rs"]
+mod k0065_touch_scroll;
+#[path = "tests/shell/k0070_access_keys.rs"]
+mod k0070_access_keys;
+#[path = "tests/shell/issue234_backspace_pages.rs"]
+mod issue234_backspace_pages;
+#[path = "tests/shell/issue245_caret_contrast.rs"]
+mod issue245_caret_contrast;
+#[path = "tests/shell/issue295_word_count.rs"]
+mod issue295_word_count;
+#[path = "tests/shell/k0074_overlap_submenu.rs"]
+mod k0074_overlap_submenu;
+#[path = "tests/shell/k0073_long_press.rs"]
+mod k0073_long_press;
+#[path = "tests/shell/k0089_formula_bar_bottom.rs"]
+mod k0089_formula_bar_bottom;
+#[path = "tests/shell/k0081_narrow_title_icon.rs"]
+mod k0081_narrow_title_icon;
+#[path = "tests/shell/k0080_narrow_statusbar.rs"]
+mod k0080_narrow_statusbar;
+#[path = "tests/shell/k0087_mobile_menus.rs"]
+mod k0087_mobile_menus;
+#[path = "tests/shell/k0092_kbd_hide_commits_ime.rs"]
+mod kbd_hide_commits_ime;
+#[path = "tests/shell/k_kbd_close.rs"]
+mod k_kbd_close;
+#[path = "tests/shell/k_keyboard_scroll.rs"]
+mod k_keyboard_scroll;
+#[path = "tests/shell/k_android_enter.rs"]
+mod k_android_enter;
+#[path = "tests/shell/k_formula_bar_kbd.rs"]
+mod k_formula_bar_kbd;
+#[path = "tests/shell/k0088_title_name_tap.rs"]
+mod k0088_title_name_tap;
+#[path = "tests/shell/k0076_mobile_menu.rs"]
+mod k0076_mobile_menu;
+#[path = "tests/shell/k0078_menu_scroll_finger.rs"]
+mod k0078_menu_scroll_finger;
+#[path = "tests/shell/k0084_splitter_touch.rs"]
+mod k0084_splitter_touch;
 #[path = "tests/shell/menu_dump.rs"]
 mod menu_dump_scenarios;
 #[cfg(not(target_family = "wasm"))]
@@ -98,6 +152,10 @@ mod ui_20261029_align;
 mod editing_20261028;
 #[path = "tests/shell/k0027_k0029_shape_pane.rs"]
 mod k0027_k0029_shape_pane;
+#[path = "tests/shell/pii_check.rs"]
+mod pii_check;
+#[path = "tests/shell/dicom_dialog.rs"]
+mod dicom_dialog;
 #[path = "tests/shell/followup_20261028.rs"]
 mod followup_20261028;
 #[path = "tests/shell/issues64_65.rs"]
@@ -112,6 +170,8 @@ mod issue108_paste;
 mod issue105_editor;
 #[path = "tests/shell/find_shortcuts.rs"]
 mod find_shortcuts;
+#[path = "tests/shell/native_jtd.rs"]
+mod native_jtd_scenarios;
 #[path = "tests/shell/file_watch.rs"]
 mod file_watch_scenarios;
 #[path = "tests/shell/title_file_menu.rs"]
@@ -132,6 +192,8 @@ pub(crate) mod scenario_fix;
 mod scenario_open_save;
 #[path = "tests/shell/issue232_signature.rs"]
 mod issue232_signature;
+#[path = "tests/shell/xlsx_no_styles_save.rs"]
+mod xlsx_no_styles_save;
 #[path = "tests/shell/scenario_menu_search.rs"]
 mod scenario_menu_search;
 
@@ -139,6 +201,7 @@ mod scenario_menu_search;
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     let mut all = crate::shell::scenario_examples::all();
     all.extend(crate::native_quit_scenarios::all());
+    all.extend(native_jtd_scenarios::all());
     all.extend(crate::offscreen_3d_scenarios::all());
     all.extend(dialog_scenarios::all());
     all.push(("shell::submenu_viewport_fit",crate::shell::scenario::menu_viewport::run));
@@ -146,6 +209,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(dialog_apply::all());
     all.extend(font_setup_scenarios::all());
     all.extend(ui_refinements::all());
+    all.extend(issue229_law_save::all());
     all.extend(layout_refinements::all());
     all.extend(ui_followup::all());
     all.extend(issues_33_plus::all());
@@ -163,10 +227,14 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(issue235_pdf::all());
     all.extend(issue235_viewer::all());
     all.extend(issue245_caret::all());
+    all.extend(k0074_overlap_submenu::all());
+    all.extend(issue245_caret_contrast::all());
     all.extend(ui_20261028::all());
     all.extend(ui_20261029_align::all());
     all.extend(editing_20261028::all());
     all.extend(k0027_k0029_shape_pane::all());
+    all.extend(pii_check::all());
+    all.extend(dicom_dialog::all());
     all.extend(followup_20261028::all());
     all.extend(issues64_65::all());
     all.extend(issues83::all());
@@ -180,6 +248,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.push(("shell::dropdown_item_attributes",dropdown::run));
     all.push(("shell::toolbar_style_common_dropdown",dropdown::toolbar_style));
     all.extend(xlsx_ink_followup::all());
+    all.extend(message_box_primary::all());
     all.extend(crate::shell::scenario::popup_guard_scenarios::all());
     all.extend(crate::shell::scenario::settings_dialog_scenarios::all());
     all.extend(crate::shell::scenario::toolbar_overflow_scenarios::all());
@@ -194,20 +263,43 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(scenario_fix::all());
     all.extend(scenario_open_save::all());
     all.extend(issue232_signature::all());
+    all.extend(xlsx_no_styles_save::all());
     all.extend(crate::shell::scenario_menus::all());
     all.extend(scenario_menu_search::all());
     all.extend(menu_layout_scenarios::all());
     all.extend(menus_20261109_scenarios::all());
     all.extend(menus_20261112_scenarios::all());
     all.extend(menus_20261114_scenarios::all());
+    all.extend(k0061_narrow_scenarios::all());
+    all.extend(k0067_back_to_start_scenarios::all());
+    all.extend(k0089_formula_bar_bottom::all());
+    all.extend(k0081_narrow_title_icon::all());
+    all.extend(k0080_narrow_statusbar::all());
+    all.extend(k0087_mobile_menus::all());
+    all.extend(kbd_hide_commits_ime::all());
+    all.extend(k_kbd_close::all());
+    all.extend(k_keyboard_scroll::all());
+    all.extend(k_android_enter::all());
+    all.extend(k_formula_bar_kbd::all());
+    all.extend(k0088_title_name_tap::all());
+    all.extend(k0076_mobile_menu::all());
+    all.extend(k0078_menu_scroll_finger::all());
+    all.extend(k0084_splitter_touch::all());
+    all.extend(k0064_keyboard_toolbar_scenarios::all());
+    all.extend(k0065_touch_scroll::all());
+    all.extend(ios_edit_marks::all());
+    all.extend(k0066_emoji::all());
     all.extend(touch_gesture_scenarios::all());
     all.extend(k0034_rest_scenarios::all());
     all.extend(menu_every_item_scenarios::all());
     all.extend(menu_contexts_scenarios::all());
     all.extend(sidebars_scenarios::all());
+    all.extend(issue295_word_count::all());
+    all.extend(issue234_backspace_pages::all());
     all.extend(crate::shell::scenario::title_buttons_scenarios::all());
     all.extend(bar_keys_scenarios::all());
     all.extend(access_key_menus_scenarios::all());
+    all.extend(k0070_access_keys::all());
     all.extend(menu_dump_scenarios::all());
     #[cfg(not(target_family = "wasm"))]
     all.extend(window_menu_scenarios::all());
@@ -217,7 +309,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     }
     // The document's layout checks that export a page stay in the app (tasks/doc/crate-split-plan.md, 15.2).
     all.extend(shared_equation_editor::all());
+    #[cfg(not(windows))]
     all.extend(crate::docx_layout_tests::all());
+    #[cfg(not(windows))]
     all.extend(crate::docx_layout_tests_grid::all());
     #[cfg(target_os = "macos")]
     all.extend(crate::xlsx_corpus_report::all());
@@ -235,11 +329,32 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
     let mut out: Vec<(&'static str, fn())> = vec![("shell::dump_all_right_panels", panel_catalog::dump_all_right_panels)];
     out.extend(ui_followup::ignored());
+    out.extend(issue234_backspace_pages::ignored());
+    out.extend(menu_every_item_scenarios::ignored());
+    out.extend(issue295_word_count::ignored());
+    out.extend(k0073_long_press::ignored());
+    out.extend(k0089_formula_bar_bottom::ignored());
+    out.extend(k0081_narrow_title_icon::ignored());
+    out.extend(k0080_narrow_statusbar::ignored());
+    out.extend(k0087_mobile_menus::ignored());
+    out.extend(kbd_hide_commits_ime::ignored());
+    out.extend(k_kbd_close::ignored());
+    out.extend(k_keyboard_scroll::ignored());
+    out.extend(k_android_enter::ignored());
+    out.extend(k_formula_bar_kbd::ignored());
+    out.extend(k0088_title_name_tap::ignored());
+    out.extend(k0076_mobile_menu::ignored());
+    out.extend(k0078_menu_scroll_finger::ignored());
+    out.extend(k0084_splitter_touch::ignored());
     out.extend(crate::pptx_scenarios::ignored());
     for (_, driver) in crate::shell::format::drivers() {
         out.extend(driver.ignored_scenarios());
     }
+    #[cfg(not(windows))]
     out.extend(crate::docx_layout_tests::ignored());
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    out.extend(crate::export_print::export_print_tests::ignored());
+    #[cfg(not(windows))]
     out.extend(crate::docx_layout_tests_grid::ignored());
     #[cfg(target_os = "macos")]
     out.extend(crate::xlsx_corpus_report::ignored());

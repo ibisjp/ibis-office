@@ -116,6 +116,13 @@ fn rpr(cx: &mut Cx, chain: &Chain, tag: &str, link: Option<&str>, text: &str) ->
     if let Some(spacing) = get(FO, "letter-spacing").and_then(points).filter(|s| s.abs() > 1e-6) {
         let _ = write!(attrs, r#" spc="{}""#, (spacing * 100.0).round() as i64);
     }
+    // Pair kerning (`style:letter-kerning`): PowerPoint's `-SaveAs pptx` of an .odp writes `kern="1200"` (kerning from 12 pt up) for true and
+    // `kern="0"` for false on every run (measured on 155 documents: 006 has only false and only `kern="0"`).
+    match get(STYLE, "letter-kerning") {
+        Some("true") => attrs += r#" kern="1200""#,
+        Some("false") => attrs += r#" kern="0""#,
+        _ => {}
+    }
     let mut inner = String::new();
     // (A colour the styles name; "use the window's font colour" is only the lack of one.)
     if let Some(c) = get(FO, "color").and_then(color) {
@@ -177,7 +184,10 @@ fn rpr(cx: &mut Cx, chain: &Chain, tag: &str, link: Option<&str>, text: &str) ->
         let _ = write!(inner, r#"<a:cs typeface="{}"/>"#, esc(&f));
     }
     if let Some(id) = link {
-        let _ = write!(inner, r#"<a:hlinkClick r:id="{id}"/>"#);
+        // PowerPoint's ODP reading: a link is `hlinkClick` with the extension that keeps the text's own colour (`hlinkClr` tx) on every link
+        // measured (topptx of 8 documents with 700 text links); a jump to a page has `action="ppaction://hlinksldjump"`.
+        let action = if cx.is_slide_link(id) { r#" action="ppaction://hlinksldjump""# } else { "" };
+        let _ = write!(inner, r#"<a:hlinkClick r:id="{id}"{action}><a:extLst><a:ext uri="{{A12FA001-AC4F-418D-AE19-62706E023703}}"><ahyp:hlinkClr xmlns:ahyp="http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor" val="tx"/></a:ext></a:extLst></a:hlinkClick>"#);
     }
     if inner.is_empty() { format!("<a:{tag}{attrs}/>") } else { format!("<a:{tag}{attrs}>{inner}</a:{tag}>") }
 }
@@ -266,10 +276,15 @@ fn ppr(cx: &mut Cx, chain: &Chain, list: Option<(&str, usize)>, body: Body) -> S
     if indent != 0 || list.is_some() {
         let _ = write!(attrs, r#" indent="{indent}""#);
     }
+    // `style:tab-stop-distance` (ODF 1.2 20.347, the default tab interval) is `defTabSz`; PowerPoint saves an ODP's 0.5in as 457200.
+    if let Some(d) = get(STYLE, "tab-stop-distance").and_then(emu).filter(|d| *d > 0) {
+        let _ = write!(attrs, r#" defTabSz="{d}""#);
+    }
     if let Some(h) = get(FO, "line-height") {
         if let Some(p) = percent(h) {
             let _ = write!(inner, r#"<a:lnSpc><a:spcPct val="{}"/></a:lnSpc>"#, (p * 100_000.0).round() as i64);
-        } else if let Some(pt) = points(h).filter(|p| *p > 0.0) {
+        } else if let Some(pt) = points(h) {
+            // `fo:line-height="0in"` is `a:spcPts val="0"` too (PowerPoint reads it so).
             let _ = write!(inner, r#"<a:lnSpc><a:spcPts val="{}"/></a:lnSpc>"#, (pt * 100.0).round() as i64);
         }
     } else if let Some(pt) = get(STYLE, "line-height-at-least").and_then(points).filter(|p| *p > 0.0) {
@@ -479,7 +494,9 @@ pub(crate) fn paragraphs(cx: &mut Cx, container: Node, frame: &[(&'static str, S
     let base: Chain = frame.to_vec();
     let frame_list = frame.iter().find_map(|(f, n)| cx.st.prop(f, n, STYLE, "list-style-name")).map(str::to_string);
     let mut out = String::new();
-    for c in container.children().filter(|c| c.is_element() && c.tag_name().namespace() == Some(TEXT)) {
+    // Sections and legacy numbered paragraphs may wrap the text of a text box or a notes frame. Keep their content in order, without
+    // evaluating conditions.
+    for c in crate::odf::through(container, |node| crate::odf::visible_section(node) || node.has_tag_name((TEXT, "numbered-paragraph"))).filter(|node| node.tag_name().namespace() == Some(TEXT)) {
         match c.tag_name().name() {
             "p" | "h" => paragraph(cx, c, &base, None, body, &mut out),
             "list" => list(cx, c, &base, None, body, &mut out, frame_list.as_deref()),

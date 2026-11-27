@@ -11,7 +11,7 @@ use gpui_kit::*;
 use crate::shell::palette::rgb;
 use ibis_doc_model::{FlowCommand, FlowPos, FlowRunKind, Rgb, ShapeKind};
 
-use crate::shell::chrome::SidebarPanel;
+use crate::shell::chrome::{ShownNumber, SidebarPanel, SpinnerSpec, Typed};
 use crate::shell::editor::SlideEditor;
 use crate::ext::*;
 
@@ -28,6 +28,8 @@ pub struct TextBoxInfo {
     pub(crate) text: String,
     /// Width, height and offset (points) and the rotation (degrees), as the panel's fields hold them.
     pub geometry: [String; 5],
+    /// The rotation as the shape keeps it (60000ths of a degree), for the rotation field's `ShownNumber`.
+    pub(crate) rotation: i32,
     pub(crate) font_size: String,
     pub color: String,
     pub(crate) bold: bool,
@@ -286,6 +288,7 @@ impl SlideEditor {
                         at: FlowPos::new(p.id, offset),
                         text: text_body.text(),
                         geometry: [points(shape.frame.width), points(shape.frame.height), points(x), points(y), degrees(shape.rotation)],
+                        rotation: shape.rotation,
                         font_size: format!("{}", size as f32 / 100.0),
                         color: format!("{:06X}", color.0 & 0xffffff),
                         bold,
@@ -1204,7 +1207,8 @@ impl SlideEditor {
         let theme = cx.theme();
         let mut selected_color = theme.primary;
         selected_color.a = 0.25;
-        let caret_color = crate::shell::caret::color_over(self.shape_at(edit_at).and_then(|s| s.backdrop_rgb()).or_else(|| self.flow().and_then(|d| d.page_color)), ibis_doc_model::Rgb::WHITE);
+        let box_caret = edit.edit.caret;
+        let caret_color = crate::shell::caret::color_over(self.shape_at(edit_at).and_then(|s| s.text_body().and_then(|b| b.highlight_at(box_caret)).or_else(|| s.backdrop_rgb())).map(|c| crate::page_view::fill_as_drawn(c, self.resources.dark_page)).or_else(|| self.flow().map(|d| crate::caret_backdrop::paper(d.page_color, self.resources.dark_page))), ibis_doc_model::Rgb::WHITE);
         let entity = cx.entity();
 
         let blue = rgb(0x1a73e8);
@@ -1733,8 +1737,9 @@ impl SlideEditor {
             commands.push(FlowCommand::RerouteConnectors);
         }
         // 回転 (degrees; the shape keeps it in 60000ths of a degree, 0 to 360 degrees).
-        if geometry[4] != initial.geometry[4] && let Ok(turn) = geometry[4].parse::<f32>() && turn.is_finite() {
-            commands.push(FlowCommand::SetShapeRotation { at, rotation: ((f64::from(turn).rem_euclid(360.0)) * 60_000.0).round() as i32 });
+        let rotation_field = ShownNumber::one(i64::from(initial.rotation), 60_000., SpinnerSpec::new(1.0).decimals(2));
+        if geometry[4] != initial.geometry[4] && let Typed::Value(raw) = rotation_field.resolve(&geometry[4]) {
+            commands.push(FlowCommand::SetShapeRotation { at, rotation: raw.rem_euclid(21_600_000.0) as i32 });
         }
         let new_size = (font_size != initial.font_size).then(|| font_size.parse::<f32>().ok().filter(|v| (1.0..=1638.0).contains(v)).map(|v| (v * 2.0).round() as u32 * 50)).flatten();
         let new_color = (color != initial.color).then(|| u32::from_str_radix(color.trim_start_matches('#'), 16).ok().filter(|_| color.trim_start_matches('#').len() == 6).map(Rgb)).flatten();

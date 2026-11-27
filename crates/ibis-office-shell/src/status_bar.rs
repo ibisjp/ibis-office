@@ -39,7 +39,8 @@ impl SlideEditor {
         texts
     }
 
-    pub(crate) fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// `narrow_touch`: a narrow window on a touch device (`narrow_layout::bars_at_bottom`, K0080): the zoom's slider, − / + and percentage are left out.
+    pub(crate) fn render_status_bar(&self, narrow_touch: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let mut texts = self.status_texts();
         let hint = texts.pop().unwrap_or_default();
@@ -55,10 +56,19 @@ impl SlideEditor {
             visible.then(|| {
                 let width = px(right - left);
                 let wheel = scroll.clone();
-                div().absolute().top_0().h(px(12.)).left(px(left)).w(width)
+                let strip = div().absolute().top_0().h(px(12.)).left(px(left)).w(width)
                 // The wheel over the bar scrolls the tabs sideways, a vertical
                 // one too (as over the tabs themselves).
                 .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                    // A finger's scroll is the tabs' own (they stretch at their ends and coast: K0065, K0078): the bar stands for them.
+                    if event.touch_fingers != 0 {
+                        let delta = event.delta.pixel_delta(px(20.));
+                        let amount = if delta.x.abs() >= delta.y.abs() { delta.x } else { delta.y };
+                        wheel.finger_scroll_x(amount, event.touch_phase);
+                        window.refresh();
+                        cx.stop_propagation();
+                        return;
+                    }
                     let delta = event.delta.pixel_delta(px(20.));
                     let amount = if delta.x.abs() >= delta.y.abs() { delta.x } else { delta.y };
                     let (offset, max) = (wheel.offset(), wheel.max_offset().x);
@@ -74,7 +84,10 @@ impl SlideEditor {
                             .axis(ScrollbarAxis::Horizontal)
                             .viewport_from_layout(),
                     ),
-                )
+                );
+                #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+                let strip = strip.child(probe("sheet-tabs-strip"));
+                strip
             })
         });
         let (left_texts, right_texts) = if with_format!(self, status_items_at_right()) && !texts.is_empty() {
@@ -129,42 +142,58 @@ impl SlideEditor {
                         }
                     }))
                     .children(right_texts)
-                    .child(self.render_zoom(cx)),
+                    .child(self.render_zoom(narrow_touch, cx)),
             )
             .children(tab_scrollbar)
     }
 
     /// Zoom of the status bar: − / slider / +, the percentage with ▲ for
     /// the list of zooms, and fitting the slide to the window.
-    fn render_zoom(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_zoom(&self, narrow_touch: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let zoom = self.current_zoom();
         // A little slack, so a zoom rounded onto a limit still counts as there.
         let (at_min, at_max) = (zoom <= MIN_ZOOM * 1.001, zoom >= MAX_ZOOM * 0.999);
         let bounds = self.zoom_controls_bounds.clone();
-        h_flex()
+        if narrow_touch {
+            // Nothing of the zoom is drawn, so nothing of it is kept as where it was (the sheet tabs' scroll bar and the dialogs read these).
+            self.zoom_controls_bounds.set(None);
+            self.zoom_trigger_bounds.set(None);
+        }
+        let group = h_flex()
             .relative()
-            .child(crate::editor::bounds_observer(move |b, _, _| bounds.set(Some(b))))
+            .when(!narrow_touch, |d| d.child(crate::editor::bounds_observer(move |b, _, _| bounds.set(Some(b)))))
             .gap_1()
             .items_center()
-            .child(
-                zoom_step_button("zoom-out", IconName::Minus, "view.zoom-out", at_min)
-                    .when(!at_min, |d| d.on_click(cx.listener(|this, _, window, cx| this.step_zoom(false, window, cx)))),
-            )
-            .child(div().w(px(120.)).child(crate::chrome::slider("zoom-slider", &self.zoom_slider)))
-            .child(
-                zoom_step_button("zoom-in", IconName::Plus, "view.zoom-in", at_max)
-                    .when(!at_max, |d| d.on_click(cx.listener(|this, _, window, cx| this.step_zoom(true, window, cx)))),
-            )
-            .child(self.render_zoom_menu(cx))
-            .when(with_format!(self, can_fit()), |d| d.child(
-                Button::new("zoom-fit")
+            .when(!narrow_touch, |d| {
+                let out = zoom_step_button("zoom-out", IconName::Minus, "view.zoom-out", at_min)
+                    .when(!at_min, |d| d.on_click(cx.listener(|this, _, window, cx| this.step_zoom(false, window, cx))));
+                #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+                let out = out.child(probe("status-zoom-out"));
+                let slider = div().relative().w(px(120.)).child(crate::chrome::slider("zoom-slider", &self.zoom_slider));
+                #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+                let slider = slider.child(probe("status-zoom-slider"));
+                let plus = zoom_step_button("zoom-in", IconName::Plus, "view.zoom-in", at_max)
+                    .when(!at_max, |d| d.on_click(cx.listener(|this, _, window, cx| this.step_zoom(true, window, cx))));
+                #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+                let plus = plus.child(probe("status-zoom-in"));
+                d.child(out).child(slider).child(plus).child(self.render_zoom_menu(cx))
+            })
+            .when(with_format!(self, can_fit()), |d| {
+                let fit = Button::new("zoom-fit")
                     .ghost()
                     .xsmall()
                     .icon(IconName::Fullscreen)
                     .tooltip(crate::i18n::text(with_format!(self, fit_tooltip())))
                     .selected(self.zoom.is_none())
-                    .on_click(cx.listener(|this, _, window, cx| this.set_zoom(None, window, cx))),
-            ))
+                    .on_click(cx.listener(|this, _, window, cx| this.set_zoom(None, window, cx)));
+                #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+                let fit = crate::scenario::button_probe::observe(fit, "zoom-fit".into());
+                d.child(fit)
+            });
+        // Scenario measurement (K0080): where the zoom's parts are drawn.
+        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+        let group = group.child(probe("status-zoom-controls"));
+        group
     }
 
     /// The percentage with the pulldown's arrow (up: the list opens upwards), as one button, and the list of zooms it opens: the
@@ -254,6 +283,7 @@ fn zoom_step_button(id: &'static str, icon: IconName, tooltip: &'static str, dis
     let hover = hsla(0.0, 0.0, 0.27, 0.08);
     div()
         .id(id)
+        .relative()
         .size(px(22.))
         .flex()
         .flex_none()
@@ -362,4 +392,10 @@ impl ScrollbarHandle for TabsScroll {
     fn content_size(&self) -> Size<Pixels> {
         gpui_kit::size(self.width + self.handle.max_offset().x, self.handle.bounds().size.height)
     }
+}
+
+/// Scenario measurement: records the bounds of its (relative) parent under `id` (`tests/button_probe.rs`).
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+fn probe(id: &'static str) -> impl IntoElement {
+    canvas(|_, _, _| (), move |bounds, _, _, _| crate::scenario::button_probe::record_bounds(id, bounds)).absolute().inset_0()
 }

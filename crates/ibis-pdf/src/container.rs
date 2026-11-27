@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::cos::{CosDict, CosObj, Lexer, ObjectId, StreamData, Token, parse_indirect_object, write_cos};
+use crate::crypt::{Decryptor, decrypt_strings};
 use crate::xref::{Revision, XrefEntry, decode_stream_bytes, parse_revisions};
 use crate::{Error, Result};
 
@@ -28,6 +29,10 @@ pub struct PdfContainer {
     dirty: BTreeMap<ObjectId, CosObj>,
     cache: HashMap<(usize, ObjectId), CosObj>,
     next_obj_num: u32,
+    /// The decryption of an encrypted file (opened with the empty user password), and its `/Encrypt` object, which
+    /// stays as it is.
+    decryptor: Option<Decryptor>,
+    encrypt_id: Option<ObjectId>,
 }
 
 impl PdfContainer {
@@ -50,13 +55,43 @@ impl PdfContainer {
                 max_num = max_num.max(num + 1);
             }
         }
-        Ok(Self {
+        let mut container = Self {
             raw,
             revisions,
             dirty: BTreeMap::new(),
             cache: HashMap::new(),
             next_obj_num: max_num.max(1),
-        })
+            decryptor: None,
+            encrypt_id: None,
+        };
+        container.open_encryption()?;
+        Ok(container)
+    }
+
+    /// Read the trailer's `/Encrypt` and set up the decryption of the objects that follow.
+    fn open_encryption(&mut self) -> Result<()> {
+        let trailer = self.revisions[self.latest_revision_index()].trailer.clone();
+        let encrypt = match trailer.get(b"Encrypt") {
+            None => return Ok(()),
+            Some(CosObj::Ref(id)) => {
+                self.encrypt_id = Some(*id);
+                self.resolve(*id)?
+            }
+            Some(other) => other.clone(),
+        };
+        let dict = encrypt.as_dict().ok_or_else(|| Error::new("/Encrypt is not a dictionary"))?;
+        let id0 = match trailer.get_array(b"ID").and_then(|ids| ids.first()) {
+            Some(CosObj::Str(s)) => s.as_bytes().to_vec(),
+            _ => Vec::new(),
+        };
+        self.decryptor = Some(Decryptor::new(dict, &id0)?);
+        // Objects read before the decryptor (the /Encrypt dictionary) stay as read.
+        Ok(())
+    }
+
+    /// Whether the file is encrypted (its objects are decrypted as they are read).
+    pub fn is_encrypted(&self) -> bool {
+        self.decryptor.is_some()
     }
 
     pub fn raw_bytes(&self) -> &[u8] {
@@ -94,12 +129,26 @@ impl PdfContainer {
                 if generation != id.generation {
                     CosObj::Null
                 } else {
-                    let (parsed_id, parsed_obj) = parse_indirect_object(&self.raw, offset, 0)?;
+                    let (parsed_id, mut parsed_obj) = parse_indirect_object(&self.raw, offset, 0)?;
                     if parsed_id != id {
                         return Err(Error::new(format!(
                             "xref offset {} pointed to {} {} obj instead of {} {} obj",
                             offset, parsed_id.num, parsed_id.generation, id.num, id.generation
                         )));
+                    }
+                    // An encrypted file: the strings and the stream of an object stored on its own are encrypted
+                    // with the object's key (those in an object stream are plain once the stream is decrypted).
+                    if let Some(decryptor) = &self.decryptor
+                        && self.encrypt_id != Some(id)
+                    {
+                        decrypt_strings(decryptor, id, &mut parsed_obj);
+                        if let CosObj::Stream { dict, data } = &mut parsed_obj
+                            && decryptor.encrypts_stream(dict)
+                            && let StreamData::RawSlice { range, encoded } = data
+                        {
+                            let bytes = decryptor.decrypt_stream(id, self.raw.get(range.clone()).unwrap_or_default());
+                            *data = StreamData::Owned { bytes, encoded: *encoded };
+                        }
                     }
                     parsed_obj
                 }
@@ -194,6 +243,10 @@ impl PdfContainer {
 
     fn save_incremental(&self) -> Result<Vec<u8>> {
         use std::io::Write as _;
+        // The appended objects would have to be encrypted with the file's key; they are not.
+        if self.decryptor.is_some() && !self.dirty.is_empty() {
+            return Err(Error::new("an incremental update of an encrypted PDF is not supported"));
+        }
         if self.dirty.is_empty() {
             return Ok(self.raw.to_vec());
         }

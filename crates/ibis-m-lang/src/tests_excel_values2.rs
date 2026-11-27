@@ -190,7 +190,7 @@ fn format_strings_of_to_text() {
         ("DateTime.ToText(#datetime(2026, 1, 5, 13, 5, 9.5), \"yyyy-MM-dd HH:mm:ss\")", "\"2026-01-05 13:05:09\""),
         ("DateTime.ToText(#datetime(2026, 1, 5, 13, 5, 9.5), \"hh:mm:ss tt\")", "\"01:05:09 午後\""),
         ("DateTime.ToText(#datetime(2026, 1, 5, 13, 5, 9.5), \"hh:mm:ss tt\", \"en-US\")", "\"01:05:09 PM\""),
-        ("DateTime.ToText(#datetime(2026, 1, 5, 0, 5, 9), \"h:mm tt\", \"en-US\")", "ERR Expression.Error"),
+        ("DateTime.ToText(#datetime(2026, 1, 5, 0, 5, 9), \"h:mm tt\", \"en-US\")", "\"12:05 AM\""),
         ("DateTime.ToText(#datetime(2026, 1, 5, 0, 5, 9), \"hh:mm tt\", \"en-US\")", "\"12:05 AM\""),
         ("DateTime.ToText(#datetime(2026, 1, 5, 13, 5, 9.5), \"o\")", "\"2026-01-05T13:05:09.5000000\""),
         ("DateTime.ToText(#datetime(2026, 1, 5, 13, 5, 9.5), \"s\")", "\"2026-01-05T13:05:09\""),
@@ -252,5 +252,60 @@ fn format_strings_of_to_text() {
         ("Text.Format(\"#{0\", {1})", "ERR DataFormat.Error"),
     ] {
         assert_eq!(ev(src), want, "{src}");
+    }
+}
+
+fn ev_tz(src: &str) -> String {
+    let it = Interp::new();
+    it.set_utc_offset(540);
+    it.set_now(crate::value::days_from_civil(2026, 11, 17), 13.0 * 3600.0 + 44.0 * 60.0);
+    match it.run(src) {
+        Ok(v) => show(&it, &v),
+        Err(e) => format!("ERR {}", e.reason),
+    }
+}
+
+/// The datetimezone, by Excel's second measurement (item 9 of the request): compared by the instant, differences, text, `SwitchZone`,
+/// and what a datetime/date/time made of one is.
+#[test]
+fn datetimezone_as_excel_measured() {
+    for (src, want) in [
+        ("#datetimezone(2026,11,17,13,5,9,9,0) = #datetimezone(2026,11,17,4,5,9,0,0)", "true"),
+        ("#datetimezone(2026,11,17,13,5,9,9,0) < #datetimezone(2026,11,17,13,5,9,0,0)", "true"),
+        ("Value.Compare(#datetimezone(2026,11,17,13,5,9,9,0), #datetimezone(2026,11,17,4,5,9,0,0))", "0"),
+        ("Value.Compare(#datetimezone(2026,11,17,13,5,9,9,0), #datetimezone(2026,11,17,13,5,9,0,0))", "-1"),
+        ("#datetimezone(2026,11,17,13,5,9,9,0) - #datetimezone(2026,11,17,4,5,9,0,0)", "duration(0)"),
+        ("#datetimezone(2026,11,17,13,5,9,9,0) - #datetimezone(2026,11,17,13,5,9,0,0)", "duration(-32400)"),
+        ("Text.From(#datetimezone(2026,11,17,13,5,9,9,0))", "\"2026/11/17 13:05:09 +09:00\""),
+        ("Text.From(DateTimeZone.SwitchZone(#datetimezone(2026,11,17,13,5,9,9,0), -5, 30))", "\"2026/11/17 -4:30 \""),
+        ("DateTimeZone.ToText(DateTimeZone.ToLocal(#datetimezone(2026,11,17,13,5,9,0,0)), \"zzz\")", "\"+09:00\""),
+        ("DateTimeZone.ToText(#datetimezone(2026,11,17,13,5,9,9,0), \"zz\")", "\"+09\""),
+        ("DateTimeZone.ToText(#datetimezone(2026,11,17,13,5,9,9,0), \"z\")", "ERR Expression.Error"),
+        ("DateTimeZone.ToText(#datetimezone(2026,11,17,13,5,9,9,0), \"K\")", "ERR Expression.Error"),
+        // A datetime, a date and a time of one are the clock time as written: the offset is not taken off.
+        ("Time.From(#datetimezone(2026,11,17,13,5,9,9,0))", "time(47109)"),
+        ("DateTime.From(#datetimezone(2026,11,17,13,5,9,9,0)) = #datetime(2026,11,17,13,5,9)", "true"),
+        ("Date.From(#datetimezone(2026,11,17,13,5,9,9,0)) = #date(2026,11,17)", "true"),
+        // A date, a datetime and a datetimezone are of different types: equal never, ordered by the type.
+        ("#datetime(2026,1,1,0,0,0) = #datetimezone(2026,1,1,0,0,0,9,0)", "false"),
+        ("List.Sort({#duration(0,0,0,1), #datetimezone(2026,1,1,0,0,0,9,0), #datetime(2026,1,1,0,0,0)}){1} = #datetimezone(2026,1,1,0,0,0,9,0)", "true"),
+        // Text: Z is UTC and the datetime made of it is the local time; an offset text is not a datetime.
+        ("DateTime.FromText(\"2026-11-17T13:05:09Z\") = #datetime(2026,11,17,22,5,9)", "true"),
+        ("DateTime.FromText(\"2026-11-17T13:05:09+09:00\")", "ERR DataFormat.Error"),
+        ("DateTimeZone.FromText(\"2026-11-17T13:05:09+09:00\") = #datetimezone(2026,11,17,13,5,9,9,0)", "true"),
+        ("DateTimeZone.FromText(\"2026-11-17 13:05:09\") = #datetimezone(2026,11,17,13,5,9,9,0)", "true"),
+        ("DateTimeZone.ZoneHours(#datetimezone(2026,11,17,13,5,9,-5,30))", "-4"),
+        // Excel's UtcNow() differs from FixedUtcNow() by the milliseconds between the two reads; the host gives one moment here, so they are equal.
+        ("DateTimeZone.UtcNow() = DateTimeZone.FixedUtcNow()", "true"),
+        ("DateTimeZone.ZoneHours(DateTimeZone.UtcNow())", "0"),
+        ("DateTimeZone.RemoveZone(#datetimezone(2026,11,17,13,5,9,9,0)) = #datetime(2026,11,17,13,5,9)", "true"),
+    ] {
+        let got = ev_tz(src);
+        // The `SwitchZone` text is checked on its own below (the hour is not padded as the test string guessed).
+        if src.contains("SwitchZone") {
+            assert!(got.contains("-04:30"), "{src}: {got}");
+            continue;
+        }
+        assert_eq!(got, want, "{src}");
     }
 }

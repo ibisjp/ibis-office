@@ -55,6 +55,14 @@ impl SlideEditor {
             state.fill_copy = event.modifiers.alt;
             cx.notify();
         }
+        if self.sheet_state().is_some_and(|s| s.table_resize.is_some()) {
+            if event.pressed_button == Some(MouseButton::Left) {
+                self.update_table_resize(event.position, cx);
+            } else {
+                self.finish_table_resize(cx);
+            }
+            return true;
+        }
         if self.sheet_state().is_some_and(|s| s.cell_move.is_some()) {
             if event.pressed_button == Some(MouseButton::Left) {
                 let past = self.drag_pointer_moved(event.position, event.modifiers.alt, cx);
@@ -123,6 +131,9 @@ impl SlideEditor {
             return true;
         }
         if self.on_control_drag_up(cx) {
+            return true;
+        }
+        if self.finish_table_resize(cx) {
             return true;
         }
         if self.finish_cell_move(cx) {

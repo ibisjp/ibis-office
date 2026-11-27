@@ -34,6 +34,19 @@ fn escape(text: &str, attribute: bool) -> String {
     out
 }
 
+fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
 fn is_hidden_column(sheet: &Sheet, column: u32) -> bool {
     sheet.columns.get(column as usize).is_some_and(|w| *w == 0)
 }
@@ -42,8 +55,25 @@ fn is_hidden_row(sheet: &Sheet, row: u32) -> bool {
     sheet.rows.get(row as usize).is_some_and(|h| *h == 0)
 }
 
+/// What draws a shape of the sheet that the page cannot (a chart, a slicer…) as a picture: PNG bytes, or `None`.
+pub type Raster<'a> = &'a dyn Fn(&ibis_doc_model::Shape, &[ibis_doc_model::Shape]) -> Option<Vec<u8>>;
+
+/// The shapes of the sheet at slide index `slide` that the page draws as pictures the caller makes (charts and the other objects over the cells), in order.
+pub fn shapes_needing_pictures(presentation: &Presentation, slide: usize) -> Vec<ibis_doc_model::Shape> {
+    presentation
+        .slides
+        .get(slide)
+        .map(|page| page.shapes.iter().filter(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Chart(_) | ibis_doc_model::ShapeKind::Placeholder(_) | ibis_doc_model::ShapeKind::Slicer(_) | ibis_doc_model::ShapeKind::Timeline(_) | ibis_doc_model::ShapeKind::Control(_))).cloned().collect())
+        .unwrap_or_default()
+}
+
 /// The sheet at slide index `slide` as a whole HTML page (UTF-8).
 pub fn sheet_to_html(presentation: &Presentation, slide: usize) -> Result<String, SheetHtmlError> {
+    sheet_to_html_with(presentation, slide, &|_, _| None)
+}
+
+/// [`sheet_to_html`] with the pictures `raster` makes of the charts and the other objects over the cells: each an `<img>` with its PNG as a data URI, after the table, in the order of the sheet's shapes.
+pub fn sheet_to_html_with(presentation: &Presentation, slide: usize, raster: Raster<'_>) -> Result<String, SheetHtmlError> {
     let page = presentation.slides.get(slide).ok_or(SheetHtmlError::NoSheet)?;
     let sheet = sheet_of_slide(page).ok_or(SheetHtmlError::NoSheet)?;
     let title = page.name.clone().unwrap_or_default();
@@ -98,7 +128,22 @@ pub fn sheet_to_html(presentation: &Presentation, slide: usize) -> Result<String
         }
         out.push_str("</tr>\n");
     }
-    out.push_str("</table>\n</div>\n</body>\n</html>\n");
+    out.push_str("</table>\n</div>\n");
+    for shape in shapes_needing_pictures(presentation, slide) {
+        let members: Vec<ibis_doc_model::Shape> = if matches!(shape.kind, ibis_doc_model::ShapeKind::Placeholder(ibis_doc_model::Placeholder::Diagram)) {
+            page.attached_to(shape.id).into_iter().filter_map(|id| page.shape(id).cloned()).collect()
+        } else {
+            Vec::new()
+        };
+        if let Some(png) = raster(&shape, &members) {
+            let alt = shape.picture_label(&members).unwrap_or_else(|| match &shape.kind {
+                ibis_doc_model::ShapeKind::Chart(_) => "Chart".to_string(),
+                _ => "Object".to_string(),
+            });
+            out.push_str(&format!("<p><img alt=\"{}\" src=\"data:image/png;base64,{}\"></p>\n", escape(&alt, true), base64(&png)));
+        }
+    }
+    out.push_str("</body>\n</html>\n");
     Ok(out)
 }
 

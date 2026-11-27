@@ -23,6 +23,7 @@ pub fn all() -> Vec<(&'static str, fn())> {
         ("shell::title_draw_button_opens_the_ink_panel", draw_button_opens_ink_panel),
         ("shell::title_buttons_narrow", buttons_narrow),
         ("shell::menubar_has_no_draw", menubar_has_no_draw),
+        ("shell::menu_bar_ids_and_cached_widths", menu_bar_ids_and_cached_widths),
         ("shell::sidebars_toolbar_buttons", toolbar_buttons),
         ("shell::title_comments_button_toggles", comments_button_toggles),
         ("shell::title_design_mode_close_button", design_mode_close_button),
@@ -260,4 +261,41 @@ fn design_mode_close_button() {
     s.settle();
     assert!(buttons::bounds("xlsx-design-mode-close").is_none(), "the pill goes when the mode is left");
     assert_eq!(s.menu_state("xlsx.design-mode").map(|(_, checked)| checked), Some(false), "and the line is unchecked");
+}
+
+/// #299: the menu bar's ids come without building the menu entries (`bar_menu_ids`) and are the ones `bar_items` gives; the widths of the labels are
+/// kept between frames, and a change of language (or of the window's width) makes the bar fold at the width the new labels need.
+fn menu_bar_ids_and_cached_widths() {
+    use ibis_office_base::i18n::{self, Language};
+    for (_, name, file) in FILES {
+        let mut s = Scenario::open(file);
+        let from_items: Vec<String> = s.with(|e, _| e.bar_items().iter().map(|(m, _)| m.key().to_string()).collect());
+        let from_ids: Vec<String> = s.with(|e, _| e.bar_menu_ids().iter().map(|m| m.key().to_string()).collect());
+        assert_eq!(from_ids, from_items, "{name}: the bar's menus are the same by either way");
+    }
+    // The width at which no menu is folded into the ▾ (the widest label row that fits): it follows the language, and returns when the language does.
+    fn threshold(s: &mut Scenario) -> f32 {
+        for w in (400..=2400).step_by(20) {
+            s.size(w as f32, 700.);
+            s.settle();
+            let none_hidden = s.update(|e, window, _| {
+                let menus = e.bar_menu_ids();
+                e.bar_layout_menus(&menus, window).hidden.is_empty()
+            });
+            if none_hidden {
+                return w as f32;
+            }
+        }
+        f32::MAX
+    }
+    let mut s = Scenario::open(FILES[0].2);
+    i18n::show(Language::Japanese);
+    let ja = threshold(&mut s);
+    // Asked again with the cache warm: the same.
+    assert_eq!(threshold(&mut s), ja, "the second pass over the widths gives the first one's answer");
+    i18n::show(Language::English);
+    let en = threshold(&mut s);
+    assert_ne!(en, ja, "the English labels need another width than the Japanese ones (ja {ja}, en {en}), not the cached widths of the other language");
+    i18n::show(Language::Japanese);
+    assert_eq!(threshold(&mut s), ja, "back to Japanese: the Japanese answer again");
 }

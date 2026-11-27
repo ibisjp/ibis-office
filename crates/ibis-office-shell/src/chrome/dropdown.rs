@@ -143,7 +143,7 @@ impl RenderOnce for Dropdown {
 }
 
 pub(crate) fn is_font_item_id(id:&str)->bool {
-    matches!(id,"xlsx.font"|"pptx.font"|"docx.font"|"font.recent.item"|"docx-font-latin-list"|"docx-font-east-asian-list"|"docx-font-complex-script-list"|"docx-style-font-list") || id.starts_with("panel-font-")
+    matches!(id,"xlsx.font"|"pptx.font"|"docx.font"|"font.recent.item"|"docx-font-latin-list"|"docx-font-east-asian-list"|"docx-font-complex-script-list"|"docx-style-font-list-ascii"|"docx-style-font-list-east-asian") || id.starts_with("panel-font-")
 }
 pub(crate) fn font_item(family:&str,label:SharedString,color:Hsla)->AnyElement {
     if let Some(preview)=crate::font_preview::get_or_render_preview(family,&label) {

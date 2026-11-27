@@ -195,7 +195,8 @@ pub(crate) fn fill_of(cx: &mut Cx, chain: &[(&'static str, String)]) -> String {
         Some("bitmap") => {
             let Some(image) = get(DRAW, "fill-image-name").and_then(|n| cx.st.images.get(n).copied()) else { return String::new() };
             let Some(rid) = attr(image, XLINK, "href").and_then(|h| cx.image_rel(h)) else { return String::new() };
-            let repeat = get(DRAW, "fill-image-rendering-style").unwrap_or("stretch");
+            // `style:repeat` (ODF 1.2 20.259: no-repeat, repeat, stretch) is what PowerPoint writes; `draw:fill-image-rendering-style` is the older name.
+            let repeat = get(STYLE, "repeat").or_else(|| get(DRAW, "fill-image-rendering-style")).unwrap_or("stretch");
             // `draw:opacity` (ODF 1.3 19.254) is the picture fill's opacity too: `a:alphaModFix`.
             let blip = match alpha {
                 Some(a) if a < 1.0 => format!(r#"<a:blip r:embed="{rid}"><a:alphaModFix amt="{}"/></a:blip>"#, (a * 100_000.0).round() as i64),
@@ -767,10 +768,24 @@ fn shape(cx: &mut Cx, n: Node, out: &mut String) {
 fn line(cx: &mut Cx, n: Node, out: &mut String) {
     let len = |local: &str| attr(n, SVG, local).and_then(emu);
     let (Some(x1), Some(y1), Some(x2), Some(y2)) = (len("x1"), len("y1"), len("x2"), len("y2")) else { return };
-    let g = Geom { x: x1.min(x2), y: y1.min(y2), w: (x2 - x1).abs(), h: (y2 - y1).abs(), flip_h: x2 < x1, flip_v: y2 < y1, ..Default::default() };
+    let mut g = Geom { x: x1.min(x2), y: y1.min(y2), w: (x2 - x1).abs(), h: (y2 - y1).abs(), flip_h: x2 < x1, flip_v: y2 < y1, ..Default::default() };
+    // The connector's `draw:transform` turns it about the middle of its two ends (PowerPoint's `-SaveAs pptx` of the same .odp writes the
+    // unturned box of the ends with `rot` of the transform's angle, clockwise, and the shape as `curvedConnector3`).
+    let mut prst = "line";
+    if n.tag_name().name() == "connector" {
+        if let Some(t) = attr(n, DRAW, "transform") {
+            g.rot = ooxml_rotation(placed_box(t, g.w as f64, g.h as f64, emu).2);
+        }
+        // The attribute draw:type of draw:connector (ODF 1.3): "standard" has right-angled segments, "curve" is curved, "line" and "lines" are straight.
+        prst = match attr(n, DRAW, "type") {
+            Some("curve") => "curvedConnector3",
+            Some("standard") => "bentConnector3",
+            _ => "line",
+        };
+    }
     let chain = style_chain(n);
     let (id, name) = next_name(cx, n, "Line");
-    let mut sp_pr = format!(r#"{}<a:prstGeom prst="line"><a:avLst/></a:prstGeom>"#, xfrm(&g, "a:xfrm"));
+    let mut sp_pr = format!(r#"{}<a:prstGeom prst="{prst}"><a:avLst/></a:prstGeom>"#, xfrm(&g, "a:xfrm"));
     let ln = line_xml(cx, &chain);
     sp_pr += &if ln.is_empty() { "<a:ln><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill></a:ln>".to_string() } else { ln };
     sp_pr += &shadow_xml(cx, &chain);
@@ -825,13 +840,14 @@ pub(crate) fn child_bounds(n: Node) -> Option<Geom> {
     }
 }
 
-/// A picture's crop (`fo:clip`: "rect(top, right, bottom, left)" of the picture at its own size) as `a:srcRect`.
+/// A picture's crop (`fo:clip`: "rect(top, right, bottom, left)" of the picture at its own size) as `a:srcRect`. A negative side shows the
+/// picture smaller than its frame (PowerPoint's `-SaveAs pptx` of `rect(-0.64203in, 0in, -0.64203in, 0in)` writes `srcRect t="-9737" b="-9737"`).
 fn src_rect(cx: &Cx, chain: &[(&'static str, String)], size: Option<(f64, f64)>) -> String {
     let Some(clip) = cx.st.prop_in(&names(chain), FO, "clip") else { return String::new() };
     let Some(inner) = clip.trim().strip_prefix("rect(").and_then(|c| c.strip_suffix(')')) else { return String::new() };
     let sides: Vec<i64> = inner.split(|c: char| c == ',' || c.is_whitespace()).filter(|t| !t.is_empty()).filter_map(emu).collect();
     let (Some((iw, ih)), 4) = (size, sides.len()) else { return String::new() };
-    let frac = |v: i64, total: f64| ((v as f64 / total) * 100_000.0).round().clamp(0.0, 99_000.0) as i64;
+    let frac = |v: i64, total: f64| ((v as f64 / total) * 100_000.0).round().clamp(-1_000_000.0, 99_000.0) as i64;
     let (t, r, b, l) = (frac(sides[0], ih), frac(sides[1], iw), frac(sides[2], ih), frac(sides[3], iw));
     if t == 0 && r == 0 && b == 0 && l == 0 {
         return String::new();
@@ -918,6 +934,20 @@ pub(crate) fn picture_size(data: &[u8]) -> Option<(f64, f64)> {
         }
         return Some((w * 0.75, h * 0.75));
     }
+    // An EMF: PowerPoint takes the frame rectangle (0.01 mm) at the header's reference device (`szlDevice` pixels over `szlMillimeters`), plus one
+    // pixel, as the picture's size in pixels of 96 dpi (037's four EMF crops, `fo:clip` -> `a:srcRect`, match PowerPoint's own pptx to the unit; so do
+    // 120 and 125 and 149 when the frame is not a whole number of pixels).
+    if data.len() >= 88 && data[0..4] == [1, 0, 0, 0] && data[40..44] == *b" EMF" {
+        let i = |at: usize| i32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]) as f64;
+        let (dev_w, dev_h, mm_w, mm_h) = (i(72), i(76), i(80), i(84));
+        if dev_w > 0.0 && dev_h > 0.0 && mm_w > 0.0 && mm_h > 0.0 {
+            let w = (i(32) - i(24)) / 100.0 * dev_w / mm_w;
+            let h = (i(36) - i(28)) / 100.0 * dev_h / mm_h;
+            if w > 0.0 && h > 0.0 {
+                return Some(((w + 1.0).round() * 0.75, (h + 1.0).round() * 0.75));
+            }
+        }
+    }
     if data.starts_with(&[0xFF, 0xD8]) {
         let mut at = 2;
         let mut density: Option<(f64, f64)> = None;
@@ -981,24 +1011,14 @@ fn border(text: Option<&str>, tag: &str) -> String {
 }
 
 fn table(cx: &mut Cx, frame: Node, table: Node, g: Geom, out: &mut String) {
-    // Columns (with repeats) and rows, through the header and body groups.
+    // DrawingML needs one grid column per ODF column, including repeats; the columns and rows are read through nested groups.
     let mut columns: Vec<i64> = Vec::new();
-    let mut rows: Vec<Node> = Vec::new();
-    fn collect<'a, 'i>(cx: &Cx, node: Node<'a, 'i>, columns: &mut Vec<i64>, rows: &mut Vec<Node<'a, 'i>>) {
-        for c in node.children().filter(|c| c.is_element() && c.tag_name().namespace() == Some(TABLE)) {
-            match c.tag_name().name() {
-                "table-column" => {
-                    let repeat = attr(c, TABLE, "number-columns-repeated").and_then(|r| r.parse::<usize>().ok()).unwrap_or(1).min(256);
-                    let width = attr(c, TABLE, "style-name").and_then(|s| cx.st.prop("table-column", s, STYLE, "column-width")).and_then(emu).unwrap_or(914_400);
-                    columns.extend(std::iter::repeat_n(width, repeat));
-                }
-                "table-row" => rows.push(c),
-                "table-columns" | "table-header-columns" | "table-header-rows" | "table-rows" | "table-row-group" => collect(cx, c, columns, rows),
-                _ => {}
-            }
-        }
+    for column in crate::odf::table_columns(table) {
+        let repeat = attr(column, TABLE, "number-columns-repeated").and_then(|r| r.parse::<usize>().ok()).unwrap_or(1).min(256);
+        let width = attr(column, TABLE, "style-name").and_then(|s| cx.st.prop("table-column", s, STYLE, "column-width")).and_then(emu).unwrap_or(914_400);
+        columns.extend(std::iter::repeat_n(width, repeat));
     }
-    collect(cx, table, &mut columns, &mut rows);
+    let rows: Vec<Node> = crate::odf::table_rows(table).collect();
     if columns.is_empty() || rows.is_empty() {
         return;
     }

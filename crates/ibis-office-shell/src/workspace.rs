@@ -36,6 +36,8 @@ impl SlideEditor {
         // The cell being typed into, laid out before the sheet is (the pop-ups of the cursor read its layout): one element,
         // over the frozen panes, not a part of the sheet they draw again.
         let cell_editor = content.filter(|_| !with_format!(self, workspace_page_layout_shown(self))).and_then(|content| with_format!(self, workspace_cell_editor(self, content, cx)));
+        let bounce_scroll = self.workspace_scroll.clone();
+        let (overscroll_x, overscroll_y) = (self.overscroll_x.clone(), self.overscroll_y.clone());
         let theme = cx.theme();
         // The outer element is the workspace (focus, pointer, its bounds for
         // the layout); the inner one scrolls a slide larger than it.
@@ -55,11 +57,24 @@ impl SlideEditor {
             .bg(theme.muted)
             .when(self.tool != Tool::Select, |d| d.cursor(crate::insert_band::insert_cursor()))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_workspace_down))
+            // The page, the frozen panes, the headers and the cell being typed into stretch together past an end of the scroll and spring back, as
+            // `UIScrollView` does (K0065, `gpui-base`'s `ScrollBounce`, one for each axis); the scrollbars and the rest stay outside.
+            .child(
+                gpui_kit::base::ScrollBounce::new(
+                    "workspace-bounce-y",
+                    &bounce_scroll,
+                    gpui_kit::base::ScrollBounce::new(
+                        "workspace-bounce-x",
+                        &bounce_scroll,
+                        div()
+                            .relative()
+                            .size_full()
             .child(
                 div()
                     .id("workspace-scroll")
                     .size_full()
                     .overflow_scroll()
+                    .no_bounce()
                     .track_scroll(&self.workspace_scroll)
                     .when_some(layout.zip(content), |d, (layout, content)| {
                         // The page layout view: the papers (page_layout.rs); else the slide.
@@ -89,6 +104,14 @@ impl SlideEditor {
             .when_some(content.filter(|_| !with_format!(self, workspace_page_layout_shown(self))).and_then(|content| with_format!(self, workspace_headers(self, content, cx))), |d, headers| {
                 d.child(headers)
             })
+                    )
+                    .axis(Axis::Horizontal)
+                    .enabled(true).touch_only()
+                    .report_displacement(&overscroll_x),
+                )
+                .enabled(true).touch_only()
+                .report_displacement(&overscroll_y),
+            )
             .children(self.render_loading(cx))
             .child(crate::editor::wheel_zoom_listener(cx))
             .child(crate::editor::bounds_observer(move |bounds, window, cx| {

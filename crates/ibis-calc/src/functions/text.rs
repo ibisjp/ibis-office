@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use regex::RegexBuilder;
+use fancy_regex::RegexBuilder;
 
 use super::{Func, arg_array, array_value, collect_values, err, number, numeric};
 use crate::eval::{Array, Ctx, Value, to_number, to_text};
@@ -795,7 +795,7 @@ fn code_of(ch: char) -> Option<u32> {
 }
 
 /// Half-width katakana for full-width ones (ASC), with their sound marks.
-const KANA: &[(char, &str)] = &[
+pub(super) const KANA: &[(char, &str)] = &[
     ('。', "｡"), ('「', "｢"), ('」', "｣"), ('、', "､"), ('・', "･"), ('ヲ', "ｦ"), ('ァ', "ｧ"), ('ィ', "ｨ"), ('ゥ', "ｩ"), ('ェ', "ｪ"), ('ォ', "ｫ"),
     ('ャ', "ｬ"), ('ュ', "ｭ"), ('ョ', "ｮ"), ('ッ', "ｯ"), ('ー', "ｰ"), ('ア', "ｱ"), ('イ', "ｲ"), ('ウ', "ｳ"), ('エ', "ｴ"), ('オ', "ｵ"), ('カ', "ｶ"),
     ('キ', "ｷ"), ('ク', "ｸ"), ('ケ', "ｹ"), ('コ', "ｺ"), ('サ', "ｻ"), ('シ', "ｼ"), ('ス', "ｽ"), ('セ', "ｾ"), ('ソ', "ｿ"), ('タ', "ﾀ"), ('チ', "ﾁ"),
@@ -1307,6 +1307,62 @@ fn arraytotext(c: &mut Ctx, a: &[Expr]) -> Value {
     Value::Text(out)
 }
 
+/// PCRE2 (Excel's engine) accepts only fixed-length lookbehinds (each top-level alternative of fixed length); Excel gives #VALUE! for
+/// `(?<=a+)b` (measured, #259). fancy-regex accepts some variable-length ones, so reject a lookbehind whose body has a `*`, `+`, `?`
+/// or `{n,}`/`{n,m}` quantifier (escapes and character classes skipped).
+fn has_variable_lookbehind(pattern: &str) -> bool {
+    let b: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    // Stack of group kinds: true = a lookbehind.
+    let mut stack: Vec<bool> = Vec::new();
+    while i < b.len() {
+        match b[i] {
+            '\\' => i += 1,
+            '[' => {
+                // Skip the character class (a `]` first is literal).
+                i += 1;
+                if i < b.len() && b[i] == '^' {
+                    i += 1;
+                }
+                if i < b.len() && b[i] == ']' {
+                    i += 1;
+                }
+                while i < b.len() && b[i] != ']' {
+                    if b[i] == '\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            '(' => {
+                let lb = b.get(i + 1) == Some(&'?') && b.get(i + 2) == Some(&'<') && matches!(b.get(i + 3), Some('=') | Some('!'));
+                stack.push(lb);
+                if b.get(i + 1) == Some(&'?') {
+                    // Skip the `?` of the group syntax so it is not read as a quantifier.
+                    i += 1;
+                }
+            }
+            ')' => {
+                stack.pop();
+            }
+            '*' | '+' | '?' if stack.iter().any(|&l| l) => return true,
+            '{' if stack.iter().any(|&l| l) => {
+                // {n} is fixed; {n,} and {n,m} are not.
+                let mut j = i + 1;
+                while j < b.len() && b[j] != '}' {
+                    if b[j] == ',' {
+                        return true;
+                    }
+                    j += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 fn regextest(c: &mut Ctx, a: &[Expr]) -> Value {
     let d1904 = c.date1904();
     c.map_args(a, move |_, v| {
@@ -1328,11 +1384,17 @@ fn regextest(c: &mut Ctx, a: &[Expr]) -> Value {
         if case_sens != 0.0 && case_sens != 1.0 {
             return err(CellError::Value);
         }
+        if has_variable_lookbehind(&pattern) {
+            return err(CellError::Value);
+        }
         let re = match RegexBuilder::new(&pattern).case_insensitive(case_sens == 1.0).build() {
             Ok(r) => r,
             Err(_) => return err(CellError::Value),
         };
-        Value::Bool(re.is_match(&text))
+        match re.is_match(&text) {
+            Ok(b) => Value::Bool(b),
+            Err(_) => err(CellError::Value),
+        }
     })
 }
 
@@ -1366,6 +1428,9 @@ fn regexextract(c: &mut Ctx, a: &[Expr]) -> Value {
     if case_sens != 0.0 && case_sens != 1.0 {
         return err(CellError::Value);
     }
+    if has_variable_lookbehind(&pattern) {
+        return err(CellError::Value);
+    }
     let re = match RegexBuilder::new(&pattern).case_insensitive(case_sens == 1.0).build() {
         Ok(r) => r,
         Err(_) => return err(CellError::Value),
@@ -1373,11 +1438,18 @@ fn regexextract(c: &mut Ctx, a: &[Expr]) -> Value {
 
     if return_mode == 0.0 {
         match re.find(&text) {
-            Some(m) => limit(m.as_str().to_string()),
-            None => err(CellError::NA),
+            Ok(Some(m)) => limit(m.as_str().to_string()),
+            Ok(None) => err(CellError::NA),
+            Err(_) => err(CellError::Value),
         }
     } else if return_mode == 1.0 {
-        let matches: Vec<Value> = re.find_iter(&text).map(|m| Value::Text(m.as_str().to_string())).collect();
+        let mut matches: Vec<Value> = Vec::new();
+        for m in re.find_iter(&text) {
+            match m {
+                Ok(m) => matches.push(Value::Text(m.as_str().to_string())),
+                Err(_) => return err(CellError::Value),
+            }
+        }
         if matches.is_empty() {
             err(CellError::NA)
         } else {
@@ -1395,7 +1467,8 @@ fn regexextract(c: &mut Ctx, a: &[Expr]) -> Value {
             return err(CellError::Value);
         }
         match re.captures(&text) {
-            Some(caps) => {
+            Err(_) => err(CellError::Value),
+            Ok(Some(caps)) => {
                 let items: Vec<Value> = (1..=num_groups)
                     .map(|i| {
                         caps.get(i).map_or(Value::Text(String::new()), |m| Value::Text(m.as_str().to_string()))
@@ -1407,7 +1480,7 @@ fn regexextract(c: &mut Ctx, a: &[Expr]) -> Value {
                     data: items,
                 }))
             }
-            None => err(CellError::NA),
+            Ok(None) => err(CellError::NA),
         }
     }
 }
@@ -1436,21 +1509,39 @@ fn regexreplace(c: &mut Ctx, a: &[Expr]) -> Value {
         if case_sens != 0.0 && case_sens != 1.0 {
             return err(CellError::Value);
         }
+        if has_variable_lookbehind(&pattern) {
+            return err(CellError::Value);
+        }
         let re = match RegexBuilder::new(&pattern).case_insensitive(case_sens == 1.0).build() {
             Ok(r) => r,
             Err(_) => return err(CellError::Value),
         };
 
-        if occurrence == 0 {
-            let replaced = re.replace_all(&text, &replacement);
-            limit(replaced.into_owned())
-        } else {
-            let captures: Vec<_> = re.captures_iter(&text).collect();
+        {
+            let mut captures = Vec::new();
+            for m in re.captures_iter(&text) {
+                match m {
+                    Ok(m) => captures.push(m),
+                    Err(_) => return err(CellError::Value),
+                }
+            }
             let count = captures.len();
             if count == 0 {
                 return limit(text);
             }
-            let target_idx = if occurrence > 0 {
+            let target_idx = if occurrence == 0 {
+                // All matches: replace each, left to right.
+                let mut result = String::with_capacity(text.len());
+                let mut last = 0;
+                for m in &captures {
+                    let range = m.get(0).unwrap().range();
+                    result.push_str(&text[last..range.start]);
+                    m.expand(&replacement, &mut result);
+                    last = range.end;
+                }
+                result.push_str(&text[last..]);
+                return limit(result);
+            } else if occurrence > 0 {
                 (occurrence as usize) - 1
             } else {
                 let rev_idx = occurrence.unsigned_abs() as usize;
@@ -1692,6 +1783,62 @@ mod tests {
         // Mode 2 with no capture groups in pattern -> #VALUE!
         let res = eval_func("REGEXEXTRACT", vec![Expr::Text("abc".into()), Expr::Text(r"\w+".into()), Expr::Number(2.0)]);
         assert_eq!(res, Value::Error(CellError::Value));
+    }
+
+    #[test]
+    fn test_regex_lookaround_and_pcre_syntax_issue_259() {
+        let t = |s: &str| Expr::Text(s.into());
+        // #259: lookbehind + lookahead.
+        let res = eval_func("REGEXEXTRACT", vec![t("( (#) )"), t(r"(?<=\(\s).*?(?=\s\))")]);
+        assert_eq!(res, Value::Text("(#)".into()));
+        // Lookahead only.
+        let res = eval_func("REGEXEXTRACT", vec![t("price: 120 yen"), t(r"\d+(?= yen)")]);
+        assert_eq!(res, Value::Text("120".into()));
+        // Negative lookahead / lookbehind.
+        let res = eval_func("REGEXTEST", vec![t("foobar"), t("foo(?!bar)")]);
+        assert_eq!(res, Value::Bool(false));
+        let res = eval_func("REGEXTEST", vec![t("xbar"), t("(?<!foo)bar")]);
+        assert_eq!(res, Value::Bool(true));
+        // Backreference.
+        let res = eval_func("REGEXTEST", vec![t("abcabc"), t(r"(abc)\1")]);
+        assert_eq!(res, Value::Bool(true));
+        // Replace with lookbehind, all occurrences and the 2nd one.
+        let res = eval_func("REGEXREPLACE", vec![t("a1 b1 c1"), t(r"(?<=[ab])1"), t("X")]);
+        assert_eq!(res, Value::Text("aX bX c1".into()));
+        let res = eval_func("REGEXREPLACE", vec![t("a1 b1 c1"), t(r"(?<=[abc])1"), t("X"), Expr::Number(2.0)]);
+        assert_eq!(res, Value::Text("a1 bX c1".into()));
+    }
+
+    /// The ten expressions measured in Excel (Microsoft 365, build 20527) for #259; the values are those of
+    /// tasks/doc/requests/2026-11-21-259-regex-excel-result.md.
+    #[test]
+    fn test_regex_matches_excel_259() {
+        let t = |s: &str| Expr::Text(s.into());
+        // 1: lookbehind and lookahead.
+        assert_eq!(eval_func("REGEXEXTRACT", vec![t("( (#) )"), t(r"(?<=\(\s).*?(?=\s\))")]), Value::Text("(#)".into()));
+        // 2: a named group is accepted; the default mode returns the whole match.
+        assert_eq!(eval_func("REGEXEXTRACT", vec![t("abc-123"), t(r"(?<n>\d+)")]), Value::Text("123".into()));
+        // 3: a named back reference.
+        assert_eq!(eval_func("REGEXTEST", vec![t("abab"), t(r"(?<n>ab)\k<n>")]), Value::Bool(true));
+        // 4-6: $1, ${n} and $0 in the replacement.
+        assert_eq!(eval_func("REGEXREPLACE", vec![t("abc"), t("(b)"), t("[$1]")]), Value::Text("a[b]c".into()));
+        assert_eq!(eval_func("REGEXREPLACE", vec![t("abc"), t("(?<n>b)"), t("[${n}]")]), Value::Text("a[b]c".into()));
+        assert_eq!(eval_func("REGEXREPLACE", vec![t("abc"), t("b"), t("[$0]")]), Value::Text("a[b]c".into()));
+        // 7, 8: an atomic group and a possessive quantifier do not backtrack.
+        assert_eq!(eval_func("REGEXTEST", vec![t("aaa"), t("(?>a+)a")]), Value::Bool(false));
+        assert_eq!(eval_func("REGEXTEST", vec![t("aaa"), t("a++a")]), Value::Bool(false));
+        // 9: Excel gives #VALUE! at once (0.12 s); whether from a match limit or another reason is not known. ibisOffice runs a
+        // pattern without lookaround or back references on the linear-time regex engine, so it gives the true answer (no
+        // match, FALSE) at once and never explodes. A known difference from Excel (reported on #259); what matters here is that it is fast.
+        let start = crate::clock::monotonic_nanos();
+        let res = eval_func("REGEXTEST", vec![Expr::Text(format!("{}b", "a".repeat(30))), t("(a+)+$")]);
+        assert_eq!(res, Value::Bool(false));
+        // (`None` in the browser: no timing there.)
+        if let (Some(a), Some(b)) = (start, crate::clock::monotonic_nanos()) {
+            assert!(b - a < 1_000_000_000);
+        }
+        // 10: a variable-length lookbehind is an error.
+        assert_eq!(eval_func("REGEXTEST", vec![t("aab"), t("(?<=a+)b")]), Value::Error(CellError::Value));
     }
 
     #[test]

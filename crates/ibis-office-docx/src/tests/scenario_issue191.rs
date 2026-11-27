@@ -23,6 +23,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::issue191_a_drop_cap_keeps_the_text_off_by_its_advance_and_hspace", a_drop_cap_keeps_the_text_off_by_its_advance_and_hspace),
         ("docx::issue191_drop_cap_size_and_raise_are_words", drop_cap_size_and_raise_are_words),
         ("docx::issue191_the_editors_drop_cap_has_words_size_and_raise", the_editors_drop_cap_has_words_size_and_raise),
+        ("docx::issue191_a_text_frame_goes_where_it_says_and_the_text_goes_round_it", a_text_frame_goes_where_it_says_and_the_text_goes_round_it),
+        ("docx::issue191_a_frames_height_wrap_and_missing_width", a_frames_height_wrap_and_missing_width),
         ("docx::issue191_dump", dump),
     ]
 }
@@ -344,6 +346,96 @@ fn a_drop_cap_keeps_the_text_off_by_its_advance_and_hspace() {
     near(x_of(&pg2, 0, "本"), 72.0 + 63.0, 0.3, &format!("two characters ({y2})"));
     let pg3 = cap("cap3", "カ", "283");
     near(x_of(&pg3, 0, "本"), 72.0 + 31.58 + 14.15, 0.3, "with hSpace");
+}
+
+/// A paragraph's text frame with a width (`w:framePr w:w`, not a drop cap) goes where `w:hAnchor`, `w:vAnchor`, `w:x`, `w:xAlign` and `w:y` say, its text wrapped in the width, the
+/// text of the paragraph after it going round it (Word's PDF of `n8-boxes.docx`, F2a and F2b, ＭＳ 明朝 10.5 pt, 28 characters of frame text of 150 pt in 14 per line): F2a at the
+/// right (`xAlign`) has the frame's lines from x 373.39, 3 of them, the text from 72 to 366.31 beside them (28 characters) and below them in full; F2b at x 3000 twips, y 500 twips
+/// from the text has its lines from x 222.05 and y 116.78 (the baselines 118.27, 131.83, 145.51), the text round it on both sides (14 and 14 characters on those lines).
+fn a_text_frame_goes_where_it_says_and_the_text_goes_round_it() {
+    let frame = |name: &str, frame_pr: &str| {
+        let body = p(&format!(r#"<w:framePr w:w="3000" w:wrap="around" w:vAnchor="text" w:hAnchor="margin" {frame_pr}/><w:spacing w:before="0" w:after="0"/>"#), "", "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモ")
+            + &p(r#"<w:spacing w:before="0" w:after="0"/>"#, "", &"あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめも".repeat(4));
+        pages_of(&make(name, &body))
+    };
+    // (x, baseline, text) of the page's text items, the frame's being those that start with a katakana.
+    let items = |pg: &Pagination| -> Vec<(f32, f32, String)> { pg.pages[0].items.iter().filter_map(|it| if let Item::Text { x, y, text, .. } = it { Some((*x, *y, text.to_string())) } else { None }).collect() };
+    let is_frame = |t: &str| t.chars().next().is_some_and(|c| ('ァ'..='ヶ').contains(&c));
+    let top = |pg: &Pagination| items(pg).iter().filter(|t| !is_frame(&t.2)).map(|t| t.1).fold(f32::MAX, f32::min);
+    let pa = frame("frame-a", r#"w:xAlign="right""#);
+    let a = frame_a_check(&pa, &items, &is_frame);
+    near(a.0, 373.39, 0.25, "F2a: the frame's x");
+    near(a.1, top(&pa), 0.25, "F2a: the frame's first baseline is the text's (Word 93.31 both)");
+    assert_eq!(a.2, 3, "F2a: the frame's lines");
+    let pb = frame("frame-b", r#"w:x="3000" w:y="500""#);
+    let b = frame_a_check(&pb, &items, &is_frame);
+    near(b.0, 222.05, 0.25, "F2b: the frame's x");
+    near(b.1, top(&pb) + 24.96, 0.25, "F2b: the frame's first baseline is 24.96 below the text's (Word 118.27 against 93.31)");
+    assert_eq!(b.2, 3, "F2b: the frame's lines");
+}
+
+/// A frame's height (`w:h`, `w:hRule`), `w:wrap` (`notBeside`, `none`) and a missing `w:w` (Word's PDFs, ＭＳ 明朝 10.5 pt, a frame of 3 lines of 15 katakana in 150 pt at the left
+/// of the margin, the text of 42 hiragana a line after it; the lines' baselines 82.4, 96.0, ... every 13.64 pt): `exact` 150 pt keeps the text beside it down to the baseline 232.3
+/// (12 lines), `exact` 10 pt draws one frame line and the text is beside only the first line; `atLeast` and no `hRule` take 150 pt, or the lines' height when that is more
+/// (4 lines of them), `auto` takes the lines' height whatever `w:h` is; `notBeside` has the text start at 137.2 below the 4 lines; `none` has it start at 82.4 under the frame; a frame
+/// of no width is 157.5 pt wide, as its line is, the text beside it from 229.6.
+fn a_frames_height_wrap_and_missing_width() {
+    let ft1 = "アイウエオカキクケコサシスセソ";
+    let ft = ft1.repeat(3);
+    let body = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめも".repeat(10);
+    let is_kata = |t: &str| t.chars().next().is_some_and(|c| ('ァ'..='ヶ').contains(&c));
+    // (the frame's lines, the text's lines as (baseline, x) of each, the first text line's baseline)
+    let run_with = |name: &str, frame_pr: &str, frame_text: &str| -> (usize, Vec<(f32, f32)>) {
+        let doc = p(&format!(r#"<w:framePr {frame_pr} w:vAnchor="text" w:hAnchor="margin" w:xAlign="left"/><w:spacing w:before="0" w:after="0"/>"#), "", frame_text) + &p(r#"<w:spacing w:before="0" w:after="0"/>"#, "", &body);
+        let pg = pages_of(&make(name, &doc));
+        let mut frame_ys: Vec<f32> = Vec::new();
+        let mut text: Vec<(f32, f32)> = Vec::new();
+        for it in &pg.pages[0].items {
+            if let Item::Text { x, y, text: t, .. } = it {
+                if is_kata(t) {
+                    if !frame_ys.iter().any(|f| (f - y).abs() < 0.5) { frame_ys.push(*y); }
+                } else if let Some(l) = text.iter_mut().find(|l| (l.0 - y).abs() < 0.5) {
+                    l.1 = l.1.min(*x);
+                } else {
+                    text.push((*y, *x));
+                }
+            }
+        }
+        text.sort_by(|a, b| a.0.total_cmp(&b.0));
+        (frame_ys.len(), text)
+    };
+    let run = |name: &str, frame_pr: &str| run_with(name, frame_pr, &ft);
+    let beside = |t: &[(f32, f32)]| t.iter().take_while(|l| l.1 > 150.0).count();
+    let wrap = r#"w:wrap="around""#;
+    let (n, t) = run("h-exact-big", &format!(r#"w:w="3000" w:h="3000" w:hRule="exact" {wrap}"#));
+    assert_eq!((n, beside(&t)), (4, 12), "exact 150 pt: {t:?}");
+    let (n, t) = run("h-exact-small", &format!(r#"w:w="3000" w:h="200" w:hRule="exact" {wrap}"#));
+    assert_eq!((n, beside(&t)), (1, 1), "exact 10 pt");
+    let (n, t) = run("h-none-big", &format!(r#"w:w="3000" w:h="3000" {wrap}"#));
+    assert_eq!((n, beside(&t)), (4, 12), "no hRule is at least");
+    let (n, t) = run("h-none-small", &format!(r#"w:w="3000" w:h="200" {wrap}"#));
+    assert_eq!((n, beside(&t)), (4, 4), "no hRule: the lines' height when that is more");
+    let (_, t) = run("h-auto-big", &format!(r#"w:w="3000" w:h="3000" w:hRule="auto" {wrap}"#));
+    assert_eq!(beside(&t), 4, "auto: w:h is not read");
+    let (_, t) = run("wrap-notbeside", r#"w:w="3000" w:wrap="notBeside""#);
+    near(t[0].0, 137.2, 0.3, "notBeside: the text under the frame");
+    near(t[0].1, 72.0, 0.3, "notBeside: and across the whole width");
+    let (n, t) = run("wrap-none", r#"w:w="3000" w:wrap="none""#);
+    assert_eq!(n, 4);
+    near(t[0].0, 82.4, 0.3, "none: the text where it would be without the frame");
+    near(t[0].1, 72.0, 0.3, "none: the whole width");
+    let (n, t) = run_with("nowidth", &format!(r#"w:h="3000" w:hRule="exact" {wrap}"#), ft1);
+    assert_eq!(n, 1, "a frame of no width is as wide as its line");
+    near(t[0].1, 229.6, 0.3, "the text beside a frame of its line's width");
+}
+
+/// The frame's left edge, its first baseline and its number of lines.
+fn frame_a_check(pg: &Pagination, items: &dyn Fn(&Pagination) -> Vec<(f32, f32, String)>, is_frame: &dyn Fn(&str) -> bool) -> (f32, f32, usize) {
+    let all = items(pg);
+    let mine: Vec<&(f32, f32, String)> = all.iter().filter(|t| is_frame(&t.2)).collect();
+    let mut ys: Vec<f32> = mine.iter().map(|t| t.1).collect();
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.05);
+    (mine.iter().map(|t| t.0).fold(f32::MAX, f32::min), mine.first().map_or(0.0, |t| t.1), ys.len())
 }
 
 /// Word's `w:sz` and `w:position` of a drop cap's capital (Windows Word, 3790 drop caps; `tasks/doc/requests/2026-11-16-191-dropcap-sz-result.md`): ＭＳ 明朝 10.5 pt, "あ"

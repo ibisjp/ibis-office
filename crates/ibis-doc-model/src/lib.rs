@@ -38,6 +38,8 @@ pub mod merge;
 pub mod model;
 pub mod pivot;
 pub mod query;
+pub mod shape_arrange;
+pub mod shape_group;
 pub mod shape_geometry;
 pub mod shape_merge;
 pub mod sheet;
@@ -49,6 +51,7 @@ pub mod timeline;
 pub mod slicer;
 pub mod solver;
 pub mod table;
+pub mod theme_color;
 pub mod text;
 pub mod typeset;
 
@@ -63,16 +66,17 @@ pub use field_format::{AdvanceFieldInfo, HyperlinkFieldInfo, apply_instruction_t
 pub use command::{Command, Document, EditError, GestureMark};
 pub use flow_command::{CaptionNumberFormat, CaseConversion, Container, CrossReferenceKind, CrossReferenceTarget, CrossReferenceType, FlowCommand, FlowPos, FlowTableCellResolver, missing_header_footer_style, InsertFormat, ParaChange, RunChange, RunReset, TableEdit, TocInstruction, all_paragraphs, caption_description_text, caption_labels, comment_at_pos, comment_marks, comment_range, cross_reference_targets, edit_field_at, entire_caption_text, find_table_cell_for_paragraph, flow_cell_text, get_field_at, get_table_cell_at, insert_caption_detailed, insert_cross_reference_target, insert_field_at_range, missing_table_of_figures_style, missing_toc_styles_for_levels, parse_cell_number, parse_listnum, parse_toc_instruction, relative_paragraph_position, table_of_figures_entries, toc_caption_label, toc_entries_with_instruction, updated_fields_in_range};
 pub use sheet_command::{calculate_missing_values, calculate_volatile_on_open, ReportCell, CellEdit, CellInput, CellSlot, ChartMoveTarget, Edge, PutCell, SheetCommand, SheetPatch, SortBy, StyleChange};
+pub use theme_color::{ThemeRef, ThemeMod, ThemeSlot, apply_color_modifiers};
 pub use drawing::{
     Bevel, BevelPreset, BlipFill, Color, EndSize, Fill, Geometry, GradientPath, GradientStop, LineAlignment, LineCap, LineCompound, LineDash, LineEnd, LineJoin, Reflection, Rgb, Shadow, Stroke, TileAlign, TileFlip, pattern_tile, spreadsheet_pattern_of_preset, spreadsheet_pattern_tile,
 };
 pub use flow::{
     OPTIONAL_HYPHEN,
     SubdocumentInfo,
-    ControlInfo, FontTableEntry, ControlLock, TextEffects, TextShadow, ArtBorder, Block, BorderStyle, CellAnchor, CellDirection, Combine, CustomProperty, CustomPropertyValue, DocProperties, DocumentInteractionMode, DocumentProtection, DocumentViewMode, DropCap, DropCapLocation, EmphasisMark, RubyAlign, TableAlign, TableAnchor, TableCondition, TableFloat, TableLook, TableRegion, TableStyleRef, FlowAlign, FlowBorder, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRun, FlowRunKind, FlowRunStyle, PictureLook,
+    ControlInfo, FontTableEntry, ControlLock, TextEffects, TextShadow, ArtBorder, Block, BorderStyle, CellAnchor, CellDirection, Combine, CustomProperty, CustomPropertyValue, DocProperties, DocumentInteractionMode, DocumentProtection, DocumentViewMode, DropCap, DropCapLocation, EmphasisMark, RubyAlign, TableAlign, TableAnchor, TableCondition, TableFloat, TableLook, TextFrame, FrameWrap, FrameHeightRule, TableRegion, TableStyleRef, FlowAlign, FlowBorder, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRowLine, FlowRun, FlowRunKind, FlowRunStyle, PictureLook,
     FormFieldData, FormFieldKind,
-    AbstractList, AutoFit, DocGridType, FlowStyle, FlowStyles, FlowTable, Link, PreferredWidth, LineHeight, ListInstance, ListLevel, ListRef, ListSuffix, LineNumbers, LineNumberRestart, MultiplePages, Numbering, PageColumns, PageSetup, PageVAlign, NoteSettings, NoteFormat, NoteRestart, NotePosition, ParaFormat, ParagraphSpacingPreset, StyleSetPreset, Watermark,
-    Comment, Note, PartKind, Revision, RevisionKind, RowHeight, RunFormat, SectionBreak, SectionSetup, ShadingPattern, StyleKind, TabAlign, TabChange, TabLeader, TabStop, UnderlineStyle, VerticalMerge, VerticalPosition, FlowThemeColor, NoteSeparator, format_list_number, format_page_number, list_labels,
+    AbstractList, AutoFit, DocGridType, FlowStyle, FlowStyles, FlowTable, Link, PreferredWidth, LineHeight, ListInstance, ListLevel, ListRef, ListSuffix, LineNumbers, LineNumberRestart, MultiplePages, Numbering, PageColumns, PageSetup, PageVAlign, NoteSettings, NoteFormat, NoteRestart, NotePosition, ParaFormat, ParagraphSpacingPreset, StyleSetPreset, Watermark, GenkoPaper, GenkoPart, GenkoStyle,
+    Comment, Note, PartKind, Revision, RevisionKind, RowHeight, RunFormat, SectionBreak, SectionSetup, ShadingPattern, StyleKind, TabAlign, TabChange, TabLeader, TabStop, UnderlineStyle, VerticalMerge, VerticalPosition, FlowThemeColor, NoteSeparator, format_list_number, format_page_number, list_labels, chapter_numbers,
     Ligatures, NumberForm, NumberSpacing,
     ThemeFontLang,
     DEFAULT_PICTURE_CONTROL_PLACEHOLDER_PNG, DEFAULT_PICTURE_CONTROL_WIDTH_EMU, DEFAULT_PICTURE_CONTROL_HEIGHT_EMU,
@@ -95,7 +99,7 @@ pub use model::{ZoomObject, ZoomTarget,
     AltText, ArtisticEffect, AutoShape, BlipEffects, Clip, PictureTile, ClipOptions, Crop, CustomShow, EmbeddedFont, FloatingAnchor, Layout, LayoutId, LayoutPlaceholder, LayoutScale, Master, MasterId, NotesDate, NotesMarks, NotesPaneOpening, NotesPaneSave, MediaBookmark, MediaCaptionTrack, MediaStart, MediaVolume, PlaceholderRef, SlidePlaceholder, Media, MediaFormat, MediaId, Picture, PictureWrapType, Placeholder, Presentation, Shape, TypefaceTraits,
     WrapPoint, WrapPolygon,
     Section, ShapeGroup, GroupMember, ShapeId, ShapeKind, ShowProperties, ShowSlideRange, ShowType, Slide, SlideId, Tilt, CameraPreset, Transition, TransitionSound,
-    ModifyVerifier, ObjectDefaults, ObjectPlacement, ShapeDefault,
+    ModifyVerifier, ObjectDefaults, ObjectPlacement, ShapeDefault, ViewGrid,
     PhotoAlbum, PhotoAlbumFrame, PhotoAlbumLayout,
 };
 pub use form_control::{ControlHit, ControlKind, FormControl};

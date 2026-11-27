@@ -22,6 +22,22 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The copyright line: `// Copyright (c) ibis inc.`, or, for a file contributed
+/// under the ibisOffice CLA, `// Copyright (c) ibis inc. and <name> (contributed
+/// under the ibisOffice CLA, <URL of the GitHub issue or comment>)`. The name
+/// stays; the URL must be in this repository's issues.
+fn is_copyright_line(line: &str) -> bool {
+    if line == "// Copyright (c) ibis inc." {
+        return true;
+    }
+    let Some(rest) = line.strip_prefix("// Copyright (c) ibis inc. and ") else { return false };
+    let Some(rest) = rest.strip_suffix(')') else { return false };
+    let Some((name, url)) = rest.split_once(" (contributed under the ibisOffice CLA, ") else { return false };
+    let name_ok = !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-' || c == '_');
+    let tail = url.strip_prefix("https://github.com/ibisjp/ibis-office/");
+    name_ok && tail.is_some_and(|t| !t.is_empty() && !t.contains(' ') && !t.contains(')'))
+}
+
 #[test]
 fn every_source_starts_with_the_license_lines() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -34,7 +50,7 @@ fn every_source_starts_with_the_license_lines() {
             let text = std::fs::read_to_string(f).unwrap_or_default();
             let mut lines = text.lines();
             !(lines.next() == Some("// SPDX-License-Identifier: AGPL-3.0-only")
-                && lines.next() == Some("// Copyright (c) ibis inc.")
+                && lines.next().is_some_and(is_copyright_line)
                 && lines.next() == Some("// Additional terms under AGPL-3.0 section 7(b): see NOTICE."))
         })
         .collect();

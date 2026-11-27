@@ -77,7 +77,12 @@ impl SlideEditor {
         }
         // The Latin typeface is written as `ascii` and `hAnsi` together, as `RunChange::Font` does (a `hAnsi` of the styles must not stay under it).
         let properties=RunFormat {font:changed[0].then(||values[0].clone()),h_ansi_font:changed[0].then(||values[0].clone()),east_asian_font:changed[1].then(||values[1].clone()),cs_font:changed[2].then(||values[2].clone()),..Default::default()};
-        if !changed.into_iter().any(|v|v) || self.apply_text_properties(properties,cx) {
+        if !changed.into_iter().any(|v|v) {
+            // Nothing was edited: say so, so that the button is not silent (#261).
+            if let Some(edit)=self.doc_state_mut().and_then(|s|s.font_edit.as_mut()) {edit.error=Some(crate::shell::i18n::text("docx.font-panel.nothing-changed").into());}
+            cx.notify();return;
+        }
+        if self.apply_text_properties(properties,cx) {
             let document=self.flow().unwrap().clone();
             if let Some(edit)=self.doc_state_mut().and_then(|s|s.font_edit.as_mut()) {edit.initial=values;edit.document=document;edit.error=None;}
             if !self.dialog_is_modal() { self.focus_handle.focus(window,cx); }

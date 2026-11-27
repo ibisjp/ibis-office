@@ -50,6 +50,9 @@ mod chart;
 mod chart_ex;
 pub mod csv;
 pub mod dicom;
+pub mod form_data;
+pub mod form_fill;
+pub mod form_template;
 pub mod dpc;
 pub mod fhir;
 pub mod pii_preflight;
@@ -71,7 +74,7 @@ mod reader;
 pub mod save;
 mod style;
 mod table_style;
-pub use table_style::styled_with_table;
+pub use table_style::{restyled_cells, styled_cells, styled_with_table};
 pub use xlsx_external::{link_display, link_path, new_external_book, read_external_book, refreshed_sheets};
 pub use xlsx_pivot::{pivot_data, pivot_source, rebuilt_pivot, refreshed_pivot};
 #[doc(hidden)]
@@ -244,14 +247,14 @@ impl Kind {
         match extension.to_ascii_lowercase().as_str() {
             "pptx" | "pptm" | "ppsx" | "ppsm" | "potx" | "potm" | "ppt" | "pps" | "pot" | "odp" | "otp" => Some(Kind::Presentation),
             "xlsx" | "xlsm" | "xlsb" | "xls" | "ods" | "ots" | "csv" | "tsv" | "tab" | "xltx" | "xltm" | "xlk" => Some(Kind::Workbook),
-            "docx" | "docm" | "dotx" | "dotm" | "doc" | "dot" | "odt" | "ott" | "md" | "markdown" => Some(Kind::Document),
-            "pdf" | "ofd" | "xps" | "oxps" => Some(Kind::Pdf),
+            "docx" | "docm" | "dotx" | "dotm" | "doc" | "dot" | "odt" | "ott" | "md" | "markdown" | "jtd" | "jtt" | "jttc" => Some(Kind::Document),
+            "pdf" | "ofd" | "xps" | "oxps" | "xdw" | "xbd" => Some(Kind::Pdf),
             _ => None,
         }
     }
 
     /// The extensions of the files that can be opened (what `from_extension` knows), for the file dialog.
-    pub const OPENABLE_EXTENSIONS: &[&str] = &["pptx", "pptm", "ppsx", "ppsm", "potx", "potm", "ppt", "pps", "pot", "odp", "otp", "xlsx", "xlsm", "xlsb", "xls", "ods", "ots", "csv", "tsv", "tab", "xltx", "xltm", "xlk", "docx", "docm", "dotx", "dotm", "doc", "dot", "md", "markdown", "pdf", "ofd", "xps", "oxps"];
+    pub const OPENABLE_EXTENSIONS: &[&str] = &["pptx", "pptm", "ppsx", "ppsm", "potx", "potm", "ppt", "pps", "pot", "odp", "otp", "xlsx", "xlsm", "xlsb", "xls", "ods", "ots", "csv", "tsv", "tab", "xltx", "xltm", "xlk", "docx", "docm", "dotx", "dotm", "doc", "dot", "md", "markdown", "jtd", "jtt", "jttc", "pdf", "ofd", "xps", "oxps", "xdw", "xbd"];
 
     /// The kind of document contained in `presentation`.
     pub fn of(presentation: &Presentation) -> Self {

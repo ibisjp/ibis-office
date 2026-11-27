@@ -158,6 +158,11 @@ pub fn set_thread_clock(now: Option<fn() -> (i64, i64)>) {
     THREAD_CLOCK.with(|c| c.set(now));
 }
 
+/// The local offset from UTC in minutes, from the clock the app gave (`None` without one): Power Query's datetimezone of "now" is local.
+pub fn local_utc_offset_minutes() -> Option<i32> {
+    clock().map(|(_, offset)| (offset / 60) as i32)
+}
+
 fn clock() -> Option<(i64, i64)> {
     THREAD_CLOCK.with(|c| c.get()).or_else(|| CLOCK.get().copied()).map(|f| f())
 }
@@ -396,11 +401,23 @@ fn month_name(s: &str) -> Option<u32> {
     None
 }
 
-/// A date, a time, or both, in the Japanese locale's forms.
+/// A date, a time, or both, in the Japanese locale's forms, as `--"text"` and VALUE read them (the readings are tried in order: month/day,
+/// day/month, year/month; two numbers need not be a date Excel would take from the keyboard).
 pub fn parse_date_time(t: &str, date1904: bool) -> Option<f64> {
+    parse_date_time_in(t, date1904, false)
+}
+
+/// As `parse_date_time`, for text entered into a cell (typed, pasted), which Excel reads more strictly (#294, measured with
+/// `Range.Formula`): two numbers are month/day, else month/two-digit-year (`2/29` of a year with no 29th is February 2029), never day/month
+/// or year/month (`28/5`, `32/9`, `2032/9` stay text); three numbers with a short first one are month/day/year (`29/1/1` stays text).
+pub fn parse_date_time_typed(t: &str, date1904: bool) -> Option<f64> {
+    parse_date_time_in(t, date1904, true)
+}
+
+fn parse_date_time_in(t: &str, date1904: bool, typed: bool) -> Option<f64> {
     let t = t.trim();
     if date1904 && let Some(rest) = t.strip_prefix('-') {
-        let v = parse_date_time(rest, date1904)?;
+        let v = parse_date_time_in(rest, date1904, typed)?;
         return Some(-v);
     }
     // Split off a time: the part with ':' or AM/PM.
@@ -410,7 +427,7 @@ pub fn parse_date_time(t: &str, date1904: bool) -> Option<f64> {
         None => None,
     };
     let date = match date_part {
-        Some(dp) if !dp.is_empty() => Some(parse_date(dp, date1904)?),
+        Some(dp) if !dp.is_empty() => Some(parse_date(dp, date1904, typed)?),
         _ => None,
     };
     match (date, time) {
@@ -457,6 +474,8 @@ fn parse_time(t: &str) -> Option<f64> {
         s.truncate(s.len() - 1);
         s = s.trim_end().to_string();
     }
+    // `20:` is 20:00 (the hour and the colon that follows it); a lone `20` is not a time.
+    let hour_colon = s.ends_with(':');
     let s = s.replace('時', ":").replace('分', ":").replace('秒', "");
     let s = s.trim_end_matches(':');
     let parts: Vec<&str> = s.split(':').collect();
@@ -483,7 +502,7 @@ fn parse_time(t: &str) -> Option<f64> {
         if pm {
             h += 12.0;
         }
-    } else if parts.len() == 1 {
+    } else if parts.len() == 1 && !hour_colon {
         return None;
     }
     if h >= 10000.0 {
@@ -512,15 +531,16 @@ fn normalize_era(t: &str) -> Option<String> {
     None
 }
 
-fn parse_date(t: &str, date1904: bool) -> Option<f64> {
+fn parse_date(t: &str, date1904: bool, typed: bool) -> Option<f64> {
     let t = t.trim();
     if let Some(normalized) = normalize_era(t) {
-        return parse_date(&normalized, date1904);
+        return parse_date(&normalized, date1904, typed);
     }
     // 2026年9月30日, 9月30日
     if t.contains('年') || t.contains('月') {
         let s = t.replace('年', "/").replace('月', "/").replace('日', "");
-        return parse_date(s.trim_end_matches('/'), date1904);
+        // The kanji spell the order (`32年9月` is year and month): read as the lenient forms.
+        return parse_date(s.trim_end_matches('/'), date1904, false);
     }
     let s_clean;
     let t = if t.contains(',') {
@@ -540,48 +560,67 @@ fn parse_date(t: &str, date1904: bool) -> Option<f64> {
     }
     let num = |s: &str| -> Option<i64> { if s.bytes().all(|b| b.is_ascii_digit()) && s.len() <= 4 { s.parse().ok() } else { None } };
     let (y, m, d): (i64, i64, i64);
+    // How many digits the year was written with; 0 when the text has no year (this year).
+    let year_width: usize;
     let current_year = current_year();
     if parts.len() == 3 {
         if let (Some(a), Some(b), Some(c)) = (num(parts[0]), num(parts[1]), num(parts[2])) {
-            if parts[0].len() >= 3 || a > 31 {
-                (y, m, d) = (a, b, c);
+            if typed && parts[0].len() <= 2 {
+                // Typed: a short first number is the month (month/day/year).
+                (y, m, d) = (c, a, b);
+                year_width = parts[2].len();
             } else {
-                // m/d/y in the English form? Japanese locale: y/m/d first.
+                // y/m/d.
                 (y, m, d) = (a, b, c);
+                year_width = parts[0].len();
             }
         } else if let (Some(a), Some(mo), Some(c)) = (num(parts[0]), month_name(parts[1]), num(parts[2])) {
             (y, m, d) = (c, mo as i64, a); // 30-Sep-2026
+            year_width = parts[2].len();
         } else if let (Some(mo), Some(b), Some(c)) = (month_name(parts[0]), num(parts[1]), num(parts[2])) {
             (y, m, d) = (c, mo as i64, b); // Sep 30 2026
+            year_width = parts[2].len();
         } else {
             return None;
         }
     } else if let (Some(a), Some(b)) = (num(parts[0]), num(parts[1])) {
-        if parts[0].len() >= 3 || a > 12 {
-            // 2026/9: year and month, the first day.
-            if b > 12 || b < 1 {
+        // Two numbers. Excel tries the readings in order and takes the first whose parts are in range: month/day (`4/5` is April 5),
+        // then day/month (`28/9` cannot be month/day), then year/month (`32/9` is September 1932, `2032/9`).
+        let this_year = |m: i64| days_in_month(current_year, m as u32) as i64;
+        let valid_day = |m: i64, d: i64| (1..=12).contains(&m) && d >= 1 && d <= this_year(m);
+        if parts[0].len() <= 2 && valid_day(a, b) {
+            (y, m, d, year_width) = (current_year, a, b, 0);
+        } else if typed {
+            // Month and year (`2/29` is February 2029).
+            if (1..=12).contains(&a) && parts[0].len() <= 2 && matches!(parts[1].len(), 2 | 4) {
+                (y, m, d, year_width) = (b, a, 1, parts[1].len());
+            } else {
                 return None;
             }
-            (y, m, d) = (a, b, 1);
+        } else if parts[0].len() <= 2 && valid_day(b, a) {
+            (y, m, d, year_width) = (current_year, b, a, 0);
+        } else if (1..=12).contains(&b) {
+            (y, m, d, year_width) = (a, b, 1, parts[0].len());
         } else {
-            (y, m, d) = (current_year, a, b);
+            return None;
         }
     } else if let (Some(a), Some(mo)) = (num(parts[0]), month_name(parts[1])) {
-        if a > 31 {
-            (y, m, d) = (a, mo as i64, 1);
+        if a > 31 || parts[0].len() >= 3 {
+            (y, m, d, year_width) = (a, mo as i64, 1, parts[0].len());
         } else {
-            (y, m, d) = (current_year, mo as i64, a);
+            (y, m, d, year_width) = (current_year, mo as i64, a, 0);
         }
     } else if let (Some(mo), Some(b)) = (month_name(parts[0]), num(parts[1])) {
-        if b > 31 {
-            (y, m, d) = (b, mo as i64, 1);
+        if b > 31 || parts[1].len() >= 3 {
+            (y, m, d, year_width) = (b, mo as i64, 1, parts[1].len());
         } else {
-            (y, m, d) = (current_year, mo as i64, b);
+            (y, m, d, year_width) = (current_year, mo as i64, b, 0);
         }
     } else {
         return None;
     }
-    let y = if y < 30 && parts[0].len() <= 2 && parts.len() == 3 { 2000 + y } else if y < 100 && parts.len() == 3 && parts[0].len() <= 2 { 1900 + y } else { y };
+    // A year of one or two digits is 1930-2029 (Excel's default cutoff 2029).
+    let y = if year_width != 0 && year_width <= 2 { if y < 30 { 2000 + y } else { 1900 + y } } else { y };
     let max_d = if !date1904 && y == 1900 && m == 2 {
         29
     } else {

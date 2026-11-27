@@ -148,7 +148,8 @@ impl SheetSteps for Scenario {
         let (axis, index) = header_of(name);
         self.with(move |e, _| {
             let g = e.sheet_state().unwrap().header_geometry.borrow().clone();
-            let (ox, oy) = g.origin;
+            // The outline strips (grouped rows or columns) lie above and left of the headers (#291): the headers start after them.
+            let (ox, oy) = (g.origin.0 + g.outline.0, g.origin.1 + g.outline.1);
             match axis {
                 Axis::Columns => g.columns.iter().find(|c| c.0 == index).map(|c| ((c.1 + c.2) / 2.0, oy + 10.0)),
                 Axis::Rows => g.rows.iter().find(|r| r.0 == index).map(|r| (ox + 20.0, (r.1 + r.2) / 2.0)),
@@ -244,6 +245,8 @@ impl SheetSteps for Scenario {
 #[path="issue158_ivs.rs"] mod issue158_ivs;
 #[path="k0020_candidate_rect.rs"] mod k0020_candidate_rect;
 #[path="k0020_enter_mode_clauses.rs"] mod k0020_enter_mode_clauses;
+#[path = "issue291_outline_design.rs"]
+mod issue291_outline_design;
 #[path="k0044_bar_clause.rs"] mod k0044_bar_clause;
 #[path="k0032_chart_menu.rs"] mod k0032_chart_menu;
 #[path="issue157_fonts_late.rs"] mod issue157_fonts_late;
@@ -254,13 +257,18 @@ impl SheetSteps for Scenario {
 #[path="copy_outline.rs"] mod copy_outline;
 #[path="k0035_insert_drag.rs"] mod k0035_insert_drag;
 #[path="issue145_sheet_view.rs"] mod issue145_sheet_view;
+#[path="issue300_caches.rs"] mod issue300_caches;
 #[path="issue195_active_tab.rs"] mod issue195_active_tab;
 #[path="issue214_active_tab.rs"] mod issue214_active_tab;
 #[path="issue186_drag_autoscroll.rs"] mod issue186_drag_autoscroll;
+#[path="issue273_limited_grid.rs"] mod issue273_limited_grid;
+#[path="issue284_ignore_blank.rs"] mod issue284_ignore_blank;
 #[path="issue185_formula_case.rs"] mod issue185_formula_case;
 #[path="issue148_at_pointing.rs"] mod issue148_at_pointing;
 #[path="sheet_tab_visibility.rs"] mod sheet_tab_visibility;
 #[path="tab_dnd_and_shift_select.rs"] mod tab_dnd_and_shift_select;
+#[path="k0085_tab_flicker.rs"] mod k0085_tab_flicker;
+#[path="k0079_tab_reorder_touch.rs"] mod k0079_tab_reorder_touch;
 #[path="issue100_paste_names.rs"] mod issue100_paste_names;
 #[path="clipboard_html.rs"] mod clipboard_html;
 #[path="issue208_sheet_html.rs"] mod issue208_sheet_html;
@@ -284,6 +292,16 @@ impl SheetSteps for Scenario {
 #[path="panel_field_sync.rs"] mod panel_field_sync;
 #[path="issue96_hidden_group_box.rs"] mod issue96_hidden_group_box;
 #[path="dropdown_position_20261106.rs"] mod dropdown_position_20261106;
+#[path="issue303_table_rows.rs"] mod issue303_table_rows;
+/// The scenarios of requirements not yet met (listed apart; `--ignored`).
+pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
+    let mut v = issue291_outline_design::ignored();
+    v.extend(issue284_ignore_blank::ignored());
+    v.extend(k0085_tab_flicker::ignored());
+    v.extend(k0079_tab_reorder_touch::ignored());
+    v
+}
+
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     let mut all: Vec<(&'static str, fn())> = vec![
         ("xlsx::issue96_hidden_group_box_takes_no_click",issue96_hidden_group_box::hidden_group_box_takes_no_click),
@@ -328,6 +346,10 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::issue176_cut_moves_the_spill",issue176_spill_copy::cut_moves_the_spill),
         ("xlsx::issue176_relative_reference_moves",issue176_spill_copy::relative_reference_moves),
         ("xlsx::issue176_fill_right_spills_again",issue176_spill_copy::fill_right_spills_again),
+        ("xlsx::issue273_off_by_default_keeps_the_whole_grid",issue273_limited_grid::off_by_default_keeps_the_whole_grid),
+        ("xlsx::issue273_on_limits_the_grid_to_the_used_range_and_a_margin",issue273_limited_grid::on_limits_the_grid_to_the_used_range_and_a_margin),
+        ("xlsx::issue273_the_grid_grows_when_the_selection_goes_to_its_edge",issue273_limited_grid::the_grid_grows_when_the_selection_goes_to_its_edge),
+        ("xlsx::issue273_the_setting_is_kept_for_the_next_start",issue273_limited_grid::the_setting_is_kept_for_the_next_start),
         ("xlsx::issue186_step_grows_with_the_distance",issue186_drag_autoscroll::step_grows_with_the_distance),
         ("xlsx::issue186_cell_drag_below_the_edge_scrolls_and_grows",issue186_drag_autoscroll::cell_drag_below_the_edge_scrolls_and_grows),
         ("xlsx::issue186_the_farther_the_pointer_the_more_rows_a_beat",issue186_drag_autoscroll::the_farther_the_pointer_the_more_rows_a_beat),
@@ -350,6 +372,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::issue195_active_sheet_and_cell_round_trip_through_the_file",issue195_active_tab::active_sheet_and_cell_round_trip_through_the_file),
         ("xlsx::issue214_a_file_saved_on_the_third_sheet_opens_on_it",issue214_active_tab::a_file_saved_on_the_third_sheet_opens_on_it),
         ("xlsx::issue214_a_new_workbook_saved_on_the_third_sheet_opens_on_it",issue214_active_tab::a_new_workbook_saved_on_the_third_sheet_opens_on_it),
+        ("xlsx::issue300_caches_follow_the_changes",issue300_caches::caches_follow_the_changes),
+        ("xlsx::issue300_timing",issue300_caches::timing),
         ("xlsx::issue145_sheets_keep_their_scroll",issue145_sheet_view::sheets_keep_their_scroll),
         ("xlsx::k0025_deleting_the_other_sheet_keeps_the_scroll",issue145_sheet_view::deleting_the_other_sheet_keeps_the_scroll),
         ("xlsx::k0025_current_slide_is_assigned_only_by_the_setter",issue145_sheet_view::current_slide_is_assigned_only_by_the_setter),
@@ -463,6 +487,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::n5_validation_formula", n5_validation_formula::run),
         ("xlsx::issue154_list_source_judge", issue154_compat_notice::judge),
         ("xlsx::issue154_compat_notice", issue154_compat_notice::run),
+        ("xlsx::issue284_n4_the_dropdown_has_an_empty_item_for_an_empty_source_cell_whatever_the_flag", issue284_ignore_blank::n4_dropdown_empty_item),
         ("xlsx::issue260_formula_list_keeps_its_equals", issue154_compat_notice::formula_list_keeps_its_equals_issue_260),
         ("xlsx::issue208_sheet_html", issue208_sheet_html::run),
         ("xlsx::clipboard_html_excel_mac_table", clipboard_html::excel_mac_table),
@@ -712,10 +737,13 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::fn_random_numbers", fn_random_numbers),
         ("xlsx::fn_cell_info", fn_cell_info),
         ("xlsx::query001_editor", query001_editor),
+        ("xlsx::query003_change_type_locale", query003_change_type_locale),
         ("xlsx::query_code_edit_issue_173", query_code_edit_issue_173),
         ("xlsx::query_steps_scroll_issue_172", query_steps_scroll_issue_172),
         ("xlsx::query_layout_issue_173", query_layout_issue_173),
         ("xlsx::query002_blank_query", query002_blank_query),
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        ("xlsx::query_external_sources_issue_263", query_external_sources_issue_263),
         ("xlsx::issue211_queries_pane_closes_empty", issue211_queries_pane_closes_empty),
         ("xlsx::ui_english_panels_2", ui_english_panels_2),
         ("xlsx::options006_error_check", options006_error_check),
@@ -918,6 +946,11 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(k0020_candidate_rect::all());
     all.extend(k0020_enter_mode_clauses::all());
     all.extend(k0044_bar_clause::all());
+    all.extend(issue291_outline_design::all());
+    all.extend(issue284_ignore_blank::all());
+    all.extend(issue303_table_rows::all());
+    all.extend(k0085_tab_flicker::all());
+    all.extend(k0079_tab_reorder_touch::all());
     all.extend(k0032_chart_menu::all());
     all.extend(issue157_fonts_late::all());
     all.extend(k0055_machine_readability::all());
@@ -1211,7 +1244,13 @@ fn rename_a_sheet() {
     assert_eq!(names(&mut s), before);
     // A double-click on the second tab (商品) opens its name field; Enter
     // with the name unchanged just closes it.
-    s.double_click((227.0, 680.0));
+    // (the second tab's centre: its place is the typeface's, (227, 680) on a Mac)
+    let second = s.with(|e, _| {
+        let scroll = e.sheet_state().unwrap().tab_scroll.clone();
+        let tab = scroll.bounds_for_item(1).expect("the second tab is laid out");
+        (f32::from(tab.center().x) + f32::from(scroll.offset().x), f32::from(tab.center().y))
+    });
+    s.double_click(second);
     assert_eq!(s.with(|e, _| e.sheet_state().unwrap().jump.renaming), s.with(|e, _| Some(e.presentation().slides[1].id)));
     s.key("enter");
     assert!(s.with(|e, _| e.sheet_state().unwrap().jump.renaming.is_none()));
@@ -2985,7 +3024,7 @@ fn clip022_system_clipboard() {
     s.key("shift-right");
     s.key("shift-right");
     s.key("cmd-c");
-    assert_eq!(clipboard(&mut s), "abcdef\t1\t2\n");
+    assert_eq!(clipboard(&mut s), format!("abcdef\t1\t2{}", crate::clipboard::ROW_END));
     // A table from another app comes in as cells, a date with its format.
     s.update(|_, _, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("x\t2026/10/11\ny\t50%\n".to_string())));
     s.click_cell("D5");
@@ -3878,8 +3917,13 @@ fn xlsx_reapply_filter_selection_pane_and_sparkline_points() {
 fn xsc34_tabs() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     s.toolbar_state("bold");
-    // The tabs along the bottom: 月次売上, 商品, メモ.
-    s.drag((130.0, 680.0), (260.0, 680.0));
+    // The tabs along the bottom: 月次売上, 商品, メモ. Their places follow the typeface's widths (Windows and Mac differ), so the drag goes from the middle of the first tab to the right half of the third.
+    let middle = |s: &mut Scenario, i: usize| s.with(|e, _| { let b = e.wb().tab_scroll.bounds_for_item(i).expect("tab laid out"); (f32::from(b.left()) + f32::from(b.size.width) / 2.0, f32::from(b.top()) + f32::from(b.size.height) / 2.0) });
+    let (from, third) = (middle(&mut s, 0), middle(&mut s, 2));
+    // A tab let go on the right half of another goes after it.
+    let third_width = s.with(|e, _| f32::from(e.wb().tab_scroll.bounds_for_item(2).expect("tab laid out").size.width));
+    let to = (third.0 + third_width / 4.0, third.1);
+    s.drag(from, to);
     let names = |s: &mut Scenario| s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.iter().map(|x| x.name.clone()).collect::<Vec<_>>());
     assert_eq!(names(&mut s), ["商品", "メモ", "月次売上"], "dragged to the third place");
     s.menu("xlsx.tab-color");
@@ -6679,10 +6723,15 @@ fn slicer002_insert() {
     let mut s = Scenario::open("test/editing/xlsx-slicers-excel.xlsx");
     let slicers = |s: &mut Scenario| -> Vec<String> { s.with(|e, _| e.presentation().slides.iter().flat_map(|sl| sl.shapes.iter()).filter_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Slicer(x) => Some(x.name.clone()), _ => None }).collect()) };
     assert_eq!(slicers(&mut s).len(), 2);
-    // Nothing selected in a table: told so.
-    s.menu("xlsx.insert-slicer");
-    s.update(|e, _, cx| e.apply_slicer_insert_panel(cx));
-    s.update(|e, _, _| e.wb_mut().panels.slicer_insert = None);
+    // Nothing selected in a table: told so, in a message box with one OK that closes it (#261: it was a panel whose OK did nothing),
+    // for the timeline too.
+    s.click_cell("Z50");
+    for menu in ["xlsx.insert-slicer", "xlsx.insert-timeline"] {
+        s.menu(menu);
+        s.settle();
+        assert!(s.with(|e, _| e.alert.is_some() && e.wb().panels.slicer_insert.is_none() && e.wb().panels.timeline_insert.is_none()), "{menu}: told in an alert, no panel");
+        s.update(|e, _, cx| e.dismiss_alert(cx));
+    }
     // The table's sheet: a slicer for 売上.
     let table_slide = s.with(|e, _| e.presentation().slides.iter().find(|sl| sl.name.as_deref() == Some("データ")).map(|sl| sl.id)).expect("the sheet");
     s.update(move |e, window, cx| e.select_slide(table_slide, window, cx));
@@ -7973,7 +8022,7 @@ fn cell008_multi_range_copy_paste() {
 
     // クリップボードのテキストを確認（隙間が詰まった 4 行）
     let clip_text = s.with(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default());
-    assert_eq!(clip_text, "10\n20\n30\n60\n");
+    assert_eq!(clip_text, ["10", "20", "30", "60", ""].join(crate::clipboard::ROW_END));
 
     // C1 に貼り付け
     s.click_cell("C1");
@@ -8023,7 +8072,7 @@ fn cell008_multi_range_copy_paste() {
 
     s.key("cmd-c");
     let clip_text = s.with(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default());
-    assert_eq!(clip_text, "100\t200\t300\t400\n");
+    assert_eq!(clip_text, format!("100\t200\t300\t400{}", crate::clipboard::ROW_END));
 
     // A9 に貼り付け
     s.click_cell("A9");
@@ -12502,6 +12551,8 @@ fn table016_remove_duplicates() {
 
 fn text_columns_click(s: &mut Scenario, id: &str) {
     if id=="close" {
+        // A refusal of the panel is told in a message box over it (`text_columns_error`): that box is closed first, as a person presses its OK.
+        if s.with(|e,_|e.alert.is_some()) {s.update(|e,_,cx|e.dismiss_alert(cx));}
         let _probe=crate::shell::scenario::button_probe::Probe::new();s.update(|_,_,cx|cx.notify());crate::shell::scenario::button_probe::click(s,"dialog-cancel");return;
     }
     if id=="text-columns-format" {
@@ -13647,7 +13698,7 @@ fn sec009_notes() {
     let sheet_name = listing.split_whitespace().find(|w| w.starts_with("xl/worksheets/sheet") && w.ends_with(".xml") && part(w).contains("legacyDrawing")).expect("a sheet with legacyDrawing").to_string();
     let rels = part(&sheet_name.replace("worksheets/", "worksheets/_rels/").replace(".xml", ".xml.rels"));
     assert!(rels.contains("relationships/vmlDrawing"), "{rels}");
-    assert!(part("\\[Content_Types\\].xml").contains("vmlDrawing"));
+    assert!(part("[[]Content_Types].xml").contains("vmlDrawing"));
     // Cleared over B2:C3, in one step.
     s.click_cell("B2");
     s.key("shift-down");
@@ -13735,8 +13786,16 @@ fn sec002_protect_sheet() {
     s.click_cell("B1");
     s.menu("xlsx.lock-cells");
     assert_eq!(s.menu_state("xlsx.lock-cells").map(|m| m.1), Some(false), "B1 unlocked");
+    // What leaves for other programs: C1's formula goes with the HTML table while it is not hidden, and a hidden one leaves as its value only
+    // (#275, Excel: `tasks/doc/requests/2026-11-26-275-f2-hidden-formula-result.md`).
     s.click_cell("C1");
+    crate::native_shape_clipboard::simulate_html(None);
+    s.update(|e, _, cx| e.copy_cells(false, cx));
+    let open_html = crate::native_shape_clipboard::read_html().expect("the copy put an HTML table on the clipboard");
+    assert!(open_html.contains("A1*2"), "{open_html}");
     s.menu("xlsx.hide-formulas");
+    // C1 is unlocked as well: only the hidden formula keeps F2 from showing the value in its place.
+    s.menu("xlsx.lock-cells");
     s.menu("xlsx.protect-sheet");
     protect_field(&mut s, "password", "pw1");
     protect_field(&mut s, "confirm", "pw2");
@@ -13765,8 +13824,24 @@ fn sec002_protect_sheet() {
     // C1's formula hidden from the bar.
     s.click_cell("C1");
     assert!(s.with(|e, _| e.formula_hidden_here()));
+    s.update(|e, _, cx| e.copy_cells(false, cx));
+    let hidden_html = crate::native_shape_clipboard::read_html().expect("the copy put an HTML table on the clipboard");
+    assert!(!hidden_html.contains("A1*2") && hidden_html.contains(">20<"), "a hidden formula leaves as its value only: {hidden_html}");
+    crate::native_shape_clipboard::simulate_html(None);
+    let c1_formula = s.with(|e, _| e.current_sheet().and_then(|(_, sh)| sh.cell(0, 2).and_then(|c| c.formula.clone())));
+    assert!(c1_formula.is_some());
+    // C1 is unlocked: Excel 16 on Windows opens an editor that is empty (not the value, not the formula), Esc keeps the formula, Enter without typing writes an
+    // empty cell (`tasks/doc/requests/2026-11-26-275-f2-hidden-formula-result.md`).
+    s.key("f2");
+    assert_eq!(s.with(|e, _| e.cell_edit().map(|c| c.text.clone())), Some(String::new()), "an empty editor opens on a hidden formula");
+    s.key("escape");
+    assert!(s.with(|e, _| e.cell_edit().is_none()));
+    assert_eq!(s.with(|e, _| e.current_sheet().and_then(|(_, sh)| sh.cell(0, 2).and_then(|c| c.formula.clone()))), c1_formula, "the formula is kept");
+    s.key("f2");
+    s.key("enter");
+    assert!(s.with(|e, _| e.current_sheet().and_then(|(_, sh)| sh.cell(0, 2).and_then(|c| c.formula.clone()))).is_none(), "Enter on the empty editor writes an empty cell");
     s.save_as("sec002.xlsx");
-    let saved = std::fs::read(crate::shell::scenario::repo_root().join("target/scenario/xlsx::sec002_protect_sheet/sec002.xlsx")).unwrap();
+    let saved = std::fs::read(crate::shell::scenario::scenario_dir("xlsx::sec002_protect_sheet").join("sec002.xlsx")).unwrap();
     let p = s.reopen();
     let sheet = sheet_of_slide(&p.slides[1]).unwrap();
     let protection = sheet.protection.clone().expect("protected when read back");
@@ -13834,7 +13909,7 @@ fn sec005_protect_workbook() {
 
     // Save and reload roundtrip
     s.save_as("sec005.xlsx");
-    let saved = std::fs::read(crate::shell::scenario::repo_root().join("target/scenario/xlsx::sec005_protect_workbook/sec005.xlsx")).unwrap();
+    let saved = std::fs::read(crate::shell::scenario::scenario_dir("xlsx::sec005_protect_workbook").join("sec005.xlsx")).unwrap();
     let p = s.reopen();
     let wb = p.workbook.as_ref().expect("workbook");
     let protection = wb.protection.as_ref().expect("protection roundtrip");
@@ -13951,7 +14026,7 @@ fn sec004_allow_edit_ranges() {
 
     // 7. Save and reopen roundtrip
     s.save_as("sec004.xlsx");
-    let saved = std::fs::read(crate::shell::scenario::repo_root().join("target/scenario/xlsx::sec004_allow_edit_ranges/sec004.xlsx")).unwrap();
+    let saved = std::fs::read(crate::shell::scenario::scenario_dir("xlsx::sec004_allow_edit_ranges").join("sec004.xlsx")).unwrap();
     let p = s.reopen();
     let sh = sheet_of_slide(&p.slides[1]).expect("sheet");
     assert_eq!(sh.protected_ranges.len(), 2, "protected ranges survived reopen");
@@ -16727,9 +16802,9 @@ fn format016_theme_palette_and_colors() {
     assert!(s.with(|e, _| e.is_xlsx_theme_palette_active("office")));
     assert!(!s.with(|e, _| e.is_xlsx_theme_palette_active("aspect")));
     let st_a1_office = style(&mut s, 0, 0);
-    assert_eq!(st_a1_office.fill, Some(Rgb(0x4472C4)));
+    assert_eq!(st_a1_office.fill, Some(Rgb(0x156082))); // the 2023 "Office" (#290)
     let st_b1_office = style(&mut s, 0, 1);
-    assert_eq!(st_b1_office.color, Rgb(0xED7D31));
+    assert_eq!(st_b1_office.color, Rgb(0xE97132));
 
     // 6. スクリーンショットと保存
     s.screenshot("format016_theme_palette_and_colors");
@@ -16738,16 +16813,16 @@ fn format016_theme_palette_and_colors() {
     // 7. 開き直し検証
     let reopened = s.reopen();
     let wb = reopened.workbook.as_ref().unwrap();
-    assert_eq!(wb.theme_colors.iter().find(|(n, _)| n == "accent1").unwrap().1, Rgb(0x4472C4));
-    assert_eq!(wb.theme_colors.iter().find(|(n, _)| n == "accent2").unwrap().1, Rgb(0xED7D31));
+    assert_eq!(wb.theme_colors.iter().find(|(n, _)| n == "accent1").unwrap().1, Rgb(0x156082));
+    assert_eq!(wb.theme_colors.iter().find(|(n, _)| n == "accent2").unwrap().1, Rgb(0xE97132));
 
     let sh = sheet_of_slide(&reopened.slides[1]).unwrap();
     let r_a1 = &sh.styles[sh.cell(0, 0).unwrap().style as usize];
-    assert_eq!(r_a1.fill, Some(Rgb(0x4472C4)));
+    assert_eq!(r_a1.fill, Some(Rgb(0x156082)));
     assert_eq!(r_a1.fill_theme, Some(ThemeColor { index: 4, tint: 0 }));
 
     let r_b1 = &sh.styles[sh.cell(0, 1).unwrap().style as usize];
-    assert_eq!(r_b1.color, Rgb(0xED7D31));
+    assert_eq!(r_b1.color, Rgb(0xE97132));
     assert_eq!(r_b1.color_theme, Some(ThemeColor { index: 5, tint: 0 }));
 }
 
@@ -20853,6 +20928,15 @@ fn cell_edit_fullwidth_lines_move() {
     s.key("f2");
     s.screenshot("f2");
     let caret = |s: &mut Scenario| s.with(|e, _| e.cell_edit().map(|c| (c.caret_line(), c.caret)).unwrap());
+    // F2 puts the caret at the end of the text, except when the box would be taller than the cell (a box that does not fit starts with the
+    // caret at the top, `begin_cell_edit`): where the row's fit and the box's lines differ by a pixel or two (Windows measures the font for
+    // the row), that is so here, and the caret is taken to the end by the keys, so that what follows starts from the same place.
+    if caret(&mut s).1 == 0 {
+        for _ in 0..6 {
+            s.key("down");
+        }
+        s.key("end");
+    }
     let at_f2 = caret(&mut s);
     s.key("up");
     s.key("left");
@@ -21650,7 +21734,7 @@ fn query001_editor() {
     s.update(|e, window, cx| e.close_dialog(window, cx));
     s.click_cell("B8");
     s.enter("5000000", "enter");
-    s.update(|e, _, cx| e.refresh_query(0, cx));
+    s.update(|e, window, cx| e.refresh_query(0, window, cx));
     assert_eq!(read(&mut s, output.clone(), 1, 0), Some(CellValue::Text("駅前店".into())));
     assert_eq!(read(&mut s, output.clone(), 1, 1), Some(CellValue::Number(5_000_000.0)));
     // Edited again: the steps are there, one more is added, and loaded to the same sheet.
@@ -21680,6 +21764,68 @@ fn query001_editor() {
     assert!(s.with(|e, _| e.presentation().workbook.as_ref().unwrap().queries.is_empty()));
 }
 
+
+/// K0039: 型の変更 > ロケールを使用…: the form's type and locale are the shared dropdowns; the step is `Table.TransformColumnTypes(..., culture)`,
+/// and the text is read by the locale (de-DE `1.234,5` is 1234.5, a ja-JP date text is a date).
+fn query003_change_type_locale() {
+    use crate::query_ops::QOp;
+    use crate::shell::scenario::button_probe as buttons;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let _probe = buttons::Probe::new();
+    // Text cells (an apostrophe keeps them text): a number written the German way and a date written the Japanese way.
+    for (cell, text) in [("H1", "金額"), ("I1", "日付"), ("H2", "'1.234,5"), ("I2", "'2024/3/5"), ("H3", "'2.000"), ("I3", "'2024/12/31"), ("H4", "'0,5"), ("I4", "'2025/1/1")] {
+        s.click_cell(cell);
+        s.enter(text, "enter");
+    }
+    s.click_cell("H1");
+    s.update(|e, window, cx| e.open_query_from_selection(window, cx));
+    // The dropdown of a form's field: opened by its button, and the row of the list clicked.
+    let choose = |s: &mut Scenario, field: &str, row: usize| {
+        buttons::click(s, &format!("query-field-{field}"));
+        let key = buttons::all().into_iter().find(|k| k.contains(&format!("searchable-item-query-field-{field}")) && k.ends_with(&format!(", {row})"))).unwrap_or_else(|| panic!("row {row} of {field} not rendered: {:?}", buttons::all()));
+        buttons::click(s, &key);
+    };
+    let change = |s: &mut Scenario, column: &str, ty: usize, culture: usize| {
+        s.update(|e, window, cx| e.query_run_op(QOp::ChangeTypeLocale, window, cx));
+        s.update(|e, _, cx| {
+            if let Some(form) = e.wb_mut().panels.query_editor.as_mut().and_then(|q| q.form.as_mut()) {
+                assert_eq!(form.op, QOp::ChangeTypeLocale);
+            }
+            cx.notify();
+        });
+        let column = column.to_string();
+        s.update(move |e, window, cx| {
+            let form = e.wb_mut().panels.query_editor.as_mut().unwrap().form.as_mut().unwrap();
+            let (_, input) = form.inputs.iter().find(|(id, _)| *id == "column").unwrap();
+            let input = input.clone();
+            input.update(cx, |state, cx| state.set_value(column.clone(), window, cx));
+        });
+        s.update(|_, _, cx| cx.notify());
+        choose(s, "type", ty);
+        choose(s, "culture", culture);
+        assert_eq!(s.with(|e, _| e.wb().panels.query_editor.as_ref().unwrap().form.as_ref().unwrap().picks.get("culture").copied()), Some(culture));
+        buttons::click(s, "query-apply");
+    };
+    // A number in de-DE (the sixth type of the list is the decimal number; the fourth locale is de-DE).
+    change(&mut s, "金額", 3, 3);
+    // A date in ja-JP (the first locale).
+    change(&mut s, "日付", 4, 0);
+    let (rows, error) = s.with(|e, _| {
+        let q = e.wb().panels.query_editor.as_ref().unwrap();
+        (q.shown().rows.clone(), q.error.clone())
+    });
+    assert_eq!(error, None);
+    assert_eq!(rows[0], [CellValue::Number(1234.5), CellValue::Number(45356.0)]);
+    assert_eq!(rows[1], [CellValue::Number(2000.0), CellValue::Number(45657.0)]);
+    assert_eq!(rows[2], [CellValue::Number(0.5), CellValue::Number(45658.0)]);
+    let m = s.with(|e, _| ibis_doc_model::query::query_to_m(&e.wb().panels.query_editor.as_ref().unwrap().query));
+    assert!(m.contains("\"de-DE\"") && m.contains("\"ja-JP\""), "{m}");
+    // The step is edited in the same form with its values (the locale is the one it was made with).
+    let steps = s.with(|e, _| e.wb().panels.query_editor.as_ref().unwrap().query.steps.len());
+    s.update(move |e, window, cx| e.query_edit_step(steps - 2, window, cx));
+    assert_eq!(s.with(|e, _| e.wb().panels.query_editor.as_ref().unwrap().form.as_ref().map(|f| (f.op, f.picks.get("culture").copied()))), Some((QOp::ChangeTypeLocale, Some(3))));
+    s.screenshot("form");
+}
 
 /// #211: クエリと接続 (and the query editor) closed leaves no 「セルの書式設定」 pane behind.
 fn issue211_queries_pane_closes_empty() {
@@ -21777,7 +21923,7 @@ fn query002_blank_query() {
 fn options007_settings() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     // The settings are kept in the scenario's folder, not the user's.
-    let dir = crate::shell::scenario::repo_root().join("target/scenario/xlsx::options007_settings/settings");
+    let dir = crate::shell::scenario::scenario_dir("xlsx::options007_settings").join("settings");
     let _ = std::fs::remove_dir_all(&dir);
     // SAFETY: the scenarios run one at a time on the main thread; nothing else reads the environment meanwhile.
     unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
@@ -22201,7 +22347,7 @@ fn sec018_page_order() {
             cx,
         )
     });
-    let dir = crate::shell::scenario::repo_root().join("target/scenario/xlsx::sec018_page_order");
+    let dir = crate::shell::scenario::scenario_dir("xlsx::sec018_page_order");
     std::fs::create_dir_all(&dir).unwrap();
     let pages = |s: &mut Scenario, name: &str| -> Vec<String> {
         let path = dir.join(name);
@@ -24530,6 +24676,8 @@ fn sheet008_autofit_row_height_double_click() {
 /// XLSX-SHEET-007 行・列ヘッダーのコンテキストメニューからの「行の高さ…」「列の幅…」数値指定パネル連携と複数行・列一括設定
 fn sheet007_row_height_column_width_dialog() {
     let mut s = new_sheet();
+    // The height of an untouched row is the first sheet's default row, which Windows measures with the Normal font (19.5 pt in this file) and Mac keeps as the file says (20 pt).
+    let default_row = s.size_pt("3");
 
     // 1. 行ヘッダー右クリックメニューから「行の高さ…」を開き、35pt に設定
     s.header_menu("3", "xlsx.header-row-height");
@@ -24546,7 +24694,7 @@ fn sheet007_row_height_column_width_dialog() {
 
     // Undo で元に戻る
     s.key("cmd-z");
-    assert_eq!(s.size_pt("3"), 20.0);
+    assert_eq!(s.size_pt("3"), default_row);
     s.key("cmd-shift-z");
     assert_eq!(s.size_pt("3"), 35.0);
 
@@ -24570,9 +24718,9 @@ fn sheet007_row_height_column_width_dialog() {
 
     // Undo で 3 行とも元に戻る
     s.key("cmd-z");
-    assert_eq!(s.size_pt("4"), 20.0);
-    assert_eq!(s.size_pt("5"), 20.0);
-    assert_eq!(s.size_pt("6"), 20.0);
+    assert_eq!(s.size_pt("4"), default_row);
+    assert_eq!(s.size_pt("5"), default_row);
+    assert_eq!(s.size_pt("6"), default_row);
 
     // 3. 列ヘッダー右クリックメニューから「列の幅…」を開き、18文字に設定
     let init_c = s.size_pt("C");
@@ -28128,6 +28276,12 @@ fn table022_slicer003_timeline003_context_menus_and_quick_actions() {
             cx,
         );
     });
+    // The row and the offset in it that the timeline's top is at, in this sheet.
+    let anchor_of = |sh: &ibis_doc_model::Sheet, y: i64| {
+        let o = sh.row_offsets();
+        let i = o.partition_point(|&t| t <= y).saturating_sub(1);
+        (i, y - o[i])
+    };
     let (expected_x, expected_y, expected_w, expected_sel) = s.with(|e, _| {
         let sh = e.slide().shape(timeline_id).unwrap();
         let tl = match &sh.kind {
@@ -28141,6 +28295,7 @@ fn table022_slicer003_timeline003_context_menus_and_quick_actions() {
         assert_eq!(tl.style, "TimeSlicerStyleDark2");
         (sh.frame.x, sh.frame.y, sh.frame.width, tl.selection)
     });
+    let (expected_row, expected_off) = s.with(|e, _| anchor_of(e.current_sheet().unwrap().1, expected_y));
 
     s.save_as("timeline003.xlsx");
     let reopened = s.reopen();
@@ -28160,7 +28315,11 @@ fn table022_slicer003_timeline003_context_menus_and_quick_actions() {
     assert_eq!(re_timeline.style, "TimeSlicerStyleDark2");
     assert_eq!(re_timeline.selection, expected_sel);
     assert!((re_sh.frame.x - expected_x).abs() <= 20000);
-    assert!((re_sh.frame.y - expected_y).abs() <= 20000);
+    // The shape is anchored to cells (row and the offset in it), so its place is compared as that: its y in pixels follows the rows' heights,
+    // and a file read raw has the heights it states (20 pt here) where the live sheet had the Normal font's row (19.5 pt on Windows).
+    let (re_row, re_off) = anchor_of(crate::shell::editor::sheet_of(&reopened.slides[0]).unwrap().1, re_sh.frame.y);
+    assert_eq!(re_row, expected_row, "the timeline stays anchored to its row");
+    assert!((re_off - expected_off).abs() <= 20000, "{re_off} {expected_off}");
     assert!((re_sh.frame.width - expected_w).abs() <= 20000);
 }
 
@@ -30095,7 +30254,7 @@ fn issue205_quick_access_no_icon_ring() {
     use crate::shell::scenario::button_probe as buttons;
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     s.size(1200., 800.);
-    let dir = crate::shell::scenario::repo_root().join("target/scenario/xlsx::issue205_quick_access_no_icon_ring/settings");
+    let dir = crate::shell::scenario::scenario_dir("xlsx::issue205_quick_access_no_icon_ring").join("settings");
     let _ = std::fs::remove_dir_all(&dir);
     // SAFETY: the scenarios run one at a time on the main thread; nothing else reads the environment meanwhile.
     unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
@@ -30121,4 +30280,45 @@ fn issue205_quick_access_no_icon_ring() {
     assert_eq!(scale(&mut s), Some(80), "a click runs the command");
     unsafe { std::env::remove_var("IBIS_SETTINGS_DIR") };
     crate::shell::qat::reload();
+}
+
+
+/// #263 データ > データの取得: a small sample of a JSON Lines file and of an SQLite database (made here) is read as the file
+/// picker reads it, opened in the query editor, and 閉じて読み込む writes it to the sheet; the book keeps only the file name.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn query_external_sources_issue_263() {
+    use ibis_doc_model::query::Source;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/scenario-263");
+    std::fs::create_dir_all(&dir).unwrap();
+    let jsonl = dir.join("sample.jsonl");
+    std::fs::write(&jsonl, "{\"code\":\"001\",\"amount\":10}\n{\"code\":\"002\",\"amount\":20}\n").unwrap();
+    let sqlite = dir.join("sample.sqlite3");
+    std::fs::write(&sqlite, include_bytes!("../../../ibis-doc-model/src/query/fixtures/external.sqlite3")).unwrap();
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let sheets = s.with(|e, _| e.presentation().slides.len());
+    let read = |s: &mut Scenario, name: String, r: u32, c: u32| s.with(move |e, _| e.presentation().slides.iter().find(|x| x.name.as_deref() == Some(name.as_str())).and_then(ibis_doc_model::sheet_calc::sheet_of_slide).and_then(|sh| sh.cell(r, c)).map(|x| x.value.clone()));
+    // JSON Lines: the fields are in the order they appear in the file (#263: not alphabetical).
+    let table = ibis_doc_model::query::read_json_lines(&jsonl);
+    s.update(move |e, window, cx| e.finish_external_query(Source::JsonLines { name: "sample.jsonl".into() }, table, None, false, window, cx));
+    let names = s.with(|e, _| e.wb().panels.query_editor.as_ref().map(|q| q.shown().names()).expect("the editor is open"));
+    assert_eq!(names, ["code", "amount"]);
+    s.update(|e, window, cx| e.query_close_and_load(window, cx));
+    assert_eq!(s.with(|e, _| e.presentation().slides.len()), sheets + 1);
+    let out = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().queries[0].output.clone()).expect("the sheet it loaded");
+    assert_eq!(read(&mut s, out.clone(), 0, 0), Some(CellValue::Text("code".into())));
+    assert_eq!(read(&mut s, out.clone(), 2, 0), Some(CellValue::Text("002".into())));
+    assert_eq!(read(&mut s, out.clone(), 2, 1), Some(CellValue::Number(20.0)));
+    // SQLite: a table of the database.
+    let table = ibis_doc_model::query::read_sqlite_table(&sqlite, "sales \"2026\"");
+    s.update(move |e, window, cx| e.finish_external_query(Source::Sqlite { name: "sample.sqlite3".into(), table: "sales \"2026\"".into() }, table, None, false, window, cx));
+    assert_eq!(s.with(|e, _| e.wb().panels.query_editor.as_ref().map(|q| q.shown().names()).expect("the editor is open")), ["code", "amount", "remark"]);
+    s.update(|e, window, cx| e.query_close_and_load(window, cx));
+    assert_eq!(s.with(|e, _| e.presentation().workbook.as_ref().unwrap().queries.len()), 2);
+    // Saved and read back: the queries keep the file names (no path), and the sheets keep the values.
+    s.save_as("query263.xlsx");
+    let back = s.reopen();
+    let queries = &back.workbook.as_ref().unwrap().queries;
+    assert_eq!(queries[0].source, Source::JsonLines { name: "sample.jsonl".into() });
+    assert_eq!(queries[1].source, Source::Sqlite { name: "sample.sqlite3".into(), table: "sales \"2026\"".into() });
+    std::fs::remove_dir_all(&dir).ok();
 }

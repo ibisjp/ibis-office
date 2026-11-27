@@ -20,10 +20,11 @@ use crate::ext::*;
 
 const ISSUES: &str = "test/editing/xlsx-rowfit-issue-triage.xlsx";
 
-/// Rows 1 to 40 of `ISSUES` as Excel opens them (points).
+/// Rows 1 to 40 of `ISSUES` as Excel opens them (points). Microsoft Excel 365 for Windows, COM `Rows(i).Height` on this file
+/// (`scripts/corpus/excel_custom_rows_win.ps1`, 2026-11-26): rows 5, 6, 7, 11 and 32 are `customHeight`; 35 to 40 hold no text.
 const EXCEL_ROWS: [f32; 40] = [
-    24.0, 37.5, 112.5, 94.25, 90.0, 36.0, 72.0, 93.75, 75.0, 18.75, 90.0, 150.0, 18.75, 18.0, 18.75, 75.0, 56.25, 56.25, 56.25, 18.75, 37.5, 37.5, 37.5, 18.75, 37.5, 56.25, 37.5, 56.25,
-    93.75, 37.5, 112.5, 54.0, 56.25, 72.0, 18.0, 18.0, 18.0, 90.0, 60.0, 60.0,
+    24.0, 37.5, 112.5, 93.75, 90.0, 36.0, 72.0, 93.75, 75.0, 18.75, 90.0, 150.0, 18.75, 18.75, 18.75, 75.0, 56.25, 56.25, 56.25, 18.75, 37.5, 37.5, 37.5, 18.75, 37.5, 56.25, 37.5, 56.25,
+    93.75, 37.5, 112.5, 54.0, 56.25, 37.5, 18.75, 18.75, 18.75, 18.75, 18.75, 18.75,
 ];
 
 fn row_pt(s: &mut Scenario, row: u32) -> f32 {
@@ -174,6 +175,7 @@ pub(super) fn agree_scenario() {
     agree(&mut s, "H31", 30, 7, "issues autofit H31");
     // The row of customHeight stays (row 32 is 54 pt).
     assert_eq!(row_pt(&mut s, 31), 54.0);
+    drop(s); // `paths` opens its own scenario, and a second one waits for the first for ever
     paths("test/editing/xlsx-rowfit-yugothic.xlsx", 18.75);
     paths("test/editing/xlsx-rowfit-calibri.xlsx", 15.0);
     paths("test/editing/xlsx-rowfit-msgothic.xlsx", 13.5);

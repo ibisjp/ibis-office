@@ -56,7 +56,7 @@ fn mcp_both_versions_are_answered() {
     assert_eq!(answers[0]["result"]["protocolVersion"], "2025-11-25");
     assert_eq!(answers[0]["result"]["serverInfo"]["name"], "ibisOffice");
     assert_eq!(answers[0]["result"]["serverInfo"]["version"], ibis_mcp::VERSION);
-    assert!(ibis_mcp::VERSION.starts_with("0.8.") && ibis_mcp::VERSION != "0.8.0", "the app's version (version.txt), not the crate's: {}", ibis_mcp::VERSION);
+    assert!(ibis_mcp::VERSION.starts_with("0.8.") && ibis_mcp::VERSION != "0.8.0", "the app's version (build-version.txt), not the crate's: {}", ibis_mcp::VERSION);
     let tools = answers[1]["result"]["tools"].as_array().unwrap();
     assert_eq!(tools.len(), answers[3]["result"]["tools"].as_array().unwrap().len(), "the same tools in both versions");
     assert!(tools.iter().any(|t| t["name"] == "docx_replace_text" && t["inputSchema"]["type"] == "object"));
@@ -105,7 +105,7 @@ fn mcp_a_document_is_edited_through_tools_call() {
     let saved = answer(&mut server, call(4, "app_save_document", json!({ "document_id": id, "path": dir.join("out.docx").to_string_lossy() })));
     assert_eq!(saved["result"]["isError"], false, "{saved}");
     // A tool error is a result with isError, and has the code.
-    let refused = answer(&mut server, call(5, "app_open_document", json!({ "path": "/etc/passwd" })));
+    let refused = answer(&mut server, call(5, "app_open_document", json!({ "path": outside_path() })));
     assert_eq!(refused["result"]["isError"], true);
     assert_eq!(refused["result"]["structuredContent"]["error"]["code"], "not_allowed_path");
     let reopened = answer(&mut server, call(6, "app_open_document", json!({ "path": dir.join("out.docx").to_string_lossy() })));
@@ -124,4 +124,9 @@ fn mcp_read_only_does_not_list_or_run_what_changes() {
     assert!(!tools.iter().any(|t| t["name"] == "app_save_document" || t["name"] == "docx_insert_text"));
     let call: Value = serde_json::from_str(&server.handle(&request(2, "tools/call", json!({ "name": "docx_insert_text", "arguments": {} }))).unwrap()).unwrap();
     assert_eq!(call["error"]["code"], -32602);
+}
+
+/// An existing file outside every allowed folder (`/etc/passwd` is not an absolute path on Windows).
+fn outside_path() -> &'static str {
+    if cfg!(windows) { r"C:\Windows\win.ini" } else { "/etc/passwd" }
 }

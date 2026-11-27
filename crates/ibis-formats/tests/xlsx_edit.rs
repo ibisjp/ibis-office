@@ -259,6 +259,33 @@ fn sizes_and_merges_are_saved() {
 }
 
 #[test]
+fn added_sheet_declares_relationship_namespace_when_siblings_declare_their_own() {
+    // A workbook whose root does not declare `r:` and whose `sheet` elements each declare it themselves (as some exporters write):
+    // made here from the sales sample, so that no outside file is needed.
+    let (data, _) = open("xlsx-sales.xlsx");
+    let mut package = ibis_ooxml::Package::open(data).unwrap();
+    let rel = "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
+    let xml = String::from_utf8(package.read("xl/workbook.xml").unwrap()).unwrap();
+    assert!(xml.contains(&format!(" {rel}")));
+    let xml = xml.replacen(&format!(" {rel}"), "", 1).replace("<sheet ", &format!("<sheet {rel} "));
+    package.set_bytes("xl/workbook.xml", xml.into_bytes());
+    let data = package.save(ibis_ooxml::package::SaveOptions::default()).unwrap();
+    let opened = ibis_formats::open(data).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let sheet = document.ids().new_slide_id();
+    let shape = document.ids().new_shape_id();
+    document.execute(vec![Command::Sheet(SheetCommand::AddSheet {
+        index: 0,
+        name: "Query output".into(),
+        sheet,
+        shape,
+    })]).unwrap();
+    let bytes = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    assert_reads_back(&bytes, document.presentation());
+    assert_eq!(ibis_formats::read(&bytes).unwrap().slides[0].name.as_deref(), Some("Query output"));
+}
+
+#[test]
 fn sheets_added_renamed_and_deleted_are_saved() {
     let (data, opened) = open("xlsx-sales.xlsx");
     let mut d = Document::new(opened.presentation.clone());
@@ -3482,6 +3509,7 @@ fn chart_series_marker_and_stroke_save_and_reopen() {
         symbol: MarkerSymbol::Diamond,
         size: 7,
         fill: Fill::Solid(Color::opaque(Rgb(0xFF0000))),
+        edge: None,
     });
     modified.groups[0].series[0].stroke = Some(Stroke::solid(Color::opaque(Rgb(0x00FF00)), 38_100));
 
@@ -3509,6 +3537,7 @@ fn chart_series_marker_and_stroke_save_and_reopen() {
         symbol: MarkerSymbol::None,
         size: 5,
         fill: Fill::None,
+        edge: None,
     });
     edited.groups[0].series[0].stroke = Some(Stroke::solid(Color::opaque(Rgb(0x0000FF)), 12_700));
 
@@ -10130,7 +10159,7 @@ fn test_sheet_shape_fill_line_shadow_roundtrip() {
     let mut changed = auto.clone();
     changed.fill = Fill::Solid(Color::opaque(Rgb(0xFF0000)));
     changed.stroke = Some(Stroke::solid(Color::opaque(Rgb(0x00B050)), 25_400).with_dash(LineDash::Dash));
-    changed.shadow = Some(Shadow::simple(Color { rgb: Rgb(0), alpha: 102 }, 50_800, 38_100, 2_700_000));
+    changed.shadow = Some(Shadow::simple(Color { rgb: Rgb(0), alpha: 102, theme: None }, 50_800, 38_100, 2_700_000));
     d.execute(vec![Command::SetShapeKind { slide: s0, shape: id, kind: Box::new(ShapeKind::Auto(changed.clone())) }]).unwrap();
     let saved = opened.source.save(d.presentation(), ibis_formats::SaveOptions::default()).unwrap();
 

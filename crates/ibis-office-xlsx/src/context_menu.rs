@@ -1641,6 +1641,7 @@ impl SlideEditor {
             MenuItem::new("xlsx.tab-protect", "_xlsx.protect-sheet")
                 .icon("lock")
                 .checked(is_protected)
+                .disabled(!self.sheet_group().is_empty())
                 .on(|this, window, cx| this.open_protect_panel(window, cx))
                 .into(),
         );

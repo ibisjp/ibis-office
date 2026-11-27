@@ -24,7 +24,8 @@ pub fn is_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        let out = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).stderr(Stdio::null()).output();
+        use std::os::windows::process::CommandExt as _;
+        let out = Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).creation_flags(0x0800_0000).stderr(Stdio::null()).output();
         match out {
             Ok(out) => String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\"")),
             Err(_) => false,
@@ -46,7 +47,9 @@ pub fn terminate(pid: u32, force: bool) {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt as _;
         let mut command = Command::new("taskkill");
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         command.args(["/PID", &pid.to_string()]);
         if force {
             command.arg("/F");

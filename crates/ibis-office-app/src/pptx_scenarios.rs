@@ -47,6 +47,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(m74_20261111::all());
     all.extend(panels_20261105_group1::all());
     all.extend(chart_data_workbook::all());
+    #[cfg(not(windows))]
     all.extend(crate::pptx_text_rect::all());
     all
 }

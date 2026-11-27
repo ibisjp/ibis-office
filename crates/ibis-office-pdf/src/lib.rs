@@ -16,13 +16,18 @@ use ibis_pdf::{PdfContainer, Result};
 
 pub mod editor;
 pub mod render;
+pub mod markdown;
+pub mod text;
 pub use editor::PdfDocument;
+/// How a page's text is laid out by the Markdown and text exports (`--text-layout`).
+pub use ibis_pdf::text_layout::TextLayout;
 
 enum ViewerSource {
     Empty,
     Pdf(Arc<Mutex<PdfContainer>>),
     Ofd(Arc<OfdContainer>),
     Xps(Arc<XpsContainer>),
+    Xdw(Arc<ibis_xdw::XdwContainer>),
 }
 
 /// A character of the document: the page and its place in the page's text (the order the text is in the file).
@@ -98,6 +103,14 @@ impl PdfViewerState {
     /// without eagerly interpreting page content streams.
     pub fn open(bytes: impl Into<Arc<[u8]>>) -> Result<Self> {
         let raw: Arc<[u8]> = bytes.into();
+        if ibis_xdw::is_xdw(&raw) {
+            let xdw = ibis_xdw::XdwContainer::from_bytes(raw.clone())?;
+            return Ok(Self {
+                pages: xdw.page_infos(),
+                source: ViewerSource::Xdw(Arc::new(xdw)),
+                ..Self::empty()
+            });
+        }
         if ibis_ofd::is_ofd(&raw) {
             let ofd = OfdContainer::from_bytes(raw).map_err(|e| ibis_pdf::Error::new(e.to_string()))?;
             let pages = ofd.page_infos();
@@ -157,6 +170,10 @@ impl PdfViewerState {
             find_query: String::new(),
             text_found: None,
         })
+    }
+
+    pub fn is_xdw(&self) -> bool {
+        matches!(self.source, ViewerSource::Xdw(_))
     }
 
     pub fn page_count(&self) -> usize {
@@ -274,11 +291,29 @@ impl PdfViewerState {
                 ofd.interpret_page_scene(page_index)
                     .map_err(|e| ibis_pdf::Error::new(e.to_string()))?,
             ),
+            ViewerSource::Xdw(xdw) => match xdw.interpret_page_scene(page_index) {
+                Ok(scene) => Arc::new(scene),
+                Err(error) => {
+                    let info = self.pages.get(page_index).cloned().ok_or_else(|| error.clone())?;
+                    let title = ibis_office_shell::i18n::text("xdw.page-error").to_string();
+                    let display_list = [(title, 40.0), (error.to_string(), 60.0)]
+                        .into_iter()
+                        .map(|(text, y)| ibis_pdf::DisplayCmd::DrawGlyphRun {
+                            text, origin: (24.0, y), font_size: 12.0, rgba: [80, 80, 80, 255],
+                        }).collect();
+                    Arc::new(PageScene { info, display_list, text_index: Default::default() })
+                }
+            },
             ViewerSource::Xps(xps) => Arc::new(
                 xps.interpret_page_scene(page_index)
                     .map_err(|e| ibis_pdf::Error::new(e.to_string()))?,
             ),
         };
+        if self.is_xdw() && self.scene_cache.len() >= 4 {
+            // Scanned pages may retain large decoded images in both caches.
+            self.scene_cache.clear();
+            self.image_cache.clear();
+        }
         self.scene_cache.insert(page_index, scene.clone());
         Ok(scene)
     }

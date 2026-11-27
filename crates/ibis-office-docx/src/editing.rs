@@ -610,7 +610,7 @@ impl SlideEditor {
     /// Check whether a click on page `page` at `(x, y)` (points) hits a comment marker/bubble in the margin.
     pub(crate) fn comment_at_point(&self, page: usize, x: f32, y: f32) -> Option<u32> {
         let doc = self.flow()?;
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let page_w = doc.page.size.width as f32 / 12_700.0;
         let bubble_x = page_w + 8.0;
         if x < bubble_x - 10.0 || x > bubble_x + 35.0 {
@@ -621,7 +621,7 @@ impl SlideEditor {
                 continue;
             }
             let Some((from, to)) = flow_command::comment_range(doc, c.id) else { continue };
-            for l in &lines {
+            for l in lines.iter() {
                 if l.page != page {
                     continue;
                 }
@@ -651,19 +651,40 @@ impl SlideEditor {
         None
     }
 
-    /// The lines of the laid-out pages.
-    pub fn flow_lines(&self) -> Vec<LineGeom> {
-        let Some(doc) = self.flow() else { return Vec::new() };
+    /// The lines of the laid-out pages, cached per pagination instance.
+    pub fn flow_lines_arc(&self) -> Arc<Vec<LineGeom>> {
+        let Some(doc) = self.flow() else { return Arc::new(Vec::new()) };
         let pagination = pages(doc, &self.resources);
-        let mut out = Vec::new();
-        for (page, pg) in pagination.pages.iter().enumerate() {
-            for item in &pg.items {
-                if let Item::Line { para, x, y, h, stops, vertical, list_tab, base, avail, .. } = item {
-                    out.push(LineGeom { page, para: *para, x: *x, y: *y, h: *h, stops: stops.clone(), vertical: *vertical, list_tab: *list_tab, base: *base, avail: *avail });
+        let key = Arc::as_ptr(&pagination) as usize;
+        thread_local! {
+            static FLOW_LINES: std::cell::RefCell<Vec<(usize, Arc<crate::flow_layout::Pagination>, Arc<Vec<LineGeom>>)>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
+        FLOW_LINES.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            if let Some((_, _, lines)) = cache.iter().find(|(k, _, _)| *k == key) {
+                return lines.clone();
+            }
+            let mut out = Vec::new();
+            for (page, pg) in pagination.pages.iter().enumerate() {
+                for item in &pg.items {
+                    if let Item::Line { para, x, y, h, stops, vertical, list_tab, base, avail, .. } = item {
+                        out.push(LineGeom { page, para: *para, x: *x, y: *y, h: *h, stops: stops.clone(), vertical: *vertical, list_tab: *list_tab, base: *base, avail: *avail });
+                    }
                 }
             }
-        }
-        out
+            let lines = Arc::new(out);
+            if cache.len() >= 4 {
+                cache.remove(0);
+            }
+            cache.push((key, pagination, lines.clone()));
+            lines
+        })
+    }
+
+    /// The lines of the laid-out pages.
+    pub fn flow_lines(&self) -> Vec<LineGeom> {
+        (*self.flow_lines_arc()).clone()
     }
 
     /// The line the caret at `pos` is shown on.
@@ -720,7 +741,7 @@ impl SlideEditor {
 
     /// The position nearest a point of page `page` (points).
     pub(crate) fn position_at(&self, page: usize, x: f32, y: f32) -> Option<FlowPos> {
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let on_page: Vec<&LineGeom> = lines.iter().filter(|l| l.page == page).collect();
 
         // Horizontal line: if Y is within line height and X is beyond the rightmost character, return the end of line
@@ -872,6 +893,11 @@ impl SlideEditor {
                 if !m {
                     // A base character and its variation selector (an IVS) are one character for the caret.
                     while o < len && selector_at(o) { o += 1; }
+                    // A picture of several characters (a family, a flag, a skin tone, a keycap) is one character for the caret (K0066, M5).
+                    if o <= text.len() {
+                        let (from, to) = crate::render::rich_text::cluster_bounds(&text, o - 1);
+                        if to > o && crate::render::rich_text::is_emoji_cluster(&text[from..to]) { o = to; }
+                    }
                     break;
                 }
             }
@@ -890,6 +916,11 @@ impl SlideEditor {
                 if !mark(o) {
                     // Back over the selector of an IVS to its base character.
                     while o > 0 && selector_at(o) && !mark(o - 1) { o -= 1; }
+                    // The first character of a picture of several (K0066, M5).
+                    if o < text.len() {
+                        let (from, to) = crate::render::rich_text::cluster_bounds(&text, o);
+                        if from < o && crate::render::rich_text::is_emoji_cluster(&text[from..to]) { o = from; }
+                    }
                     return FlowPos::new(pos.para, o);
                 }
             }
@@ -952,7 +983,7 @@ impl SlideEditor {
     }
 
     fn vertical(&self, pos: FlowPos, down: bool) -> (FlowPos, f32) {
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let Some(current) = Self::line_of(&lines, pos) else { return (pos, 0.0) };
         let goal = self.doc_state().and_then(|s| s.goal_x).unwrap_or_else(|| {
             if current.vertical {
@@ -978,7 +1009,7 @@ impl SlideEditor {
     }
 
     fn line_edge(&self, pos: FlowPos, end: bool) -> FlowPos {
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let Some(line) = Self::line_of(&lines, pos) else { return pos };
         let stops = &line.stops;
         let len = self.paragraph_of(pos.para).map_or(0, |p| p.len());
@@ -1012,7 +1043,7 @@ impl SlideEditor {
             }
             return;
         };
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let is_vert = Self::line_of(&lines, caret).is_some_and(|l| l.vertical);
         // Without Shift, a selection collapses to its side.
         if !extend && anchor != caret && matches!(how, Move::Left | Move::Right | Move::Up | Move::Down) {
@@ -1086,7 +1117,7 @@ impl SlideEditor {
         // The pages an edit added are laid out first (they are otherwise on the next frame), or the scroll stops at the old last page (#234).
         self.relayout_if_changed();
         let Some((_, caret)) = self.text_selection() else { return };
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let Some((page, _, y, h)) = self.caret_box(&lines, caret) else { return };
         self.scroll_into_view(page, y, h, cx);
     }
@@ -1094,6 +1125,10 @@ impl SlideEditor {
     // ----- Editing ----------------------------------------------------------
 
     pub fn run_flow(&mut self, commands: Vec<FlowCommand>, cx: &mut Context<Self>) -> bool {
+        if self.is_jtd_read_only() && commands.iter().any(|c| !matches!(c, FlowCommand::SetViewMode(_))) {
+            self.set_status(crate::shell::i18n::text("file.jtd-read-only").to_string(), cx);
+            return false;
+        }
         // Edits move the offsets the other ranges of a selection hold.
         if let Some(state) = self.doc_state_mut() {
             state.extra_selections.clear();
@@ -3201,7 +3236,8 @@ impl SlideEditor {
         // that movement passed over. Apply this to tracked deletions as well.
         let one_cluster = a.para == b.para && self.paragraph_of(a.para).is_some_and(|p| {
             let t: Vec<char> = p.text().chars().skip(a.offset).take(b.offset.saturating_sub(a.offset)).collect();
-            t.len() > 1 && t[1..].iter().all(|&c| crate::render::rich_text::is_variation_selector(c))
+            // One picture is one character (K0066 M5): a family (ZWJ), a flag, a skin tone, a keycap, a tag flag go all at once.
+            t.len() > 1 && (t[1..].iter().all(|&c| crate::render::rich_text::is_variation_selector(c)) || crate::render::rich_text::is_emoji_cluster(&t))
         });
         if a.para == b.para && b.offset > a.offset + 1 && !one_cluster {
             if forward { a.offset = b.offset - 1; } else { b.offset = a.offset + 1; }
@@ -4413,7 +4449,17 @@ impl SlideEditor {
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
-                this.update(cx, |this, cx| this.compare_with_file(&path, cx)).ok();
+                let probe = path.clone();
+                let statute = cx.background_executor().spawn(async move {
+                    SlideEditor::is_law_comparison_file(&probe)
+                }).await;
+                this.update_in(cx, |this, window, cx| {
+                    if statute {
+                        this.compare_law_with_file(path, window, cx);
+                    } else {
+                        this.compare_with_file(&path, cx);
+                    }
+                }).ok();
             })
             .detach();
         }
@@ -5950,11 +5996,26 @@ pub(crate) struct DocxThemeColorsPreset {
     pub(crate) colors: [(&'static str, ibis_doc_model::Rgb); 12],
 }
 
-pub(crate) const DOCX_THEME_COLORS_PRESETS: [DocxThemeColorsPreset; 12] = [
+pub(crate) const DOCX_THEME_COLORS_PRESETS: [DocxThemeColorsPreset; 13] = [
     DocxThemeColorsPreset {
         id: "office",
         action_id: "docx.design.theme-colors.office",
         label_key: "docx.design.theme-colors.office",
+        // The Microsoft 365 default "Office" (2023): tasks/doc/requests/2026-11-24-290-office-colour-scheme-result.md (clrScheme of a new presentation, PowerPoint 16.0.20625).
+        colors: [
+            ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
+            ("dk2", ibis_doc_model::Rgb(0x0e2841)), ("lt2", ibis_doc_model::Rgb(0xe8e8e8)),
+            ("accent1", ibis_doc_model::Rgb(0x156082)), ("accent2", ibis_doc_model::Rgb(0xe97132)),
+            ("accent3", ibis_doc_model::Rgb(0x196b24)), ("accent4", ibis_doc_model::Rgb(0x0f9ed5)),
+            ("accent5", ibis_doc_model::Rgb(0xa02b93)), ("accent6", ibis_doc_model::Rgb(0x4ea72e)),
+            ("hlink", ibis_doc_model::Rgb(0x467886)), ("folHlink", ibis_doc_model::Rgb(0x96607d)),
+        ],
+    },
+    // Office 2013 - 2022: the colours "Office" had before Microsoft 365's 2023 theme (#290).
+    DocxThemeColorsPreset {
+        id: "office_2013_2022",
+        action_id: "docx.design.theme-colors.office_2013_2022",
+        label_key: "docx.design.theme-colors.office_2013_2022",
         colors: [
             ("dk1", ibis_doc_model::Rgb(0x000000)), ("lt1", ibis_doc_model::Rgb(0xffffff)),
             ("dk2", ibis_doc_model::Rgb(0x44546a)), ("lt2", ibis_doc_model::Rgb(0xe7e6e6)),
@@ -6121,7 +6182,7 @@ pub(crate) struct DocxDocumentThemePreset {
 
 pub(crate) const DOCX_DOCUMENT_THEME_PRESETS: [DocxDocumentThemePreset; 10] = [
     DocxDocumentThemePreset { id: "office", action_id: "docx.design.themes.office", label_key: "docx.design.themes.office", color_id: "office", font_id: "office", effect_id: "office" },
-    DocxDocumentThemePreset { id: "office_2013_2022", action_id: "docx.design.themes.office_2013_2022", label_key: "docx.design.themes.office_2013_2022", color_id: "office", font_id: "calibri", effect_id: "office" },
+    DocxDocumentThemePreset { id: "office_2013_2022", action_id: "docx.design.themes.office_2013_2022", label_key: "docx.design.themes.office_2013_2022", color_id: "office_2013_2022", font_id: "calibri", effect_id: "office" },
     DocxDocumentThemePreset { id: "office_2007_2010", action_id: "docx.design.themes.office_2007_2010", label_key: "docx.design.themes.office_2007_2010", color_id: "office_2007_2010", font_id: "calibri", effect_id: "office_2007_2010" },
     DocxDocumentThemePreset { id: "facet", action_id: "docx.design.themes.facet", label_key: "docx.design.themes.facet", color_id: "green", font_id: "century-gothic", effect_id: "metro" },
     DocxDocumentThemePreset { id: "gallery", action_id: "docx.design.themes.gallery", label_key: "docx.design.themes.gallery", color_id: "violet", font_id: "arial", effect_id: "glossy" },
@@ -6371,7 +6432,7 @@ impl SlideEditor {
 
     /// ヘッダーとフッターを閉じる (Esc, the title row's button, a double click in the body): the caret back in the body, where
     /// it was before the header or footer was entered (the start of the document when that is gone).
-    pub(crate) fn close_header_footer(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn leave_header_footer_editing(&mut self, cx: &mut Context<Self>) {
         if !self.is_header_footer_editing() {
             return;
         }
@@ -6391,7 +6452,7 @@ impl SlideEditor {
             return false;
         }
         if self.is_header_footer_editing() {
-            self.close_header_footer(cx);
+            self.leave_header_footer_editing(cx);
             return true;
         }
         let Some(setup) = flow_command::section_setup(doc, flow_command::section_of(doc, pos.para)) else { return false };
@@ -7233,7 +7294,7 @@ impl SlideEditor {
     fn toc_command(&self, before: u32, replace: bool, instruction: &flow_command::TocInstruction) -> Option<FlowCommand> {
         let doc = self.flow()?;
         let width = doc.page.size.width - doc.page.left - doc.page.right;
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let first = doc.page.first_page;
         let page_of = |id: u32| lines.iter().find(|l| l.para == id).map(|l| first + l.page as u32);
         let (entries, bookmarks) = flow_command::toc_entries_with_instruction(doc, instruction, &page_of, doc.new_id(), width);
@@ -7550,7 +7611,7 @@ impl SlideEditor {
     fn table_of_figures_command(&self, before: u32, replace: bool, label: &str) -> Option<FlowCommand> {
         let doc = self.flow()?;
         let width = doc.page.size.width - doc.page.left - doc.page.right;
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let first = doc.page.first_page;
         let page_of = |id: u32| lines.iter().find(|l| l.para == id).map(|l| first + l.page as u32);
         let (entries, bookmarks) = flow_command::table_of_figures_entries(doc, label, &page_of, doc.new_id(), width);
@@ -7667,7 +7728,7 @@ impl SlideEditor {
             }
         }
 
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let first_page = doc.page.first_page;
         let page_of = |id: u32| lines.iter().find(|l| l.para == id).map(|l| first_page + l.page as u32);
 
@@ -7949,6 +8010,18 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// 任意指定のハイフンの表示をトグル切替 (DOCX-OPTIONS-008).
+    pub(crate) fn toggle_show_optional_hyphens(&mut self, cx: &mut Context<Self>) {
+        { let prefs = self.doc_prefs_mut(); prefs.formatting_marks_options.show_optional_hyphens = !prefs.formatting_marks_options.show_optional_hyphens; }
+        cx.notify();
+    }
+
+    /// アンカー（オブジェクトの位置）の表示をトグル切替 (DOCX-OPTIONS-008).
+    pub(crate) fn toggle_show_object_anchors(&mut self, cx: &mut Context<Self>) {
+        { let prefs = self.doc_prefs_mut(); prefs.formatting_marks_options.show_object_anchors = !prefs.formatting_marks_options.show_object_anchors; }
+        cx.notify();
+    }
+
     /// 隠し文字の常時表示をトグル切替 (DOCX-OPTIONS-008).
     pub(crate) fn toggle_show_hidden_text(&mut self, cx: &mut Context<Self>) {
         { let prefs = self.doc_prefs_mut(); prefs.formatting_marks_options.show_hidden_text = !prefs.formatting_marks_options.show_hidden_text; }
@@ -8011,6 +8084,21 @@ impl SlideEditor {
     /// 文書の編集制限（保護モード）を取得。
     pub(crate) fn document_protection(&self) -> DocumentProtection {
         self.flow().map_or(DocumentProtection::None, |d| d.protection)
+    }
+
+    /// A panel's main button on a document that refuses edits (`run_flow` rejects them): a message box says so. True when it did.
+    pub(crate) fn alert_edit_blocked(&mut self, title_id: &str, cx: &mut Context<Self>) -> bool {
+        let blocked = self.is_mark_as_final()
+            || (self.is_read_only_recommended() && !self.is_read_only_dismissed())
+            || self.is_read_mode()
+            || self.is_viewing_mode()
+            || self.is_protection_read_only()
+            || self.is_protection_comments()
+            || self.is_protection_forms();
+        if blocked {
+            self.show_alert(crate::shell::i18n::text(title_id).trim_end_matches('…').to_string().into(), crate::shell::i18n::text("docx.edit-blocked.protected"), cx);
+        }
+        blocked
     }
 
     /// 文書が読み取り専用で保護されているか。
@@ -8113,7 +8201,7 @@ impl SlideEditor {
             return;
         }
         if self.is_header_footer_editing() {
-            self.close_header_footer(cx);
+            self.leave_header_footer_editing(cx);
             return;
         }
         if self.is_immersive_reader_enabled() {

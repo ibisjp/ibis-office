@@ -452,7 +452,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(issues116_117::all());
     #[cfg(target_os = "macos")]
     all.extend(super::corpus_report::all());
-    all.into_iter().chain(super::typeset68::all()).chain(super::fallback_carry::all()).chain(super::crop_mode::all()).chain(super::tate_chu_yoko_layout_tests::all()).chain(super::vertical_underline_tests::all()).chain(super::shy_hang_tests::all()).chain(super::kinsoku_across_space_tests::all()).chain(super::math_color_tests::all()).chain(super::autospace_letters_tests::all()).chain(super::ms_fixed_advance_tests::all()).chain(super::deleted_marks_tests::all()).chain(super::ivs_tests::all()).chain(super::issue178_tests::all()).chain(super::issue179_tests::all()).chain(super::issue223_tests::all()).chain(super::issue180_tests::all()).chain(super::issue188_tests::all()).chain(super::issue191_tests::all()).chain(super::issue192_tests::all()).chain(super::issue193_tests::all()).chain(super::issue196_tests::all()).chain(super::squeeze_share_tests::all()).chain(super::issue54_punct_tests::all()).chain(super::issue200_tests::all()).chain(super::issue228_tests::all()).chain(super::issue234_tests::all()).chain(super::issue204_tests::all()).chain(super::issue54_pitch_tests::all()).chain(super::issue192_script_tests::all()).chain(super::issue54_mark_room_tests::all()).chain(super::issue54_meiryo_tests::all()).chain(super::issue179_180_rest_tests::all()).chain(super::issue157_fonts_tests::all()).chain(super::issue179_multiple_tests::all()).chain(super::justify_squeeze_tests::all()).collect()
+    all.into_iter().chain(super::typeset68::all()).chain(super::fallback_carry::all()).chain(super::crop_mode::all()).chain(super::tate_chu_yoko_layout_tests::all()).chain(super::vertical_underline_tests::all()).chain(super::shy_hang_tests::all()).chain(super::kinsoku_across_space_tests::all()).chain(super::math_color_tests::all()).chain(super::autospace_letters_tests::all()).chain(super::ms_fixed_advance_tests::all()).chain(super::deleted_marks_tests::all()).chain(super::ivs_tests::all()).chain(super::issue178_tests::all()).chain(super::issue179_tests::all()).chain(super::issue223_tests::all()).chain(super::issue180_tests::all()).chain(super::issue188_tests::all()).chain(super::issue191_tests::all()).chain(super::issue192_tests::all()).chain(super::issue193_tests::all()).chain(super::issue196_tests::all()).chain(super::squeeze_share_tests::all()).chain(super::issue54_punct_tests::all()).chain(super::issue200_tests::all()).chain(super::issue228_tests::all()).chain(super::issue234_tests::all()).chain(super::issue262_tests::all()).chain(super::issue270_tests::all()).chain(super::issue271_tests::all()).chain(super::k0063_tests::all()).chain(super::k0086_tests::all()).chain(super::k0099_highlight_tests::all()).chain(super::issue287_tests::all()).chain(super::issue299_tests::all()).chain(super::issue296_tests::all()).chain(super::issue188_rest_tests::all()).chain(super::issue204_tests::all()).chain(super::issue54_pitch_tests::all()).chain(super::issue192_script_tests::all()).chain(super::issue54_mark_room_tests::all()).chain(super::issue54_meiryo_tests::all()).chain(super::issue179_180_rest_tests::all()).chain(super::issue157_fonts_tests::all()).chain(super::issue179_multiple_tests::all()).chain(super::justify_squeeze_tests::all()).collect()
 }
 
 /// The paragraphs directly in the body.
@@ -1202,7 +1202,7 @@ fn f1_save_a_copy() {
     let (_, id, _) = text_paragraph(&mut s, 6);
     s.click_text(FlowPos::new(id, 1));
     s.type_text("コピー");
-    let copy = crate::shell::scenario::repo_root().join("target/scenario/docx::f1_save_a_copy/copy.docx");
+    let copy = crate::shell::scenario::scenario_dir("docx::f1_save_a_copy").join("copy.docx");
     s.with(|e, _| e.copy_to(&copy)).unwrap();
     assert_eq!(s.with(|e, _| e.path.clone()), Some(own.clone()));
     assert_eq!(std::fs::read(&own).unwrap(), original, "the file itself is not saved");
@@ -2426,7 +2426,7 @@ fn h11_paste_character_formatting() {
     s.click_text(FlowPos::new(id, 0));
     s.key("cmd-b"); // pending destination formatting for plain paste
     let plain_before = s.document();
-    s.key("cmd-shift-v");
+    paste_plain(&mut s);
     let plain_after = s.document();
     assert!(para(&s.document(), id).text().starts_with(&format!("{expected}{expected}")));
     assert_eq!(para(&s.document(), id).runs[0].style.bold, !style.bold);
@@ -2508,7 +2508,7 @@ fn h11_paste_colliding_ids() {
     s.click_text(FlowPos::new(id, 0));
     let plain_before = s.document();
     let media_before = s.with(|e, _| e.presentation().media.clone());
-    s.key("cmd-shift-v");
+    paste_plain(&mut s);
     let plain_after = s.document();
     assert_eq!(plain_after.styles, plain_before.styles);
     assert_eq!(&plain_after.body[..2], &plain_before.body[..2]);
@@ -4940,7 +4940,7 @@ fn h9_cross_paragraph_history_guard() {
         s.click_text(FlowPos::new(first,4));s.type_text("K");let redone=s.document();s.key("cmd-z");assert_eq!(s.document(),doc);
         s.click_text(FlowPos::new(first,4));for _ in 0..4{s.key("shift-right");}
         assert_eq!(s.selection(),Some((FlowPos::new(first,4),FlowPos::new(last,5))));
-        match action { "typing"=>s.type_text("Q"), "cut"=>s.key("cmd-x"), "paste"=>s.key("cmd-v"), "plain-paste"=>s.key("cmd-shift-v"), _=>s.key(action) }
+        match action { "typing"=>s.type_text("Q"), "cut"=>s.key("cmd-x"), "paste"=>s.key("cmd-v"), "plain-paste"=>paste_plain(&mut s), _=>s.key(action) }
         assert_eq!(s.document(),doc,"cross-paragraph final-view history must not be silently removed or moved");
         assert!(s.with(|e,_|e.status.as_ref().is_some_and(|t|t.contains("変更履歴"))),"explicit safety guidance");
         let current = s.update(|_,_,cx|cx.read_from_clipboard().unwrap());assert_eq!(current.text(),clipboard.text());assert_eq!(current.metadata(),clipboard.metadata());
@@ -5020,7 +5020,7 @@ fn paste_original_history_cases(tracked: bool) {
             s.selection(),
             Some((FlowPos::new(id, 1), FlowPos::new(id, 6)))
         );
-        s.key(if plain { "cmd-shift-v" } else { "cmd-v" });
+        if plain { paste_plain(&mut s) } else { s.key("cmd-v") }
         let after = s.document();
         let p = para(&after, id);
         assert_eq!(final_text(p), format!("a{expected}d"));
@@ -6725,6 +6725,14 @@ fn page_setup_focus(s: &mut Scenario, which: &str) {
         f.update(cx, |i, cx| i.focus(window, cx));
     });
 }
+/// Show a tab of the page setup dialog (0 文字数と行数, 1 余白, 2 用紙, 3 その他).
+fn page_setup_tab(s: &mut Scenario, tab: usize) {
+    s.update(|e, _, cx| {
+        e.doc_state_mut().unwrap().helper.page_setup.as_mut().expect("the panel").tab = tab;
+        cx.notify();
+    });
+    s.settle();
+}
 fn page_setup_field(s: &mut Scenario, i: usize, text: &str) {
     // The row's centre is not the input any more (a label and a spinner share the row): focus the input itself.
     s.update(|e, window, cx| { let f = e.doc_state().unwrap().helper.page_setup.as_ref().expect("the panel").fields[i].clone(); f.update(cx, |i, cx| i.focus(window, cx)); });
@@ -6758,6 +6766,7 @@ fn page003_page_setup_panel() {
     assert!((starts[0] - pt(35.0)).abs() < 1.0, "{starts:?}");
     assert!((starts[1] - pt(15.0)).abs() < 1.0, "{starts:?}");
     // Centred vertically: the first line lower than the top margin.
+    page_setup_tab(&mut s, 3);
     page_setup_click(&mut s, "valign-center");
     page_setup_click(&mut s, "apply");
     assert_eq!(s.with(|e, _| flow(e.presentation()).page.v_align), ibis_doc_model::PageVAlign::Center);
@@ -6780,7 +6789,9 @@ fn page003_direction_and_start() {
     let mut s = Scenario::open(REPORT);
     s.size(1200.0, 1000.0);
     s.menu("docx.page.setup");
+    page_setup_tab(&mut s, 0);
     page_setup_click(&mut s, "direction-vertical");
+    page_setup_tab(&mut s, 3);
     s.update(|e, window, cx| { let f = e.doc_state().unwrap().helper.page_setup.as_ref().expect("the panel").start.clone(); f.update(cx, |i, cx| i.focus(window, cx)); });
     s.key("cmd-a");
     s.type_text("5");
@@ -6800,6 +6811,7 @@ fn page003_direction_and_start() {
     let page = flow(&saved).page;
     assert_eq!((page.direction, page.first_page), (ibis_doc_model::CellDirection::TbRl, 5));
     menu_closing(&mut s, "docx.page.setup");
+    page_setup_tab(&mut s, 0);
     page_setup_click(&mut s, "direction-across");
     page_setup_click(&mut s, "apply");
     assert_eq!(s.with(|e, _| flow(e.presentation()).page.direction), ibis_doc_model::CellDirection::LrTb);
@@ -8026,6 +8038,11 @@ fn edit007_cut_and_copy() {
     assert_eq!(body(flow(&saved))[index].text(), text);
 }
 
+/// Paste as plain text. On Windows Ctrl+Shift+V is Word's paste formatting (the key of the ⇧⌘V on a Mac), so the menu's item is used there.
+fn paste_plain(s: &mut Scenario) {
+    if cfg!(windows) { s.menu("edit.paste-plain") } else { s.key("cmd-shift-v") }
+}
+
 /// DOCX-EDIT-010: paste as plain text (⇧⌘V) takes the destination's character format, not the copied one.
 fn edit010_paste_plain() {
     let mut s = Scenario::open(REPORT);
@@ -8040,7 +8057,7 @@ fn edit010_paste_plain() {
     let tail_bold = |s: &mut Scenario| para(&s.document(), id).runs.last().unwrap().style.bold;
     s.click_text(FlowPos::new(id, len));
     assert!(!tail_bold(&mut s), "the end of the paragraph is not bold");
-    s.key("cmd-shift-v");
+    paste_plain(&mut s);
     assert_eq!(s.paragraph(index).1, format!("{}{}", text, first));
     assert!(!tail_bold(&mut s), "plain paste: the pasted text is not bold");
     s.key("cmd-z");
@@ -11177,6 +11194,7 @@ fn ja015_doc_grid_and_line_pitch() {
 
     // 5. ページ設定パネルで「文字数と行数」を選択し、字送りに 5 pt を指定
     s.menu("docx.page.setup");
+    page_setup_tab(&mut s, 0);
     page_setup_click(&mut s, "grid-lines-chars");
     page_setup_focus(&mut s, "char-space");
     s.key("cmd-a");
@@ -11184,14 +11202,18 @@ fn ja015_doc_grid_and_line_pitch() {
     page_setup_click(&mut s, "apply");
     page_setup_click(&mut s, "close");
 
+    // The field is the 字送り (the characters' pitch); w:charSpace is what it adds to the default font's size, in 1/4096 pt.
+    let base = s.with(|e, _| e.flow().unwrap().styles.paragraph_base(None, None).1.size.unwrap_or(1000) as i64 * 127);
+    let units = ((5.0 * 12_700.0 - base as f64) * 4096.0 / 12_700.0).round() as i64;
+    let expected_space = units * 12_700 / 4096;
     let doc_chars = s.document();
     assert_eq!(doc_chars.page.doc_grid_type, ibis_doc_model::DocGridType::LinesAndChars);
-    assert_eq!(doc_chars.page.char_space, Some(5 * ibis_doc_model::EMU_PER_POINT));
+    assert_eq!(doc_chars.page.char_space, Some(expected_space));
 
     s.save_as("test-ja015-chars.docx");
     let saved_chars = s.reopen();
     assert_eq!(flow(&saved_chars).page.doc_grid_type, ibis_doc_model::DocGridType::LinesAndChars);
-    assert_eq!(flow(&saved_chars).page.char_space, Some(5 * ibis_doc_model::EMU_PER_POINT));
+    assert_eq!(flow(&saved_chars).page.char_space, Some(expected_space));
 
     // 6. 「グリッドなし」に切り替えて適用
     s.menu("docx.page.doc-grid");
@@ -12954,6 +12976,19 @@ fn opt004_overtype_mode() {
 /// - 編集記号ONまたは隠し文字常時表示ONのときは下線点線（UnderlineStyle::Dotted）で可視化
 /// - キャレット移動が非表示の隠し文字を正しくスキップすることの確認
 fn opt008_formatting_marks_and_hidden_text() {
+    // The items are shown from the start now (GitHub issue #262): this scenario goes through them from all off.
+    for (key, _, _) in crate::shell::settings_dialog::DOCX_MARKS {
+        crate::shell::settings::set(key, "0");
+    }
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            for (key, _, _) in crate::shell::settings_dialog::DOCX_MARKS {
+                crate::shell::settings::remove(key);
+            }
+        }
+    }
+    let _restore = Restore;
     let mut s = Scenario::open(REPORT);
 
     // 1. 初期状態：全オプションが false

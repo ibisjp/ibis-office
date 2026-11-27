@@ -56,12 +56,12 @@ fn white_page() {
         assert!(page.iter().all(|v| *v >= 250), "the page is white on screen (icc {with_icc}): {page:?}");
         let presentation = s.with(|e, _| e.presentation().clone());
         assert!(presentation.cmyk.enabled);
-        let dir = std::path::Path::new("target/cmyk-scenario");
+        let dir = &crate::shell::scenario::repo_root().join("target/cmyk-scenario");
         std::fs::create_dir_all(dir).unwrap();
         let options = crate::export::Options {
             format: crate::export::Format::Pdf, out_dir: dir.into(), name: "white".into(), width: 960, slides: vec![1], layout: false,
             file_name: None, print_backgrounds: true, print_hidden_text: false, print_markup: false, color: Default::default(), handout: None,
-            frame: false, handout_landscape: false, notes_pages: false, outline_pages: false, notes_source: None, handout_marks: Default::default(),
+            frame: false, handout_landscape: false, paper: None, fit_paper: true, notes_pages: false, outline_pages: false, notes_source: None, handout_marks: Default::default(),
         };
         crate::export::export(presentation, &options).expect("the PDF");
         let pdf = std::fs::read(dir.join("white.pdf")).unwrap();

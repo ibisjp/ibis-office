@@ -27,6 +27,17 @@ view.menus	Hide Menus
 view.zoom-100	100%
 tools.dictionary	Dictionary
 tools.word-count	Word Count…
+compare.law-command	Create Statute Comparison…
+compare.pick-baseline	Choose the current statute (law XML, Lawtext, or law Markdown)
+compare.failed	Could Not Compare Documents
+compare.different-laws	The two documents have different statute numbers.
+compare.current	Current
+compare.amended	Amended
+compare.open-result	Open as Document
+compare.swap	Swap Versions
+compare.law-preview	Create Statute Comparison
+compare.law-result	Statute Comparison
+compare.no-law-body	The current document has no main provisions, supplementary provisions or appended tables to compare.
 tools.accessibility	Accessibility
 tools.settings	Settings…
 help.search	Search Menus
@@ -52,6 +63,7 @@ file.info	File Info
 file.language	Language
 file.page-setup	Page Setup…
 file.close	Close
+file.back	Back
 file.quit	Exit
 edit.undo	Undo
 edit.redo	Redo
@@ -801,7 +813,7 @@ autocorrect.auto-borders	Turn a paragraph of --- or === into a border line with 
 _shell.hide-notes-pane	Hide Notes
 _shell.show-notes-pane	Show Notes
 shell.linux-desktop.ask	Add ibisOffice to your list of apps?
-shell.linux-desktop.ask.detail	You can then start it from the list of apps, and it appears under "Open With Other Application" for Word, Excel and PowerPoint documents. Without it, the dock may show no icon for ibisOffice. Only your home folder is changed, and you can do this later from Help > Add to List of Apps.
+shell.linux-desktop.ask.detail	You can then start it from the list of apps, and it appears under "Open With Other Application" for documents, workbooks and presentations (.docx, .xlsx, .pptx and others). Without it, the dock may show no icon for ibisOffice. Only your home folder is changed, and you can do this later from Help > Add to List of Apps.
 shell.linux-desktop.yes	Add
 shell.linux-desktop.no	Don't Add
 _shell.comma-style	Comma Style
@@ -824,6 +836,8 @@ file.save-format.docx	Word Document (.docx)
 file.save-format.dotx	Word Template (.dotx)
 file.save-format.odt	OpenDocument Text (.odt)
 file.save-format.md	Markdown Document (.md)
+file.save-format.lawtext	Lawtext Statute (.lawtext)
+file.save-format.lawxml	Japanese Standard Law XML (.xml)
 file.save-format.xlsx	Excel Workbook (.xlsx)
 file.save-format.xltx	Excel Template (.xltx)
 file.save-format.xls	Excel 97-2003 Workbook (.xls)
@@ -1005,6 +1019,7 @@ menu.group.protect-presentation	Protect Presentation
 menu.group.rows-columns	Rows and Columns
 menu.group.select	Select
 menu.group.sheets	Sheets
+menu.group.outline-settings	Outline Settings
 menu.group.show-detail	Show/Hide Detail
 menu.group.size	Size
 menu.group.slides	Slides
@@ -1078,6 +1093,7 @@ sidebar.notes-format	Notes Format
 sidebar.master-doc	Master Document
 sidebar.header-footer	Header and Footer
 sidebar.comments	Comments
+sidebar.form-fill	Form Input
 sidebar.find	Find and Replace
 sidebar.selection	Selection Pane
 sidebar.reading-order	Reading Order Pane
@@ -1199,6 +1215,7 @@ shell.font-setup.cancelled	Cancelled.
 shell.font-setup.done	Installed. The fonts are in the font lists now.
 shell.panel-message.title	Message
 shell.host.saving	Saving…
+shell.host.text-save-values-only	Saved. A CSV or TSV file holds only the values of the sheet shown (other sheets and formatting are not saved).
 shell.host.exported	Exported
 shell.host.error-title	Could not save
 shell.host.error-save-as	Could not save. Please use Save As.
@@ -1273,10 +1290,20 @@ shell.signature.report.broken	The digital signatures are stored incorrectly ({re
 shell.signature.report.head	Signature {n} ({part}): {result}
 shell.signature.report.signer	  Signer (name written in the certificate): {name}
 shell.signature.report.value	  Signature value: {state}
+shell.signature.report.trust	  Certificate: {state}
+shell.signature.trust.checking	checking...
+shell.signature.trust.trusted	trusted (checked with the OS trust store; no problem with the chain, revocation or validity period)
+shell.signature.trust.revocation-unknown	the chain is trusted, but revocation could not be checked
+shell.signature.trust.expired	outside its validity period (expired or not yet valid)
+shell.signature.trust.partial-chain	the issuer cannot be reached (an intermediate certificate is missing)
+shell.signature.trust.untrusted-root	not trusted (the issuer is not a root the OS trusts)
+shell.signature.trust.revoked	revoked
+shell.signature.trust.not-checked	trust cannot be checked in this environment
+shell.signature.trust.failed	the check failed
 shell.signature.report.digests	  Digests of the signed parts: {matched} of {total} match
 shell.signature.report.detail	  - {what}: {state}
 shell.signature.report.more	  - and {count} more
-shell.signature.report.notice	Only the signature value and the digests of the parts the signature covers were compared. The certificate's trust and revocation, time stamps, and whether the signature covers the whole document were not checked, so this is not a judgment that the signature is valid. To check the document after editing, save it and open the saved file again.
+shell.signature.report.notice	What was checked: the signature value, the digests of the parts the signature covers, and the trust of the signing certificate (chain, revocation and validity period, judged by the OS trust store). Time stamps and whether the signature covers the whole document were not checked, so this is not a judgment that the signature is valid. To check the document after editing, save it and open the saved file again.
 shell.signature.result.consistent	the signature value and digests match
 shell.signature.result.mismatch	something does not match (the file may have been changed after it was signed)
 shell.signature.result.unsupported	an algorithm or transform is not supported, so some parts could not be checked
@@ -1362,6 +1389,34 @@ toolbar.customize.all-scenes	Add to all contexts
 settings.qat.customize	Customize Quick Access Toolbar
 review.accessibility-check	Check Accessibility…
 review.compatibility-check	Check Compatibility…
+review.pii-check	Check for Leftover Personal Information…
+pii.clean	No leftover personal information (hidden slides or sheets, notes, comments, numbers that look like an Individual Number or a patient ID) was found.
+pii.found	{count} places need a look.
+pii.more	{count} more
+insert.medical-image	Medical Image (DICOM)…
+dicom.insert.title	Anonymize and Insert Medical Image (DICOM)
+dicom.insert.not-dicom	The chosen file is not a DICOM file.
+dicom.insert.no-image	No picture could be taken out of this DICOM file.\n{reason}
+dicom.insert.read-failed	The file could not be read: {error}
+dicom.insert.burned-in	This image is marked (BurnedInAnnotation) as having the patient's name, ID or dates burned into its pixels. Drag over those parts of the picture on the left to black them out before you insert it.
+dicom.insert.hint	Drag over the picture to add an area to black out. Drag an area to move it.
+dicom.insert.ranges	Areas to black out
+dicom.insert.none	There are no areas yet.
+dicom.insert.range-label	Area {no}   left {x}   top {y}   {width} × {height}
+dicom.insert.add	Add an Area
+dicom.insert.delete	Delete the Chosen Area
+dicom.insert.x	Left
+dicom.insert.y	Top
+dicom.insert.width	Width
+dicom.insert.height	Height
+dicom.insert.strip-dates	Remove dates (study, series, acquisition and content dates)
+dicom.insert.extra-tags	More tags to remove
+dicom.insert.extra-tags-hint	For example: 0008,1040 0008,0070 (separate with spaces or ;. The patient's name, ID, birth date, institution and so on are always removed.)
+dicom.insert.bad-tags	Not read as tags (not removed): {tags}
+dicom.insert.size	Picture size: {width} × {height} pixels
+dicom.insert.note	For conference talks, case reports and research material. Not for diagnosis. Blacked-out areas are gone from the pixels; the original pixels are not kept in the document.
+dicom.insert.apply	Insert
+dicom.insert.inserted	Inserted the anonymized medical image ({count} blacked-out areas).
 edit.go-to	Go To…
 page.paper-a3	A3 (297 x 420 mm)
 page.paper-a4	A4 (210 x 297 mm)
@@ -1401,3 +1456,68 @@ window.minimize	Minimize
 app.services	Services
 app.hide	Hide ibisOffice
 file.copy-download	Save a Copy (Download)
+shell.action.close	Close
+pii.remove	Remove…
+pii.remove.what	To be removed: {slides} hidden slides, {sheets} hidden sheets, {notes} notes, {comments} comments.
+pii.remove.confirm	They are removed from the document. You can undo it. Continue?
+xdw.read-only	DocuWorks documents are read-only.
+xdw.preview	DocuWorks preview · Read-only
+xdw.page-error	This DocuWorks page could not be displayed.
+settings.document.marks	Formatting marks
+settings.document.marks-note	Choose the formatting marks a document window always shows. The ¶ button shows all of them, the ones not chosen here too.
+settings.spreadsheet.sheet-list	Sheet list
+settings.spreadsheet.sheet-list-search-min	Show the search box from this many sheets
+settings.spreadsheet.sheet-list-search-min-unit	sheets
+settings.spreadsheet.sheet-list-note	When the sheet list has its search box: with this many sheets or more (1 shows it always). The search does not tell full-width and half-width letters and digits, or upper and lower case, apart.
+settings.spreadsheet.grid	Grid
+settings.spreadsheet.limited-grid	Limited grid
+settings.spreadsheet.limited-grid-note	Shows only the used range and a few rows and columns beyond it. The grid grows when the selection comes near its edge. Off shows the whole grid, as before.
+shell.back-to-start.label	Back to start
+shell.keyboard-toolbar.hide	Hide keyboard
+shell.keyboard-toolbar.undo	Undo
+shell.keyboard-toolbar.caret-left	Move cursor left
+shell.keyboard-toolbar.caret-right	Move cursor right
+shell.keyboard-toolbar.bold	Bold
+shell.keyboard-toolbar.bullets	Bullets
+shell.keyboard-toolbar.previous-cell	Previous cell
+shell.keyboard-toolbar.next-cell	Next cell
+shell.keyboard-toolbar.lower-level	Demote
+shell.keyboard-toolbar.raise-level	Promote
+shell.keyboard-toolbar.commit-down	Enter and move down
+shell.keyboard-toolbar.commit-right	Enter and move right
+shell.keyboard-toolbar.open-paren	Open parenthesis
+shell.keyboard-toolbar.close-paren	Close parenthesis
+shell.keyboard-toolbar.range-colon	Range colon
+shell.keyboard-toolbar.insert-function	Insert function
+shell.keyboard-toolbar.toggle-reference	Toggle absolute and relative reference
+shell.keyboard-toolbar.previous-field	Previous field
+shell.keyboard-toolbar.next-field	Next field
+shell.keyboard-toolbar.find-previous	Find previous
+shell.keyboard-toolbar.find-next	Find next
+view.jtd-read-only-notice	Ichitaro: Read-only preview with limited vertical text, ruby and tables. Table borders are approximate; formatting and images are omitted.
+view.jtd-gallery-heading	Some unplaced embedded images (original pages, position, size, and order are not reproduced; rendering is approximate).
+view.jtd-gallery-item	Embedded item {index}
+view.jtd-gallery-count	Showing {displayed} of {candidates} inspected image candidates. Other embedded content may not be included.
+view.jtd-gallery-notice	Some embedded images are shown as an unplaced list, not as the original document.
+view.jtd-gallery-unavailable	No displayable body text or embedded images were found.
+file.jtd-gallery-export-disabled	This reference view is not the original document and cannot be converted to a document (DOCX).
+view.show-jtd-thumbnail	Show saved Ichitaro thumbnail
+view.hide-jtd-thumbnail	Return to previous preview
+view.jtd-thumbnail-loading	Loading saved thumbnail…
+view.jtd-thumbnail-unavailable	No displayable saved thumbnail was found. The current view is unchanged.
+view.jtd-thumbnail-heading	Saved thumbnail (it may be outdated and is not a reconstruction of the current document).
+view.jtd-thumbnail-notice	This saved thumbnail may be outdated or show only part of the document.
+view.show-jtd-images	Show Ichitaro embedded images
+view.show-jtd-body	Return to Ichitaro body preview
+view.jtd-gallery-loading	Loading embedded images…
+view.jtd-no-embedded-images	No displayable embedded images were found. The body preview is unchanged.
+view.jtd-omitted-sheets	 {count} additional sheet(s) are not displayed or converted.
+view.jtd-omitted-objects	 {count} embedded-object storage(s) are not displayed or converted.
+file.jtd-read-only	Ichitaro documents are read-only
+file.edit-as-docx	Convert to a document (DOCX) and edit
+file.edit-as-docx-done	Converted to a document (DOCX). Unsupported formatting, images and some table lines are omitted. Save separately from the original Ichitaro file.
+file.jtd-source-protected	Saving as an Ichitaro file is not supported. Save separately from the original file.
+file.export.docx	Document (DOCX) (preview; partial lines omitted)
+file.docx-done	Converted to a document (DOCX). Partial table lines, unsupported formatting and images are omitted.
+file.export.html	HTML (preview; partial lines omitted)
+file.html-done	Converted to HTML. Partial table lines, unsupported formatting and images are omitted.

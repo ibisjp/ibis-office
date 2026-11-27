@@ -116,6 +116,10 @@ impl SlideEditor {
             this.update_in(cx, |this, window, cx| match result {
                 _ if this.closed != closed => {}
                 Ok(loaded) => {
+                    if loaded.jtd_original.is_some() {
+                        this.fail_loading(crate::i18n::text("file.jtd-read-only").to_string(), cx);
+                        return;
+                    }
                     let name: SharedString = next_new_file_name(ibis_formats::Kind::of(&loaded.presentation));
                     this.load(loaded.presentation, name, window, cx);
                     this.set_loaded_source(loaded.source);
@@ -185,6 +189,10 @@ pub fn reset_new_file_numbers() {
 impl SlideEditor {
     /// The open file as it would be saved now.
     pub fn current_bytes(&self) -> Result<Vec<u8>, String> {
+        if self.is_jtd_read_only() {
+            if self.jtd_gallery { return Err(crate::i18n::text("file.jtd-gallery-export-disabled").to_string()); }
+            return ibis_jtd::export_docx(self.presentation()).map_err(|e| e.to_string());
+        }
         if let Some(why) = crate::format::with_format!(self, save_refused(self)) {
             return Err(why);
         }
@@ -196,6 +204,11 @@ impl SlideEditor {
     /// Write the file as it is now to `path`, leaving the file's own path.
     #[cfg(not(target_family = "wasm"))]
     pub fn copy_to(&self, path: &std::path::Path) -> Result<(), String> {
+
+        if self.is_jtd_read_only() { return Err(crate::i18n::text("file.jtd-read-only").to_string()); }
+        if self.jtd_source_path.as_deref().is_some_and(|original| crate::save::same_file(original, path) || path.extension().and_then(|ext| ext.to_str()).is_some_and(ibis_jtd::is_native_extension)) {
+            return Err(crate::i18n::text("file.jtd-source-protected").to_string());
+        }
         if let Some(why) = crate::format::with_format!(self, save_refused(self)) {
             return Err(why);
         }
@@ -216,6 +229,52 @@ impl SlideEditor {
             _ => bytes,
         };
         crate::save::write_replacing(path, &bytes).map_err(|e| crate::i18n::format("file.cannot-write", &[("path", &path.display()), ("error", &e)]))
+    }
+
+    /// Export the recognized JTD content as a separate, editable DOCX.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn export_jtd_docx(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_jtd_read_only() || self.jtd_gallery { return; }
+        let (stem, _) = self.name_parts();
+        self.ask_path(format!("{stem}.docx"), window, cx, |this, path, _, cx| {
+            let result = this.export_jtd_docx_to(&path)
+                .map(|()| crate::i18n::text("file.docx-done").to_string())
+                .map_err(|error| crate::i18n::format("file.save-failed", &[("error", &error)]));
+            this.report(result, cx);
+        });
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn export_jtd_docx_to(&self, path: &std::path::Path) -> Result<(), String> {
+        if !self.is_jtd_read_only() || self.jtd_gallery || !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("docx"))
+            || self.path.as_deref().is_some_and(|original| crate::save::same_file(original, path)) {
+            return Err(crate::i18n::text("file.jtd-read-only").to_string());
+        }
+        let bytes = ibis_jtd::export_docx(self.presentation()).map_err(|e| e.to_string())?;
+        crate::save::write_replacing(path, &bytes).map_err(|e| e.to_string())
+    }
+
+    /// Export the recognized JTD content as a separate HTML document.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn export_jtd_html(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_jtd_read_only() { return; }
+        let (stem, _) = self.name_parts();
+        self.ask_path(format!("{stem}.html"), window, cx, |this, path, _, cx| {
+            let result = this.export_jtd_html_to(&path)
+                .map(|()| crate::i18n::text("file.html-done").to_string())
+                .map_err(|error| crate::i18n::format("file.save-failed", &[("error", &error)]));
+            this.report(result, cx);
+        });
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn export_jtd_html_to(&self, path: &std::path::Path) -> Result<(), String> {
+        if !self.is_jtd_read_only() || !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("html"))
+            || self.path.as_deref().is_some_and(|original| crate::save::same_file(original, path)) {
+            return Err(crate::i18n::text("file.jtd-read-only").to_string());
+        }
+        let bytes = ibis_jtd::export_html(self.presentation()).map_err(|e| e.to_string())?;
+        crate::save::write_replacing(path, &bytes).map_err(|e| e.to_string())
     }
 
     /// ファイル > パスワードで保護…: the window that sets the password (or takes it off).
@@ -300,6 +359,7 @@ impl SlideEditor {
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(path))) = picked.await else { return };
             this.update_in(cx, |this, window, cx| {
+
                 if this.refuse_as(way, cx) {
                     return;
                 }
@@ -321,6 +381,10 @@ impl SlideEditor {
     /// ファイル > コピーを作成…: save the file as it is now to another
     /// path; the window keeps the file's own path.
     pub fn save_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_jtd_read_only() {
+            self.set_status(crate::i18n::text("file.jtd-read-only").to_string(), cx);
+            return;
+        }
         self.commit_pending_edit(window, cx);
         // The browser version (with or without a host): the copy is downloaded at once, as the file is now (the changes so far included). It is not a save, so the unsaved-changes
         // mark stays (K0037).
@@ -382,8 +446,18 @@ impl SlideEditor {
                 Ok(pdf)
             }));
         }
+
+        if self.jtd_source_path.as_deref().is_some_and(|original| crate::save::same_file(original, &pdf)) {
+            return Err(crate::i18n::text("file.jtd-source-protected").to_string());
+        }
+        if self.is_jtd_read_only() && self.path.as_deref().is_some_and(|p| crate::save::same_file(p, &pdf)) {
+            return Err(crate::i18n::text("file.jtd-read-only").to_string());
+        }
+
+        let jtd_original_path = self.jtd_source_path.clone().or_else(|| self.is_jtd_read_only().then(|| self.path.clone()).flatten());
         let crate::format::PdfJob { bytes, slides, format, args: print_args } = with_format!(self, pdf_job(self, printing))?;
-        let (stem, ext) = self.name_parts();
+        let (stem, mut ext) = self.name_parts();
+        if self.is_jtd_read_only() { ext = "docx".into(); }
         let own_args = with_format!(self, export_args(self));
         Ok(Box::new(move || {
             let dir = std::env::temp_dir().join(format!("ibisoffice-export-{}", std::process::id()));
@@ -423,6 +497,9 @@ impl SlideEditor {
                 let mut wrote = false;
                 for n in 1..=99 {
                     let alt = parent.join(format!("{stem}-{n}.pdf"));
+                    if jtd_original_path.as_deref().is_some_and(|original| crate::save::same_file(original, &alt)) {
+                        continue;
+                    }
                     if crate::save::write_replacing(&alt, &data).is_ok() {
                         dest = alt;
                         wrote = true;
@@ -438,12 +515,54 @@ impl SlideEditor {
         }))
     }
 
+    /// ファイル > 書き出し > Web ページ: the document as one HTML page at `target`, its charts and SmartArt as pictures (#208). The work is `--export html` of a copy of the document
+    /// (the one place that draws them: `ibis_office_app::html_export`), a job to run off the window's thread.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn write_html_with_pictures(&self, target: std::path::PathBuf, sheet: Option<usize>) -> Result<Box<dyn FnOnce() -> Result<std::path::PathBuf, String> + Send + 'static>, String> {
+        let crate::format::PdfJob { bytes, .. } = with_format!(self, pdf_job(self, false))?;
+        let (stem, ext) = self.name_parts();
+        let own_args = with_format!(self, export_args(self));
+        Ok(Box::new(move || {
+            let dir = std::env::temp_dir().join(format!("ibisoffice-html-job-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            let out = dir.join("out");
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            let file = dir.join(format!("{stem}.{ext}"));
+            std::fs::write(&file, &bytes).map_err(|e| e.to_string())?;
+            let mut cmd = std::process::Command::new(export_program()?);
+            cmd.args(["--export", "html", "--out-dir"]).arg(&out).args(&own_args);
+            if let Some(sheet) = sheet {
+                // A workbook's page is one sheet (the 1-based `--range` of it).
+                cmd.args(["--range", &sheet.to_string()]);
+            }
+            cmd.arg(&file);
+            let status = cmd.status().map_err(|e| e.to_string())?;
+            if !status.success() {
+                return Err(crate::i18n::format("file.pdf-exit", &[("status", &status)]));
+            }
+            let made = std::fs::read(out.join(format!("{stem}.html"))).map_err(|e| e.to_string())?;
+            crate::save::write_replacing(&target, &made).map_err(|e| crate::i18n::format("file.cannot-write", &[("path", &target.display()), ("error", &e)]))?;
+            let _ = std::fs::remove_dir_all(&dir);
+            Ok(target)
+        }))
+    }
+
     /// The file as it is now, as PNG pictures at `png`: saved to a temporary file
     /// and drawn by this program's `--export png` (on another thread).
     #[cfg(not(target_family = "wasm"))]
     pub fn write_png(&self, png: std::path::PathBuf, slide: Option<usize>) -> Result<Box<dyn FnOnce() -> Result<std::path::PathBuf, String> + Send + 'static>, String> {
+
+        if self.jtd_source_path.as_deref().is_some_and(|original| crate::save::same_file(original, &png)) {
+            return Err(crate::i18n::text("file.jtd-source-protected").to_string());
+        }
+        if self.is_jtd_read_only() && self.path.as_deref().is_some_and(|p| crate::save::same_file(p, &png)) {
+            return Err(crate::i18n::text("file.jtd-read-only").to_string());
+        }
+        let jtd_original_path = self.jtd_source_path.clone().or_else(|| self.is_jtd_read_only().then(|| self.path.clone()).flatten());
+
         let bytes = self.current_bytes()?;
-        let (stem, ext) = self.name_parts();
+        let (stem, mut ext) = self.name_parts();
+        if self.is_jtd_read_only() { ext = "docx".into(); }
         let own_args = with_format!(self, export_args(self));
         Ok(Box::new(move || {
             let dir = std::env::temp_dir().join(format!("ibisoffice-export-png-{}", std::process::id()));
@@ -481,6 +600,10 @@ impl SlideEditor {
                 let target_stem = png.file_stem().and_then(|s| s.to_str()).unwrap_or(&stem);
                 for (idx, p) in made.iter().enumerate() {
                     let dest = parent.join(format!("{target_stem}-{:02}.png", idx + 1));
+
+                    if jtd_original_path.as_deref().is_some_and(|original| crate::save::same_file(original, &dest)) {
+                        return Err(crate::i18n::text("file.jtd-read-only").to_string());
+                    }
                     let data = std::fs::read(p).map_err(|e| e.to_string())?;
                     crate::save::write_replacing(&dest, &data).map_err(|e| crate::i18n::format("file.cannot-write", &[("path", &dest.display()), ("error", &e)]))?;
                 }
@@ -493,6 +616,10 @@ impl SlideEditor {
     /// ファイル > 書き出し > アニメーション GIF（.gif）: the presentation as an animated GIF picture.
     #[cfg(not(target_family = "wasm"))]
     pub fn write_gif(&self, gif_path: std::path::PathBuf, seconds_per_slide: Option<f32>) -> Result<Box<dyn FnOnce() -> Result<std::path::PathBuf, String> + Send + 'static>, String> {
+        if self.jtd_source_path.as_deref().is_some_and(|original| crate::save::same_file(original, &gif_path))
+            || (self.is_jtd_read_only() && self.path.as_deref().is_some_and(|original| crate::save::same_file(original, &gif_path))) {
+            return Err(crate::i18n::text("file.jtd-source-protected").to_string());
+        }
         let bytes = self.current_bytes()?;
         let (stem, ext) = self.name_parts();
         let own_args = with_format!(self, export_args(self));
@@ -945,19 +1072,13 @@ pub fn export_program() -> Result<std::path::PathBuf, String> {
     if file_name.starts_with("ibisOffice") && !file_name.contains("test") {
         return Ok(current);
     }
-    if let Some(dir) = current.parent() {
+    // Next to this program, or in a folder above it: a scenarios binary built by cargo's build script lives in
+    // `target/release/build/<crate>/<hash>/out/` (Windows), the program in `target/release/` five folders up.
+    for dir in current.ancestors().skip(1).take(6) {
         for name in ["ibisOffice", "ibisOffice.exe"] {
-            let c1 = dir.join(name);
-            if c1.exists() {
-                return Ok(c1);
-            }
-        }
-        if let Some(parent) = dir.parent() {
-            for name in ["ibisOffice", "ibisOffice.exe"] {
-                let c2 = parent.join(name);
-                if c2.exists() {
-                    return Ok(c2);
-                }
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Ok(candidate);
             }
         }
     }

@@ -117,11 +117,16 @@ fn copy_range_as_vector_picture() {
     // The clipboard holds the bitmap, the SVG, and the PDF (what Office for Mac pastes as a vector picture).
     let (written_svg, pdf) = crate::native_shape_clipboard::written_vector().expect("the SVG went on the clipboard");
     assert!(written_svg.starts_with("<svg"));
-    let pdf = pdf.expect("the PDF went on the clipboard");
-    assert!(pdf.starts_with(b"%PDF"), "a PDF");
-    let _ = std::fs::write(s.screenshot_path("range").with_extension("pdf"), &pdf);
-    let drawn = crate::pdf_picture::pdf_to_svg(&pdf).expect("the PDF reads back");
-    assert!(drawn.contains("<path") && drawn.contains("fill=\"#"), "the PDF holds the cells' shapes as paths: {drawn}");
+    // The PDF only goes where it is taken (macOS, `write_svg`); Windows takes a metafile instead, and no PDF goes there.
+    if cfg!(windows) {
+        assert!(pdf.is_none(), "no PDF goes on the Windows clipboard");
+    } else {
+        let pdf = pdf.expect("the PDF went on the clipboard");
+        assert!(pdf.starts_with(b"%PDF"), "a PDF");
+        let _ = std::fs::write(s.screenshot_path("range").with_extension("pdf"), &pdf);
+        let drawn = crate::pdf_picture::pdf_to_svg(&pdf).expect("the PDF reads back");
+        assert!(drawn.contains("<path") && drawn.contains("fill=\"#"), "the PDF holds the cells' shapes as paths: {drawn}");
+    }
     let before = pictures(&mut s).len();
     s.click_cell("G3");
     s.update(|e, _, cx| e.paste_as_picture(false, cx));

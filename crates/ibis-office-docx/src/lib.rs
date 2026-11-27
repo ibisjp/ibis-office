@@ -51,6 +51,7 @@ pub mod merge_panel;
 pub(crate) mod outline_ops;
 pub use crate::shell::backup_copy as backup;
 pub(crate) mod control_panel;
+pub(crate) mod form_fill_panel;
 pub(crate) mod draw_table;
 pub(crate) mod ruby_panel;
 pub(crate) mod fit_text_panel;
@@ -63,10 +64,12 @@ pub(crate) mod tab_panel;
 pub(crate) mod color_panel;
 pub(crate) mod font_panel;
 pub(crate) mod paragraph_decorations;
+mod caret_backdrop;
 pub(crate) mod picture_panel;
 pub(crate) mod table_size_panel;
 pub(crate) mod table_formula_panel;
 pub mod help_panels;
+pub mod page_setup;
 pub mod list_formats;
 pub(crate) mod list_style_panel;
 mod style_new;
@@ -77,115 +80,145 @@ pub mod art_border;
 pub mod flow_layout;
 pub(crate) mod input;
 pub mod page_view;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenarios.rs"]
 pub mod scenarios;
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 #[path = "tests/corpus_report.rs"]
 pub(crate) mod corpus_report;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/typeset68.rs"]
 pub(crate) mod typeset68;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/fallback_carry.rs"]
 pub(crate) mod fallback_carry;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/crop_mode.rs"]
 pub(crate) mod crop_mode;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/tate_chu_yoko_layout_tests.rs"]
 pub(crate) mod tate_chu_yoko_layout_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/vertical_underline_tests.rs"]
 pub(crate) mod vertical_underline_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/shy_hang_tests.rs"]
 pub(crate) mod shy_hang_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/kinsoku_across_space_tests.rs"]
 pub(crate) mod kinsoku_across_space_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/math_color_tests.rs"]
 pub(crate) mod math_color_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/autospace_letters_tests.rs"]
 pub(crate) mod autospace_letters_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/ms_fixed_advance_tests.rs"]
 pub(crate) mod ms_fixed_advance_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/issue178_tests.rs"]
 pub(crate) mod issue178_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue180.rs"]
 pub(crate) mod issue180_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue188.rs"]
 pub(crate) mod issue188_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_issue188_rest.rs"]
+pub(crate) mod issue188_rest_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue191.rs"]
 pub(crate) mod issue191_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue228.rs"]
 pub(crate) mod issue228_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue234.rs"]
 pub(crate) mod issue234_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_issue262.rs"]
+pub(crate) mod issue262_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_issue270.rs"]
+pub(crate) mod issue270_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_issue271.rs"]
+pub(crate) mod issue271_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_k0063.rs"]
+pub(crate) mod k0063_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_k0099_highlight.rs"]
+pub(crate) mod k0099_highlight_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_k0086.rs"]
+pub(crate) mod k0086_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_issue287.rs"]
+pub(crate) mod issue287_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_issue299.rs"]
+pub(crate) mod issue299_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
+#[path = "tests/scenario_issue296.rs"]
+pub(crate) mod issue296_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue192.rs"]
 pub(crate) mod issue192_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue193.rs"]
 pub(crate) mod issue193_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue196.rs"]
 pub(crate) mod issue196_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_squeeze_share.rs"]
 pub(crate) mod squeeze_share_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue54_punct.rs"]
 pub(crate) mod issue54_punct_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue200.rs"]
 pub(crate) mod issue200_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue204.rs"]
 pub(crate) mod issue204_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue192_script.rs"]
 pub(crate) mod issue192_script_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue54_pitch.rs"]
 pub(crate) mod issue54_pitch_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue54_mark_room.rs"]
 pub(crate) mod issue54_mark_room_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue54_meiryo.rs"]
 pub(crate) mod issue54_meiryo_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/issue179_tests.rs"]
 pub(crate) mod issue179_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/issue223_tests.rs"]
 pub(crate) mod issue223_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue179_180_rest.rs"]
 pub(crate) mod issue179_180_rest_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue157_fonts.rs"]
 pub(crate) mod issue157_fonts_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenario_issue179_multiple.rs"]
 pub(crate) mod issue179_multiple_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/deleted_marks_tests.rs"]
 pub(crate) mod deleted_marks_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/ivs_tests.rs"]
 pub(crate) mod ivs_tests;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/justify_squeeze_tests.rs"]
 pub(crate) mod justify_squeeze_tests;
 pub(crate) mod toolbar;
@@ -308,6 +341,8 @@ pub struct State {
     pub(crate) tate_edit: Option<tate_chu_yoko_panel::TateChuYokoState>,
     /// コンテンツ コントロールのプロパティ's panel, while it is the one shown.
     pub(crate) control: Option<control_panel::ControlState>,
+    /// 入力フォーム (#270): the pane that fills the form fields of the document.
+    pub(crate) form_fill: Option<form_fill_panel::FormFillState>,
     /// テキスト ボックスの文字's panel, while it is the one shown.
     pub text_box: Option<text_box_panel::TextBoxState>,
     /// 差し込み印刷's panel and its data (宛先一覧).
@@ -485,6 +520,7 @@ impl crate::shell::format::GestureView for State {
             template_panel: _,
             helper: _,
             selection_pane: _,
+            form_fill: _,
             selection_reorder: _,
             accessibility_panel: _,
             navigation_tab: _,
@@ -1083,6 +1119,17 @@ impl FormatEditor for Document {
         state.objects = editor.selected_document_objects();
     }
 
+    /// Where the user types, for the toolbar over the soft keyboard (K0064): a table's cell, or a paragraph of a list.
+    fn soft_keyboard_target(editor: &SlideEditor) -> Option<crate::shell::keyboard_toolbar::Target> {
+        use crate::shell::keyboard_toolbar::Target;
+        if editor.table_at_caret().is_some() {
+            return Some(Target::Table);
+        }
+        let doc = editor.flow().cloned()?;
+        let in_list = editor.ordered_selection().and_then(|(s, _)| ibis_doc_model::flow_command::paragraph(&doc, s.para)).is_some_and(|p| p.list.is_some());
+        in_list.then_some(Target::List)
+    }
+
     /// The pages are in one column: scroll to the page.
     fn show_page(editor: &mut SlideEditor, slide: SlideId, _: &mut Window, cx: &mut Context<SlideEditor>) -> bool {
         if let Some(index) = editor.presentation().slide_index(slide) {
@@ -1099,12 +1146,28 @@ impl FormatEditor for Document {
         if !editor.is_header_footer_editing() {
             return None;
         }
-        let close: crate::shell::chrome::Handler = std::rc::Rc::new(|this: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>| this.close_header_footer(cx));
+        let close: crate::shell::chrome::Handler = std::rc::Rc::new(|this: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>| this.leave_header_footer_editing(cx));
         Some(crate::shell::chrome::close_mode_button("docx-header-footer-close", "docx.header-footer.close", weak, &close))
     }
 
     /// The page in view is the current one (for the status bar).
-    fn before_render(editor: &mut SlideEditor, _: &mut Window, _: &mut Context<SlideEditor>) {
+    fn before_render(editor: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>) {
+        // The marks' settings were changed in ツール > 設定…: this window takes them (the hidden text changes the layout).
+        let generation = crate::shell::settings_dialog::docx_marks_generation();
+        if editor.doc_prefs().marks_generation != generation {
+            let options = prefs::FormattingMarksOptions::default();
+            let was_hidden = editor.doc_prefs().formatting_marks_options.show_hidden_text;
+            {
+                let p = editor.doc_prefs_mut();
+                p.marks_generation = generation;
+                p.formatting_marks_options = options;
+            }
+            if was_hidden != options.show_hidden_text {
+                let show_hidden = options.is_hidden_text_visible(editor.doc_prefs().formatting_marks_open);
+                editor.resources.markup_view.show_hidden_text = show_hidden;
+                editor.relayout_now(cx);
+            }
+        }
         editor.relayout_if_changed();
         let index = editor.visible_page();
         if let Some(slide) = editor.presentation().slides.get(index) {
@@ -1461,6 +1524,14 @@ impl FormatEditor for Document {
         editor.doc_accepts_text_input(window, cx)
     }
 
+    fn ime_thick_clause(editor: &SlideEditor) -> Option<Range<usize>> {
+        editor.doc_state().and_then(|s| s.marked_clauses.iter().find(|c| c.thick).map(|c| c.range.clone()))
+    }
+
+    fn tap_on_text_place(editor: &SlideEditor, point: Point<Pixels>) -> bool {
+        editor.doc_tap_on_page(point)
+    }
+
     fn text_for_range(editor: &mut SlideEditor, range: Range<usize>, adjusted: &mut Option<Range<usize>>, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<String> {
         editor.doc_text_for_range(range, adjusted, window, cx)
     }
@@ -1479,6 +1550,10 @@ impl FormatEditor for Document {
 
     fn unmark_text(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) {
         editor.doc_unmark_text(window, cx)
+    }
+
+    fn marked_text(editor: &SlideEditor) -> Option<String> {
+        editor.doc_state().filter(|s| s.box_edit.is_none()).and_then(|s| s.marked.clone()).filter(|m| !m.is_empty())
     }
 
     fn replace_text_in_range(editor: &mut SlideEditor, range: Option<Range<usize>>, text: &str, window: &mut Window, cx: &mut Context<SlideEditor>) {
@@ -1508,6 +1583,11 @@ impl FormatEditor for Document {
         editor.type_text(&c.to_string(), cx);
     }
 
+    /// A picture the screen made (the anonymised medical image) goes in at the caret, as a picture from a file does.
+    fn insert_made_picture(editor: &mut SlideEditor, _name: &str, data: Vec<u8>, cx: &mut Context<SlideEditor>) {
+        editor.doc_insert_picture(data, ibis_doc_model::MediaFormat::Png, cx);
+    }
+
     fn text_vertical(editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>) -> bool {
         editor.doc_text_vertical()
     }
@@ -1516,14 +1596,15 @@ impl FormatEditor for Document {
         editor.doc_character_index_for_point(point, window, cx)
     }
 
-    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
     fn scenarios() -> Vec<(&'static str, fn())> {
         scenarios::all()
     }
 
-    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
     fn ignored_scenarios() -> Vec<(&'static str, fn())> {
         let mut out = typeset68::ignored();
+        out.extend(issue188_rest_tests::ignored());
         out.extend(justify_squeeze_tests::ignored());
         out.push(("docx::fallback_carry_count_corpus", fallback_carry::count_corpus));
         out.push(("docx::issue54_page_counts", issue54_mark_room_tests::page_counts));
@@ -1533,9 +1614,10 @@ impl FormatEditor for Document {
     }
 
     /// The sidebar: 検索と置換's panel when it is open.
-    fn sidebar(editor: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
+    fn sidebar(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
         // The merge panel comes last: it is shown only when no other panel is open, and any other panel that opens takes it away (issue #204).
-        let others = editor.font_panel(cx).map(|panel| panel.modal_named("font_panel")).or_else(|| editor.color_panel(cx).map(|panel| panel.modal_named("color_panel"))).or_else(|| editor.table_size_panel(cx).map(|panel| panel.modal_named("table_size_panel"))).or_else(|| editor.table_formula_panel(cx).map(|panel| panel.modal_named("table_formula_panel"))).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx).map(|panel| panel.modal_named("docx_compress_panel"))).or_else(|| editor.paragraph_panel(cx).map(|panel| panel.modal_named("paragraph_panel"))).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx).map(|panel| panel.modal_named("style_panel"))).or_else(|| editor.link_panel(cx).map(|panel| panel.modal_named("link_panel"))).or_else(|| editor.find_panel(cx)).or_else(|| editor.tate_chu_yoko_panel(cx).map(|panel| panel.modal_named("tate_chu_yoko_panel"))).or_else(|| editor.ruby_panel(cx).map(|panel| panel.modal_named("ruby_panel")).or_else(||editor.fit_text_panel(cx).map(|p|p.modal_named("fit_text_panel")))).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx).map(|panel| panel.modal_named("doc_page_setup_panel"))).or_else(|| editor.notes_panel(cx).map(|panel| panel.modal_named("notes_panel"))).or_else(|| editor.bookmark_panel(cx).map(|panel| panel.modal_named("bookmark_panel"))).or_else(|| editor.watermark_panel(cx).map(|panel| panel.modal_named("watermark_panel"))).or_else(|| editor.new_style_panel(cx).map(|panel| panel.modal_named("new_style_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx).map(|panel| panel.modal_named("field_panel"))).or_else(|| editor.caption_panel(cx).map(|panel| panel.modal_named("caption_panel"))).or_else(|| editor.doc_properties_panel(cx).map(|panel| panel.modal_named("doc_properties_panel"))).or_else(|| editor.cross_reference_panel(cx).map(|panel| panel.modal_named("cross_reference_panel"))).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx).map(|panel| panel.modal_named("update_toc_panel"))).or_else(|| editor.user_info_panel(cx).map(|panel| panel.modal_named("user_info_panel"))).or_else(|| editor.kinsoku_panel(cx).map(|panel| panel.modal_named("kinsoku_panel"))).or_else(|| editor.go_to_panel(cx).map(|panel| panel.modeless_named("go_to_panel"))).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx).map(|panel| panel.modal_named("control_panel"))).or_else(|| editor.doc_autocorrect_panel(cx).map(|panel| panel.modal_named("doc_autocorrect_panel"))).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.docx_math_panel(cx).map(|panel| panel.modal_named("docx_math_panel"))).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx).map(|panel| panel.modal_named("doc_inspect_panel"))).or_else(|| editor.doc_compatibility_panel(cx).map(|panel| panel.modal_named("doc_compatibility_panel"))).or_else(|| editor.doc_print_panel(cx).map(|panel| panel.modal_named("doc_print_panel"))).or_else(|| editor.doc_source_manager_panel(cx).map(|panel| panel.modal_named("doc_source_manager_panel"))).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx).map(|panel| panel.modal_named("doc_repair_panel"))).or_else(|| editor.doc_template_panel(cx).map(|panel| panel.modal_named("doc_template_panel"))).or_else(|| editor.list_style_panel(cx).map(|panel| panel.modal_named("list_style_panel"))).or_else(|| editor.docx_theme_panel(cx).map(|panel| panel.modal_named("docx_theme_panel"))).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx));
+        editor.form_fill_sync(window, cx);
+        let others = editor.font_panel(cx).map(|panel| panel.modal_named("font_panel")).or_else(|| editor.color_panel(cx).map(|panel| panel.modal_named("color_panel"))).or_else(|| editor.table_size_panel(cx).map(|panel| panel.modal_named("table_size_panel"))).or_else(|| editor.table_formula_panel(cx).map(|panel| panel.modal_named("table_formula_panel"))).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx).map(|panel| panel.modal_named("docx_compress_panel"))).or_else(|| editor.paragraph_panel(cx).map(|panel| panel.modal_named("paragraph_panel"))).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx).map(|panel| panel.modal_named("style_panel"))).or_else(|| editor.link_panel(cx).map(|panel| panel.modal_named("link_panel"))).or_else(|| editor.find_panel(cx)).or_else(|| editor.tate_chu_yoko_panel(cx).map(|panel| panel.modal_named("tate_chu_yoko_panel"))).or_else(|| editor.ruby_panel(cx).map(|panel| panel.modal_named("ruby_panel")).or_else(||editor.fit_text_panel(cx).map(|p|p.modal_named("fit_text_panel")))).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx).map(|panel| panel.modal_named("doc_page_setup_panel"))).or_else(|| editor.notes_panel(cx).map(|panel| panel.modal_named("notes_panel"))).or_else(|| editor.bookmark_panel(cx).map(|panel| panel.modal_named("bookmark_panel"))).or_else(|| editor.watermark_panel(cx).map(|panel| panel.modal_named("watermark_panel"))).or_else(|| editor.new_style_panel(cx).map(|panel| panel.modal_named("new_style_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx).map(|panel| panel.modal_named("field_panel"))).or_else(|| editor.caption_panel(cx).map(|panel| panel.modal_named("caption_panel"))).or_else(|| editor.doc_properties_panel(cx).map(|panel| panel.modal_named("doc_properties_panel"))).or_else(|| editor.cross_reference_panel(cx).map(|panel| panel.modal_named("cross_reference_panel"))).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx).map(|panel| panel.modal_named("update_toc_panel"))).or_else(|| editor.user_info_panel(cx).map(|panel| panel.modal_named("user_info_panel"))).or_else(|| editor.kinsoku_panel(cx).map(|panel| panel.modal_named("kinsoku_panel"))).or_else(|| editor.go_to_panel(cx).map(|panel| panel.modeless_named("go_to_panel"))).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx).map(|panel| panel.modal_named("control_panel"))).or_else(|| editor.doc_autocorrect_panel(cx).map(|panel| panel.modal_named("doc_autocorrect_panel"))).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.docx_math_panel(cx).map(|panel| panel.modal_named("docx_math_panel"))).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx).map(|panel| panel.modal_named("doc_inspect_panel"))).or_else(|| editor.doc_compatibility_panel(cx).map(|panel| panel.modal_named("doc_compatibility_panel"))).or_else(|| editor.doc_print_panel(cx).map(|panel| panel.modal_named("doc_print_panel"))).or_else(|| editor.doc_source_manager_panel(cx).map(|panel| panel.modal_named("doc_source_manager_panel"))).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx).map(|panel| panel.modal_named("doc_repair_panel"))).or_else(|| editor.doc_template_panel(cx).map(|panel| panel.modal_named("doc_template_panel"))).or_else(|| editor.list_style_panel(cx).map(|panel| panel.modal_named("list_style_panel"))).or_else(|| editor.docx_theme_panel(cx).map(|panel| panel.modal_named("docx_theme_panel"))).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx)).or_else(|| editor.form_fill_panel(cx));
         if others.is_none() { return editor.merge_panel(cx); }
         if let Some(merge) = editor.doc_state_mut().and_then(|s| s.merge.as_mut()) { merge.visible = false; }
         others

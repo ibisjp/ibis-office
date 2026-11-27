@@ -599,10 +599,14 @@ impl SlideEditor {
             return;
         }
         let Some((column, row)) = self.current_cell() else { return };
+        // In an unlocked cell whose formula the protected sheet hides (a locked one was refused above): Excel's F2 opens an editor that is
+        // empty (the formula bar too, not the value in its place); Esc leaves the formula, Enter without typing writes an empty cell, typing replaces it
+        // (Excel 16 on Windows, `tasks/doc/requests/2026-11-26-275-f2-hidden-formula-result.md`).
+        let hidden = keep_content && self.formula_hidden_here();
         let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
-        let text = if keep_content {
-            self.current_sheet().and_then(|(_, sheet)| sheet.cell(row, column).map(|c| (sheet, c))).and_then(|(sheet, c)| match &c.formula {
-                Some(f) => Some(format!("={}", sheet.formula_shown(row, column, f))),
+        let text = if keep_content && !hidden {
+            self.current_sheet().and_then(|(_, sheet)| sheet.cell(row, column).map(|c| (sheet, c))).and_then(|(sheet, c)| match sheet.shown_formula(c) {
+                Some(f) => Some(f),
                 None if super::sheet_ui::spilled_ghost_formula_on(sheet, row, column).is_some() => None,
                 None => Some(match &c.value {
                     // A number as typed, not as shown.
@@ -1235,10 +1239,23 @@ impl SlideEditor {
         // While text is being composed: the last character of it, on the line it is on (a wrapped or scrolled cell too), so the input method's candidate window opens under
         // the newest character and not under the whole box (K0020).
         let layout = edit.layout.borrow().clone();
-        if let (Some(marked), Some(layout)) = (&edit.marked, layout)
+        if let (Some(marked), Some(layout)) = (&edit.marked, layout.clone())
             && marked.end > marked.start
         {
             let end = byte_at(&edit.text, marked.end).min(edit.text.len());
+            let last = edit.text[..end].char_indices().last().map_or(0, |(i, _)| i);
+            if let Some(line) = layout.lines.iter().find(|l| l.start <= last && last < l.end).or_else(|| layout.lines.last()) {
+                let (x0, x1) = (line.x_at(last), line.x_at(end));
+                let top = line.baseline - line.ascent - edit.scroll_y.get();
+                return Some(Bounds::new(point(whole.origin.x + px(x0), whole.origin.y + px(top)), size(px((x1 - x0).max(1.0)), px(line.ascent + line.descent))));
+            }
+        }
+        // Not composing: the character before the caret (the caret's place), not the whole box: the soft keyboard's scrolling follows the caret of a long entry
+        // (K0094) and the input method's window opens under it.
+        if edit.marked.is_none()
+            && let Some(layout) = layout
+        {
+            let end = byte_at(&edit.text, edit.caret).min(edit.text.len());
             let last = edit.text[..end].char_indices().last().map_or(0, |(i, _)| i);
             if let Some(line) = layout.lines.iter().find(|l| l.start <= last && last < l.end).or_else(|| layout.lines.last()) {
                 let (x0, x1) = (line.x_at(last), line.x_at(end));

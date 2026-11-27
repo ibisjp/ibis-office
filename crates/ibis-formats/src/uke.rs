@@ -288,6 +288,10 @@ pub fn open_uke_with_master(
     {
         first_meta.name = crate::words::text("medical.uke.sheet-detail");
     }
+    // The sheet tab shows the slide's name, so set it as well (the blank workbook names it "Sheet1").
+    if let Some(slide) = opened.presentation.slides.first_mut() {
+        slide.name = Some(crate::words::text("medical.uke.sheet-detail"));
+    }
     if let Some(slide) = opened.presentation.slides.first_mut() {
         attach_cells_to_slide(slide, detail_cells);
     }
@@ -314,6 +318,7 @@ pub fn open_uke_with_master(
     ensure_bold_style(&mut summary_sheet);
 
     let mut summary_slide = Slide::new(summary_slide_id);
+    summary_slide.name = Some(crate::words::text("medical.uke.sheet-summary"));
     let template_frame = opened
         .presentation
         .slides
@@ -566,6 +571,9 @@ GO,1,392,0
         assert_eq!(wb.sheets.len(), 2);
         assert_eq!(wb.sheets[0].name, "レセプト明細");
         assert_eq!(wb.sheets[1].name, "レセプトサマリー");
+        // The tabs show the slides' names.
+        assert_eq!(opened.presentation.slides[0].name.as_deref(), Some("レセプト明細"));
+        assert_eq!(opened.presentation.slides[1].name.as_deref(), Some("レセプトサマリー"));
 
         let detail = sheet_by_index(&opened.presentation, 0);
         // Row 1 is IR: facility code 0123456 must keep its leading zero!

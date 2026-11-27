@@ -658,6 +658,8 @@ impl SlideEditor {
                 MenuItem::tr("pptx.guides.remove-all").icon("delete_sweep").disabled(self.guide_list().is_empty()).on(|e, _, cx| e.remove_all_guides(cx)).into(),
                 MenuItem::tr("pptx.snap-to-grid").icon("grid_goldenratio").checked(self.is_pptx_snap_to_grid_enabled()).on(|e, _, cx| e.toggle_pptx_snap_to_grid(cx)).into(),
                 MenuItem::tr("pptx.snap-to-shape").icon("view_compact").checked(self.is_pptx_snap_to_shape_enabled()).on(|e, _, cx| e.toggle_pptx_snap_to_shape(cx)).into(),
+                MenuEntry::Separator,
+                MenuItem::tr("pptx.grid-guides.settings").icon("tune").on(|e, w, cx| e.open_grid_guides_panel(w, cx)).into(),
             ]).into(),
             Submenu::tr("pptx.background", "wallpaper", crate::chrome::background_menu(self)).into(),
             Submenu::tr("pptx.theme.palette-selected", "palette", crate::chrome::theme_palette_selected_items(self)).into(),

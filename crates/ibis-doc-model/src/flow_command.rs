@@ -189,6 +189,10 @@ impl RunChange {
                     f.h_ansi_font = None;
                     f.east_asian_font = None;
                     f.cs_font = None;
+                    f.font_theme = None;
+                    f.h_ansi_font_theme = None;
+                    f.east_asian_font_theme = None;
+                    f.cs_font_theme = None;
                 }
             },
             RunChange::NoProofing(v) => f.no_proof = Some(*v),
@@ -223,13 +227,24 @@ impl RunChange {
                 // Both attributes are written: the typeface of the styles' `hAnsi` (inherited per attribute) must not stay under the new one.
                 f.font = Some(v.clone());
                 f.h_ansi_font = Some(v.clone());
+                f.font_theme = None;
+                f.h_ansi_font_theme = None;
             }
-            RunChange::EastAsianFont(v) => f.east_asian_font = Some(v.clone()),
-            RunChange::ComplexScriptFont(v) => f.cs_font = Some(v.clone()),
+            RunChange::EastAsianFont(v) => {
+                f.east_asian_font = Some(v.clone());
+                f.east_asian_font_theme = None;
+            }
+            RunChange::ComplexScriptFont(v) => {
+                f.cs_font = Some(v.clone());
+                f.cs_font_theme = None;
+            }
             RunChange::AllFonts(v) => {
                 f.font = Some(v.clone());
                 f.h_ansi_font = Some(v.clone());
                 f.east_asian_font = Some(v.clone());
+                f.font_theme = None;
+                f.h_ansi_font_theme = None;
+                f.east_asian_font_theme = None;
             }
             // Word sets the complex scripts' size (w:szCs) with the size.
             RunChange::Size(v) => {
@@ -793,6 +808,8 @@ pub enum FlowCommand {
     /// The sections' own ones (see [`FlowDocument::section_watermarks`])
     /// replaced by `sections`.
     SetWatermark { watermark: Option<crate::flow::Watermark>, sections: Vec<(u32, Option<crate::flow::Watermark>)> },
+    /// 原稿用紙設定 (K0063): the 原稿用紙's style, counts and colour, or none.
+    SetGenko { genko: Option<crate::flow::GenkoPaper> },
     /// Whether changes are tracked (変更履歴の記録).
     SetTrackChanges(bool),
     /// The text from `from` to `to` marked as a tracked change, or not.
@@ -2633,6 +2650,10 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             list[index] = Block::Paragraph(p);
             Ok(FlowCommand::SetControlInfo { at, info: previous })
         }
+        FlowCommand::SetGenko { genko } => {
+            let old = std::mem::replace(&mut doc.genko, genko);
+            Ok(FlowCommand::SetGenko { genko: old })
+        }
         FlowCommand::SetWatermark { watermark, sections } => {
             let old = std::mem::replace(&mut doc.watermark, watermark);
             let old_sections = std::mem::replace(&mut doc.section_watermarks, sections);
@@ -4178,7 +4199,7 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
         TableEdit::InsertRow { row, below } => {
             let source = t.rows.get(row).ok_or(EditError::IndexOutOfRange)?.clone();
             *next += 1;
-            let mut new = FlowRow { id: *next - 1, height: source.height, header: false, cant_split: source.cant_split, cells: Vec::new() };
+            let mut new = FlowRow { id: *next - 1, height: source.height, header: false, cant_split: source.cant_split, cells: Vec::new(), ..FlowRow::default() };
             for cell in &source.cells {
                 new.cells.push(empty_like(cell, next, styles));
             }
@@ -4316,6 +4337,7 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
                 header: false,
                 cant_split: last_row_template.cant_split,
                 cells: Vec::new(),
+                ..FlowRow::default()
             };
 
             let col_count = t.columns.len().max(1);
@@ -5004,9 +5026,15 @@ impl FlowParagraph {
     /// for a page break, U+000E for a column break and U+FFFC for a picture or
     /// a field, so that each position is one character.
     pub fn text(&self) -> String {
+        self.text_with_note_marks(false)
+    }
+
+    /// [`Self::text`], with a footnote's or endnote's mark (in the text and at the start of the note) as U+0002 (Word's character for it) when `note_marks`, else U+FFFC.
+    pub fn text_with_note_marks(&self, note_marks: bool) -> String {
         let mut s = String::new();
         for run in &self.runs {
             match &run.kind {
+                FlowRunKind::NoteRef { .. } | FlowRunKind::NoteMark if note_marks => s.push('\u{2}'),
                 FlowRunKind::Text(t) => s.extend(t.chars().map(|c| if c == crate::flow::OPTIONAL_HYPHEN { '\u{ad}' } else { c })),
                 FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => s.push('\t'),
                 FlowRunKind::LineBreak => s.push('\u{b}'),
@@ -5152,6 +5180,58 @@ pub fn blocks(doc: &FlowDocument, container: Container) -> Option<&[Block]> {
             find(&doc.body, table, row, cell).or_else(|| find(&doc.header, table, row, cell)).or_else(|| find(&doc.footer, table, row, cell))
         }
     }
+}
+
+/// The table with the cell at `row`, `cell` merged with the cell to its right (a horizontal merge: the first cell's `span` grows by the other's, their paragraphs are
+/// joined, the right border is the right cell's). Not for a cell in a vertical merge or one with something other than paragraphs in it.
+pub fn merge_cells_right(table: &crate::flow::FlowTable, row: usize, cell: usize) -> Result<crate::flow::FlowTable, &'static str> {
+    use crate::flow::VerticalMerge;
+    let r = table.rows.get(row).ok_or("the row is not in the table")?;
+    let (a, b) = (r.cells.get(cell).ok_or("the cell is not in the row")?, r.cells.get(cell + 1).ok_or("there is no cell to its right")?);
+    let plain = a.merge == VerticalMerge::None && b.merge == VerticalMerge::None && !a.blocks.is_empty() && !b.blocks.is_empty() && a.blocks.iter().chain(&b.blocks).all(|b| matches!(b, Block::Paragraph(_)));
+    if !plain {
+        return Err("these cells cannot be merged: a cell is in a vertical merge, is empty of paragraphs, or has something other than paragraphs in it");
+    }
+    let mut t = table.clone();
+    let right = t.rows[row].cells.remove(cell + 1);
+    let left = &mut t.rows[row].cells[cell];
+    left.span = left.span.max(1) + right.span.max(1);
+    left.own_borders[1] = right.own_borders[1];
+    left.blocks.extend(right.blocks);
+    t.resolve_borders();
+    Ok(t)
+}
+
+/// The table with the cell at `row`, `cell`, which spans several grid columns, split into one cell for each (the first keeps its paragraphs, the others get an empty paragraph
+/// of its format). `doc` gives the ids of the new cells and paragraphs and the styles.
+pub fn split_cell(doc: &FlowDocument, table: &crate::flow::FlowTable, row: usize, cell: usize) -> Result<crate::flow::FlowTable, &'static str> {
+    use crate::flow::VerticalMerge;
+    let c = table.rows.get(row).and_then(|r| r.cells.get(cell)).ok_or("the cell is not in the table")?;
+    let paragraphs = !c.blocks.is_empty() && c.blocks.iter().all(|b| matches!(b, Block::Paragraph(_)));
+    if c.merge != VerticalMerge::None || !(2..=63).contains(&c.span) || !paragraphs {
+        return Err("this cell cannot be split: it spans one grid column, is in a vertical merge, or has something other than paragraphs in it");
+    }
+    let mut t = table.clone();
+    let template = t.rows[row].cells[cell].clone();
+    let Some(Block::Paragraph(p)) = template.blocks.first() else { return Err("the cell has no paragraph") };
+    let mut next = doc.new_id();
+    let count = template.span.max(1) as usize;
+    t.rows[row].cells[cell].span = 1;
+    let mut cells = Vec::new();
+    for _ in 1..count {
+        let mut c = template.clone();
+        c.id = next;
+        next += 1;
+        c.span = 1;
+        let mut blank = FlowParagraph { id: next, style: p.style.clone(), table_style: p.table_style.clone(), direct: p.direct.clone(), mark_format: p.mark_format.clone(), ..Default::default() };
+        next += 1;
+        blank.resolve(&doc.styles);
+        c.blocks = vec![Block::Paragraph(blank)];
+        cells.push(c);
+    }
+    t.rows[row].cells.splice(cell + 1..cell + 1, cells);
+    t.resolve_borders();
+    Ok(t)
 }
 
 /// The list a paragraph (or table) is in, and its index there.

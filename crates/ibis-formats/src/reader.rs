@@ -234,7 +234,8 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
             theme,
             child(master.root, "clrMap"),
             &[child(layout.root, "clrMapOvr"), child(slide.root, "clrMapOvr")],
-        );
+        )
+        .keeping_theme_refs();
         // Slide numbers count from `firstSlideNum` (1 unless stated).
         let first = attr_i64(root, "firstSlideNum").unwrap_or(1).max(0) as usize;
         let ctx = SlideCtx { colors, theme: theme_root, slide, layout, master, number: number + first };
@@ -247,7 +248,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
             {
                 reader.presentation.notes_marks = marks;
             }
-            let notes_colors = Colors::new(theme, child(ctx.master.root, "clrMap"), &[child(ctx.layout.root, "clrMapOvr")]);
+            let notes_colors = Colors::new(theme, child(ctx.master.root, "clrMap"), &[child(ctx.layout.root, "clrMapOvr")]).keeping_theme_refs();
             let notes_ctx = SlideCtx { colors: notes_colors, theme: ctx.theme, slide: Part { name: notes.name.clone(), root: notes.root, rels: notes.rels.clone() }, layout: notes, master: Part { name: ctx.master.name.clone(), root: ctx.master.root, rels: ctx.master.rels.clone() }, number: ctx.number };
             let mut shapes = Vec::new();
             // As a layout's: its placeholders (the slide image, the notes) are not shapes.
@@ -289,6 +290,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
     // The slide view's scale is not read as the zoom: PowerPoint for Windows opens a file in a window fitted to it whatever `varScale` (1, 0 or none) and `scale` (119 %,
     // 60 %) say, in five cases and two window sizes (`tasks/doc/requests/2026-11-17-237-varscale-result.md`). The zoom the user puts on it is written (`write_view_scale`).
     reader.presentation.view_zoom = None;
+    reader.presentation.view_grid = view_props.as_deref().map(crate::save::pptx_guides::read_view_grid).unwrap_or_default();
     let view_guides = view_props.as_deref().map(crate::save::pptx_guides::read_view).unwrap_or_default();
     let ext_guides = read_guides(root);
     let places = |g: &[ibis_doc_model::SlideGuide]| g.iter().map(|g| (g.horizontal, g.pos)).collect::<Vec<_>>();
@@ -314,7 +316,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
         let (layout_part, same, master_part) = (part(layout), part(layout), part(master));
         let theme_root = theme.as_ref().map(|t| docs[t.as_str()].root_element());
         let theme = theme.as_ref().map(|t| &themes[t.as_str()]).unwrap_or(&empty_theme);
-        let colors = Colors::new(theme, child(master_part.root, "clrMap"), &[child(layout_part.root, "clrMapOvr")]);
+        let colors = Colors::new(theme, child(master_part.root, "clrMap"), &[child(layout_part.root, "clrMapOvr")]).keeping_theme_refs();
         let name = path(layout_part.root, &["cSld"]).and_then(|c| attr(c, "name")).unwrap_or("").to_string();
         let ctx = SlideCtx { colors, theme: theme_root, slide: layout_part, layout: same, master: master_part, number: first };
         let id = reader.presentation.new_layout_id();
@@ -360,7 +362,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
         });
     if let Some(t) = chain.first().and_then(|(_, _, _, t)| t.as_ref()) {
         if let Some(theme_doc) = docs.get(t.as_str()) {
-            let theme_colors = Colors::new(&themes[t.as_str()], None, &[]);
+            let theme_colors = Colors::new(&themes[t.as_str()], None, &[]).keeping_theme_refs();
             reader.presentation.object_defaults = read_object_defaults(theme_doc.root_element(), &theme_colors);
         }
     }
@@ -475,119 +477,156 @@ fn embedded_fonts(package: &Package, root: Node, rels: &Rels) -> Vec<ibis_doc_mo
     out
 }
 
+/// The look a default shape definition (`a:spDef` or `a:txDef` of `a:objectDefaults`) gives: `a:spPr`, the text of `a:lstStyle`'s `defPPr`, and
+/// the body's anchor, insets and wrapping.
+fn read_shape_default<'d, 'i>(sp_def: Node<'d, 'i>, colors: &Colors, text_box: bool) -> Option<ibis_doc_model::ShapeDefault> {
+    if let Some(sp_pr) = drawing_child(sp_def, "spPr").or_else(|| child(sp_def, "spPr")) {
+        let fill = fill_element(sp_pr).and_then(|node| match node.tag_name().name() {
+            "noFill" => Some(Fill::None),
+            "solidFill" => colors.in_parent(node, None).map(Fill::Solid),
+            "gradFill" => {
+                let mut stops: Vec<GradientStop> = drawing_child(node, "gsLst")
+                    .into_iter()
+                    .flat_map(|l| elements(l).filter(|n| n.has_tag_name(("http://schemas.openxmlformats.org/drawingml/2006/main", "gs"))))
+                    .filter_map(|gs| {
+                        let color = colors.in_parent(gs, None)?;
+                        Some(GradientStop { position: unqualified_attribute(gs, "pos").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0).clamp(0, 100_000) as u32, color })
+                    })
+                    .collect();
+                stops.sort_by_key(|s| s.position);
+                if stops.is_empty() {
+                    None
+                } else {
+                    let lin = drawing_child(node, "lin");
+                    let angle = lin.and_then(|l| unqualified_attribute(l, "ang")).and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(5_400_000) as i32;
+                    let scaled = lin.and_then(|l| unqualified_attribute(l, "scaled")).map_or(false, |v| v == "1" || v == "true");
+                    Some(Fill::Linear { angle, scaled, stops })
+                }
+            }
+            _ => None,
+        }).unwrap_or(Fill::Solid(Color::opaque(ibis_doc_model::Rgb(0x4472c4))));
+
+        let stroke = drawing_child(sp_pr, "ln").and_then(|ln| {
+            let color_node = fill_element(ln)?;
+            let color = match color_node.tag_name().name() {
+                "solidFill" => colors.in_parent(color_node, None)?,
+                _ => return None,
+            };
+            let width = unqualified_attribute(ln, "w").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(Stroke::DEFAULT_WIDTH);
+            let dash_kind = drawing_child(ln, "prstDash")
+                .and_then(|d| unqualified_attribute(d, "val"))
+                .and_then(ibis_doc_model::LineDash::parse)
+                .unwrap_or_default();
+            let end = |name| {
+                let e = drawing_child(ln, name);
+                ibis_doc_model::LineEnd::parse(e.and_then(|e| unqualified_attribute(e, "type")), e.and_then(|e| unqualified_attribute(e, "w")), e.and_then(|e| unqualified_attribute(e, "len")))
+            };
+            Some(Stroke {
+                color,
+                width,
+                dashed: dash_kind != ibis_doc_model::LineDash::Solid,
+                head: end("headEnd"),
+                tail: end("tailEnd"),
+                dash: dash_kind,
+                cap: match unqualified_attribute(ln, "cap") {
+                    Some("rnd") => ibis_doc_model::LineCap::Round,
+                    Some("sq") => ibis_doc_model::LineCap::Square,
+                    _ => ibis_doc_model::LineCap::Flat,
+                },
+                join: ibis_doc_model::LineJoin::Miter,
+                compound: unqualified_attribute(ln, "cmpd").and_then(ibis_doc_model::LineCompound::parse).unwrap_or_default(),
+                alignment: unqualified_attribute(ln, "algn").and_then(ibis_doc_model::LineAlignment::parse).unwrap_or_default(),
+                fill: None,
+                min_drawn_width: 0,
+            })
+        });
+
+        let effect_lst = drawing_child(sp_pr, "effectLst");
+        let crate::drawing_props::Effects { shadow, glow, soft_edge, reflection, .. } = crate::drawing_props::effects(colors, effect_lst, None);
+
+        let text = if let Some(lst_style) = drawing_child(sp_def, "lstStyle").or_else(|| child(sp_def, "lstStyle")) {
+            let def_p_pr = drawing_child(lst_style, "defPPr").or_else(|| child(lst_style, "defPPr"));
+            let align = def_p_pr
+                .and_then(|p| unqualified_attribute(p, "algn"))
+                .map(|a| match a {
+                    "l" => ibis_doc_model::TextAlign::Left,
+                    "r" => ibis_doc_model::TextAlign::Right,
+                    "just" => ibis_doc_model::TextAlign::Justify,
+                    _ => ibis_doc_model::TextAlign::Center,
+                })
+                .unwrap_or(if text_box { ibis_doc_model::TextAlign::Left } else { ibis_doc_model::TextAlign::Center });
+            let def_r_pr = def_p_pr.and_then(|p| drawing_child(p, "defRPr").or_else(|| child(p, "defRPr")));
+            let bold = def_r_pr.and_then(|r| unqualified_attribute(r, "b")).map(|v| v == "1" || v == "true").unwrap_or(false);
+            let italic = def_r_pr.and_then(|r| unqualified_attribute(r, "i")).map(|v| v == "1" || v == "true").unwrap_or(false);
+            let font_size = def_r_pr.and_then(|r| unqualified_attribute(r, "sz")).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(1800);
+            let color = def_r_pr.and_then(fill_element).and_then(|node| match node.tag_name().name() {
+                "solidFill" => colors.in_parent(node, None),
+                _ => None,
+            });
+            let color_theme = color.and_then(|c| c.theme_ref().copied());
+            let color = color.map(|c| c.rgb).unwrap_or(if text_box { ibis_doc_model::TextStyle::default().color } else { ibis_doc_model::Rgb::WHITE });
+            let font = def_r_pr.and_then(|r| drawing_child(r, "latin")).and_then(|l| unqualified_attribute(l, "typeface")).filter(|f| !f.is_empty() && !f.starts_with('+')).map(str::to_owned);
+            ibis_doc_model::TextStyle {
+                color,
+                color_theme,
+                font_size,
+                bold,
+                italic,
+                align,
+                font,
+                ..Default::default()
+            }
+        } else if text_box {
+            ibis_doc_model::TextStyle::default()
+        } else {
+            ibis_doc_model::TextStyle { color: ibis_doc_model::Rgb::WHITE, align: ibis_doc_model::TextAlign::Center, ..Default::default() }
+        };
+
+        // The body (`a:bodyPr`): where the text sits, its margins and whether it wraps. What the file does not say is what a new shape has.
+        let body_pr = drawing_child(sp_def, "bodyPr").or_else(|| child(sp_def, "bodyPr"));
+        let mut insets = ibis_doc_model::Insets::default();
+        let mut anchor = if text_box { ibis_doc_model::VerticalAnchor::Top } else { ibis_doc_model::VerticalAnchor::Middle };
+        let mut wrap = true;
+        if let Some(b) = body_pr {
+            let inset = |name: &str, own: i64| unqualified_attribute(b, name).and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(own);
+            insets = ibis_doc_model::Insets { left: inset("lIns", insets.left), top: inset("tIns", insets.top), right: inset("rIns", insets.right), bottom: inset("bIns", insets.bottom) };
+            anchor = match unqualified_attribute(b, "anchor") {
+                Some("t") => ibis_doc_model::VerticalAnchor::Top,
+                Some("ctr") => ibis_doc_model::VerticalAnchor::Middle,
+                Some("b") => ibis_doc_model::VerticalAnchor::Bottom,
+                _ => anchor,
+            };
+            wrap = unqualified_attribute(b, "wrap") != Some("none");
+        }
+
+        return Some(ibis_doc_model::ShapeDefault {
+            fill,
+            stroke,
+            text,
+            shadow,
+            glow,
+            reflection,
+            soft_edge,
+            anchor,
+            insets,
+            wrap,
+        });
+    }
+    None
+}
+
 fn read_object_defaults<'d, 'i>(theme_node: Node<'d, 'i>, colors: &Colors) -> ibis_doc_model::ObjectDefaults {
     let mut defaults = ibis_doc_model::ObjectDefaults::default();
     let Some(obj_def) = drawing_child(theme_node, "objectDefaults").or_else(|| child(theme_node, "objectDefaults")) else {
         return defaults;
     };
 
-    // 1. spDef -> ShapeDefault
+    // 1. spDef, txDef -> ShapeDefault
     if let Some(sp_def) = drawing_child(obj_def, "spDef").or_else(|| child(obj_def, "spDef")) {
-        if let Some(sp_pr) = drawing_child(sp_def, "spPr").or_else(|| child(sp_def, "spPr")) {
-            let fill = fill_element(sp_pr).and_then(|node| match node.tag_name().name() {
-                "noFill" => Some(Fill::None),
-                "solidFill" => colors.in_parent(node, None).map(Fill::Solid),
-                "gradFill" => {
-                    let mut stops: Vec<GradientStop> = drawing_child(node, "gsLst")
-                        .into_iter()
-                        .flat_map(|l| elements(l).filter(|n| n.has_tag_name(("http://schemas.openxmlformats.org/drawingml/2006/main", "gs"))))
-                        .filter_map(|gs| {
-                            let color = colors.in_parent(gs, None)?;
-                            Some(GradientStop { position: unqualified_attribute(gs, "pos").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0).clamp(0, 100_000) as u32, color })
-                        })
-                        .collect();
-                    stops.sort_by_key(|s| s.position);
-                    if stops.is_empty() {
-                        None
-                    } else {
-                        let lin = drawing_child(node, "lin");
-                        let angle = lin.and_then(|l| unqualified_attribute(l, "ang")).and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(5_400_000) as i32;
-                        let scaled = lin.and_then(|l| unqualified_attribute(l, "scaled")).map_or(false, |v| v == "1" || v == "true");
-                        Some(Fill::Linear { angle, scaled, stops })
-                    }
-                }
-                _ => None,
-            }).unwrap_or(Fill::Solid(Color::opaque(ibis_doc_model::Rgb(0x4472c4))));
-
-            let stroke = drawing_child(sp_pr, "ln").and_then(|ln| {
-                let color_node = fill_element(ln)?;
-                let color = match color_node.tag_name().name() {
-                    "solidFill" => colors.in_parent(color_node, None)?,
-                    _ => return None,
-                };
-                let width = unqualified_attribute(ln, "w").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(Stroke::DEFAULT_WIDTH);
-                let dash_kind = drawing_child(ln, "prstDash")
-                    .and_then(|d| unqualified_attribute(d, "val"))
-                    .and_then(ibis_doc_model::LineDash::parse)
-                    .unwrap_or_default();
-                let end = |name| {
-                    let e = drawing_child(ln, name);
-                    ibis_doc_model::LineEnd::parse(e.and_then(|e| unqualified_attribute(e, "type")), e.and_then(|e| unqualified_attribute(e, "w")), e.and_then(|e| unqualified_attribute(e, "len")))
-                };
-                Some(Stroke {
-                    color,
-                    width,
-                    dashed: dash_kind != ibis_doc_model::LineDash::Solid,
-                    head: end("headEnd"),
-                    tail: end("tailEnd"),
-                    dash: dash_kind,
-                    cap: match unqualified_attribute(ln, "cap") {
-                        Some("rnd") => ibis_doc_model::LineCap::Round,
-                        Some("sq") => ibis_doc_model::LineCap::Square,
-                        _ => ibis_doc_model::LineCap::Flat,
-                    },
-                    join: ibis_doc_model::LineJoin::Miter,
-                    compound: unqualified_attribute(ln, "cmpd").and_then(ibis_doc_model::LineCompound::parse).unwrap_or_default(),
-                    alignment: unqualified_attribute(ln, "algn").and_then(ibis_doc_model::LineAlignment::parse).unwrap_or_default(),
-                    fill: None,
-                    min_drawn_width: 0,
-                })
-            });
-
-            let effect_lst = drawing_child(sp_pr, "effectLst");
-            let crate::drawing_props::Effects { shadow, glow, soft_edge, reflection, .. } = crate::drawing_props::effects(colors, effect_lst, None);
-
-            let text = if let Some(lst_style) = drawing_child(sp_def, "lstStyle").or_else(|| child(sp_def, "lstStyle")) {
-                let def_p_pr = drawing_child(lst_style, "defPPr").or_else(|| child(lst_style, "defPPr"));
-                let align = def_p_pr
-                    .and_then(|p| unqualified_attribute(p, "algn"))
-                    .map(|a| match a {
-                        "l" => ibis_doc_model::TextAlign::Left,
-                        "r" => ibis_doc_model::TextAlign::Right,
-                        "just" => ibis_doc_model::TextAlign::Justify,
-                        _ => ibis_doc_model::TextAlign::Center,
-                    })
-                    .unwrap_or(ibis_doc_model::TextAlign::Center);
-                let def_r_pr = def_p_pr.and_then(|p| drawing_child(p, "defRPr").or_else(|| child(p, "defRPr")));
-                let bold = def_r_pr.and_then(|r| unqualified_attribute(r, "b")).map(|v| v == "1" || v == "true").unwrap_or(false);
-                let italic = def_r_pr.and_then(|r| unqualified_attribute(r, "i")).map(|v| v == "1" || v == "true").unwrap_or(false);
-                let font_size = def_r_pr.and_then(|r| unqualified_attribute(r, "sz")).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(1800);
-                let color = def_r_pr.and_then(fill_element).and_then(|node| match node.tag_name().name() {
-                    "solidFill" => colors.in_parent(node, None),
-                    _ => None,
-                }).map(|c| c.rgb).unwrap_or(ibis_doc_model::Rgb::WHITE);
-                ibis_doc_model::TextStyle {
-                    color,
-                    font_size,
-                    bold,
-                    italic,
-                    align,
-                    ..Default::default()
-                }
-            } else {
-                ibis_doc_model::TextStyle { color: ibis_doc_model::Rgb::WHITE, align: ibis_doc_model::TextAlign::Center, ..Default::default() }
-            };
-
-            defaults.shape = Some(ibis_doc_model::ShapeDefault {
-                fill,
-                stroke,
-                text,
-                shadow,
-                glow,
-                reflection,
-                soft_edge,
-            });
-        }
+        defaults.shape = read_shape_default(sp_def, colors, false);
+    }
+    if let Some(tx_def) = drawing_child(obj_def, "txDef").or_else(|| child(obj_def, "txDef")) {
+        defaults.text_box = read_shape_default(tx_def, colors, true);
     }
 
     // 2. lnDef -> Stroke
@@ -827,6 +866,72 @@ struct Reader<'p, 'd, 'i> {
     xlsx_shape_sources: Vec<crate::save::xlsx::XlsxShapeSource>,
 }
 
+/// The shapes of the SmartArt drawing (`dsp:drawing`) in `package`'s part `drawing`, read as a slide's shapes are (the one reader of a presentation and a workbook), for
+/// a document (`docx`): placed from `origin` (the graphic's top-left corner, in EMU). Their pictures are stored in `presentation`. The shapes are in drawing order, with
+/// the ids `presentation` gives; a drawing that cannot be read has none.
+pub(crate) fn read_diagram_drawing(package: &Package, theme: &Theme, theme_node: Option<Node>, presentation: &mut Presentation, drawing: &str, origin: (i64, i64)) -> Vec<Shape> {
+    let Ok(text) = package.read_xml(drawing) else { return Vec::new() };
+    let Ok(doc) = parse(drawing, &text) else { return Vec::new() };
+    let Ok(rels) = package.relationships(drawing) else { return Vec::new() };
+    let Some(tree) = child(doc.root_element(), "spTree") else { return Vec::new() };
+    let mut reader = Reader {
+        package,
+        line_floor: Stroke::POWERPOINT_MIN_WIDTH,
+        presentation: std::mem::replace(presentation, Presentation::empty(EmuSize::WIDESCREEN)),
+        media: HashMap::new(),
+        default_text: None,
+        table_styles: None,
+        user_shapes: HashMap::new(),
+        diagrams: HashMap::new(),
+        native_ids: HashMap::new(),
+        last_native_ids: HashMap::new(),
+        pending: Vec::new(),
+        default_font_size: 1800,
+        anchor: None,
+        charts: Default::default(),
+        sources: Default::default(),
+        text_sources: None,
+        para_sources: Vec::new(),
+        slide_placeholders: HashMap::new(),
+        slide_names: HashMap::new(),
+        slide_alt_texts: HashMap::new(),
+        slide_decorative: Default::default(),
+        slide_ibis: Vec::new(),
+        slide_return_to_zoom: Default::default(),
+        slide_zoom_show_bg: HashMap::new(),
+        slide_zoom_durations: HashMap::new(),
+        slide_zoom_objects: HashMap::new(),
+        slide_hidden: Default::default(),
+        slide_links: HashMap::new(),
+        slide_link_tooltips: HashMap::new(),
+        slide_aspect: Default::default(),
+        slide_formulas: HashMap::new(),
+        slide_glues: Vec::new(),
+        slide_parts: HashMap::new(),
+        chart_sources: Vec::new(),
+        xlsx_shape_sources: Vec::new(),
+    };
+    let part = || Part { name: drawing.to_string(), root: doc.root_element(), rels: rels.clone() };
+    let ctx = SlideCtx { colors: Colors::new(theme, None, &[]), theme: theme_node, slide: part(), layout: part(), master: part(), number: 1 };
+    let transform = Transform { sx: 1.0, sy: 1.0, tx: origin.0 as f64, ty: origin.1 as f64, turns: [None; MAX_TURNS], groups: [None; MAX_TURNS] };
+    let mut shapes = Vec::new();
+    reader.shapes(&ctx, tree, &rels, Level::Slide, transform, None, &mut shapes);
+    *presentation = reader.presentation;
+    // Word sets a SmartArt's text with lines as high as their fonts (`TextBody::font_lines`).
+    for shape in &mut shapes {
+        match &mut shape.kind {
+            ShapeKind::Auto(auto) => {
+                if let Some(text) = auto.text.as_mut() {
+                    text.font_lines = true;
+                }
+            }
+            ShapeKind::TextBox(text) => text.font_lines = true,
+            _ => {}
+        }
+    }
+    shapes
+}
+
 /// Text format a container gives before list styles (a shape style's
 /// `fontRef`, a table style's `tcTxStyle`).
 #[derive(Clone, Copy, Debug, Default)]
@@ -834,6 +939,8 @@ struct TextDefaults {
     color: Option<Color>,
     bold: Option<bool>,
     italic: Option<bool>,
+    /// A `fontRef`'s `idx`: `Some(true)` is the theme's major font, `Some(false)` the minor one.
+    font_major: Option<bool>,
 }
 
 struct SlideCtx<'d, 'i, 't> {
@@ -1787,6 +1894,11 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         }
         let defaults = TextDefaults {
             color: style.and_then(|s| child(s, "fontRef")).and_then(|r| ctx.colors.in_parent(r, None)),
+            font_major: style.and_then(|s| child(s, "fontRef")).and_then(|r| attr(r, "idx")).and_then(|i| match i {
+                "major" => Some(true),
+                "minor" => Some(false),
+                _ => None,
+            }),
             ..TextDefaults::default()
         };
         let text = child(node, "txBody").or_else(||path(node,&["txSp","txBody"])).map(|body| self.text_body(ctx, body, defaults, inherited.as_ref(), false));
@@ -2322,6 +2434,16 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
             if let Some(italic) = defaults.italic {
                 level.run.italic = Some(italic);
             }
+            // A shape style's `fontRef` is the theme's major or minor font (Latin; East Asian is the theme's `ea`, else its Jpan font) under the text's own
+            // list styles: it fills a font nothing else names, and a major one replaces the default text style's minor font.
+            if let Some(major) = defaults.font_major {
+                let theme = colors.theme();
+                if major || (level.run.latin.is_none() && level.run.east_asian.is_none()) {
+                    level.run.latin = theme.typeface(if major { "+mj-lt" } else { "+mn-lt" });
+                    level.run.east_asian = theme.east_asian_typeface(major);
+                    level.run.japanese = None;
+                }
+            }
         }
         if let Some(list) = child(body, "lstStyle") {
             levels.merge_shape(list, colors);
@@ -2470,6 +2592,7 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
                 baseline: run.baseline.unwrap_or(0),
                 spacing: run.spacing.unwrap_or(0),
                 color: Some(run.color.map(|c| c.rgb).unwrap_or(ibis_doc_model::Rgb::BLACK)),
+                color_theme: run.color.and_then(|c| c.theme_ref().copied()),
                 font: run.font_for(text),
                 fallback_font: run.fallback_for(text),
                 kern: ibis_doc_model::KernMin(run.kern),
@@ -2662,7 +2785,7 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
             (Some(BulletProps::Char(_)), Some(font)) if !crate::style::is_symbol_font(font) => Some(font.to_string()),
             _ => None,
         };
-        let bullet = bullet.map(|text| Bullet { text, picture, size: bullet_size as u32, color: props.bullet_color.flatten().map(|c| c.rgb), auto, symbol, font: bullet_font });
+        let bullet = bullet.map(|text| Bullet { text, picture, size: bullet_size as u32, color: props.bullet_color.flatten().map(|c| c.rgb), color_theme: props.bullet_color.flatten().and_then(|c| c.theme_ref().copied()), auto, symbol, font: bullet_font });
 
         let count = lines.len();
         lines
@@ -3268,6 +3391,9 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
         sheet.print_area = *print_area;
         name_external_books(&mut sheet, &book_names);
         sheet.tab_color = child(sheet_root, "sheetPr").and_then(|p| child(p, "tabColor")).and_then(|c| sheet_colors.color(c));
+        let outline_pr = child(sheet_root, "sheetPr").and_then(|p| child(p, "outlinePr"));
+        sheet.outline_summary_above = outline_pr.and_then(|p| attr_bool(p, "summaryBelow")) == Some(false);
+        sheet.outline_summary_left = outline_pr.and_then(|p| attr_bool(p, "summaryRight")) == Some(false);
 
         // The sheet's drawing and the shapes over its charts.
         let sheet_rels = package.relationships(part)?;
@@ -3666,6 +3792,9 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
                 for s in &slide.shapes[start_shapes..] {
                     slide.shape_placements.insert(s.id, placement);
                     slide.shape_prints.insert(s.id, print);
+                    if anchor.tag_name().name() == "twoCellAnchor" {
+                        slide.shape_two_cell.insert(s.id);
+                    }
                 }
                 reader.anchor = None;
             }

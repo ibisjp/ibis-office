@@ -86,12 +86,26 @@ pub(crate) fn sheet_views_round_trip_through_the_file() {
     // Opened again: on the sheet the file was left on (the second, #195: `activeTab`), and each sheet where it was left.
     drop(s);
     let mut t = Scenario::open(path.to_str().unwrap());
+    // The file stores a row, not pixels (Excel's `topLeftCell`), and the rows are as high as the Normal font fits them when the file is opened
+    // (on Windows, where the font is measured, a row the live sheet had taller than that comes back lower), so "where it was left" is the top
+    // of that row in the reopened sheet.
+    let row_top = |t: &mut Scenario, sheet: usize, row: u32| -> f32 {
+        t.with(|e, _| {
+            let sh = crate::shell::editor::sheet_of(&e.presentation().slides[sheet]).unwrap().1;
+            let o = sh.row_offsets();
+            let emu = o.get(row as usize).copied().unwrap_or_else(|| o.last().copied().unwrap_or(0) + (row as i64 + 1 - o.len() as i64) * sh.default_row);
+            -(emu as f32 / ibis_doc_model::EMU_PER_POINT as f32)
+        })
+    };
+    let (second_row, first_row) = (b.top_left.unwrap().1, a.top_left.unwrap().1);
     let ids: Vec<_> = t.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.iter().filter_map(|sh| sh.slide).collect());
     assert_eq!(t.with(|e, _| e.current_slide), ids[1]);
-    assert!((scroll(&mut t) - second).abs() < 25.0, "the second sheet opens where it was left: {} for {second}", scroll(&mut t));
+    let want = row_top(&mut t, 1, second_row);
+    assert!((scroll(&mut t) - want).abs() < 25.0, "the second sheet opens where it was left: {} for {want} (row {second_row}; it was at {second})", scroll(&mut t));
     assert_eq!(t.with(|e, _| e.current_cell()), Some((1, 1)));
     t.update(|e, window, cx| e.select_slide(ids[0], window, cx));
-    assert!((scroll(&mut t) - first).abs() < 25.0, "the first sheet too: {} for {first}", scroll(&mut t));
+    let want = row_top(&mut t, 0, first_row);
+    assert!((scroll(&mut t) - want).abs() < 25.0, "the first sheet too: {} for {want} (row {first_row}; it was at {first})", scroll(&mut t));
     assert_eq!(t.with(|e, _| e.current_cell()), Some((2, 6)));
 }
 

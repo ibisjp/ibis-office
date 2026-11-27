@@ -212,11 +212,11 @@ impl Render for ValueView {
     }
 }
 /// The scenarios measure where the value and the number field are drawn (`<id>-value`, `<id>-field`).
-#[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+#[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
 fn probed(element: Stateful<Div>, key: String) -> Stateful<Div> {
     element.relative().child(canvas(|_, _, _| (), move |b, _, _, _| super::super::scenario::button_probe::record_bounds(&key, b)).absolute().inset_0())
 }
-#[cfg(not(all(feature="scenarios",any(target_os="macos",target_os="linux"))))]
+#[cfg(not(all(feature="scenarios",any(target_os="macos",target_os="linux",windows))))]
 fn probed(element: Stateful<Div>, _key: String) -> Stateful<Div> { element }
 
 impl RenderOnce for ValueSlider {

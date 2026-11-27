@@ -38,6 +38,8 @@ fn lines() {
     assert!(menus[0].1.iter().any(|e| matches!(e, MenuEntry::Submenu(sub) if sub.id == "file.recent")), "the File menu has the recent files");
     assert!(ids(MenuId::Window).contains(&"window.minimize"), "the Window menu has Minimize");
     assert!(ids(MenuId::Help).contains(&"help.about"), "the Help menu has About");
+    // The start window is no document: it is not in the list of windows (#265: "プレゼンテーション1.pptx" was always listed).
+    assert!(!ids(MenuId::Window).iter().any(|id| id.starts_with("window.open.")), "the start window lists itself: {:?}", ids(MenuId::Window));
 }
 
 /// Every line of the three menus, pressed in the menu bar: the press must reach `chrome::dispatch` (the one place the commands are run from).

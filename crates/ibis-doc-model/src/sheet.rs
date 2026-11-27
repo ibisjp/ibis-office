@@ -261,7 +261,7 @@ impl CellKind {
 }
 
 /// A colour of the workbook's theme: its place in SpreadsheetML's order
-/// (0 lt1, 1 dk1, 2 lt2, 3 dk2, 4–9 accent1–6) and the tint (Excel's
+/// (0 lt1, 1 dk1, 2 lt2, 3 dk2, 4–9 accent1–6, 10 hlink, 11 folHlink) and the tint (Excel's
 /// lighter/darker, in millionths: 800000 is 80 % lighter, −250000 25 %
 /// darker).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -271,11 +271,16 @@ pub struct ThemeColor {
 }
 
 impl ThemeColor {
-    pub const NAMES: [&'static str; 10] = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6"];
+    pub const NAMES: [&'static str; 12] = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"];
 
     pub fn resolve(&self, colors: &[(String, Rgb)]) -> Option<Rgb> {
         let name = Self::NAMES.get(self.index as usize)?;
-        let base = colors.iter().find(|(n, _)| n == name).map(|(_, c)| *c)?;
+        // A theme without the hyperlink colours takes Office's own.
+        let base = colors.iter().find(|(n, _)| n == name).map(|(_, c)| *c).or(match self.index {
+            10 => Some(Rgb(0x0563C1)),
+            11 => Some(Rgb(0x954F72)),
+            _ => None,
+        })?;
         Some(base.tinted(self.tint))
     }
 }
@@ -901,6 +906,11 @@ pub struct Sheet {
     pub print_area: Option<CellRange>,
     /// The colour of the sheet's tab (`sheetPr/tabColor`).
     pub tab_color: Option<Rgb>,
+    /// The totals of the row groups are above their details (`sheetPr/outlinePr/@summaryBelow="0"`; Excel's データ > アウトライン の設定:
+    /// 詳細データの下 unchecked), so the − / + button of a group is in the row before it.
+    pub outline_summary_above: bool,
+    /// The totals of the column groups are at the left of their details (`outlinePr/@summaryRight="0"`).
+    pub outline_summary_left: bool,
     /// Frozen panes: the columns and rows (counts from the top left) that
     /// stay in view while the rest scrolls.
     pub frozen: Option<(u32, u32)>,
@@ -987,9 +997,14 @@ pub struct Sheet {
     pub hyperlinks: Vec<Hyperlink>,
     /// Comments on cells (`comments`), in the file's order.
     pub comments: Vec<SheetComment>,
-    /// Outline (group) levels of rows and columns (`outlineLevel`, 1–7).
+    /// Outline (group) levels of rows and columns (`outlineLevel`, 1–8).
     pub outline_rows: std::collections::BTreeMap<u32, u8>,
     pub outline_columns: std::collections::BTreeMap<u32, u8>,
+    /// The rows (columns) whose group is collapsed (`row/@collapsed`, `col/@collapsed`): the row after the group, the one with its + button. Which
+    /// rows are hidden is `rows`; this is what Excel keeps to show again only what was not collapsed on its own (an inner group stays collapsed
+    /// when the outer one is shown).
+    pub collapsed_rows: std::collections::BTreeSet<u32>,
+    pub collapsed_columns: std::collections::BTreeSet<u32>,
     /// The filter over a table (`autoFilter`), if one is set.
     pub auto_filter: Option<AutoFilter>,
     /// Rows excluded when the filter was applied; edits do not reapply it.
@@ -1056,6 +1071,8 @@ impl Default for Sheet {
             headings: false,
             print_area: None,
             tab_color: None,
+            outline_summary_above: false,
+            outline_summary_left: false,
             frozen: None,
             split: None,
             protection: None,
@@ -1093,6 +1110,8 @@ impl Default for Sheet {
             comments: Vec::new(),
             outline_rows: std::collections::BTreeMap::new(),
             outline_columns: std::collections::BTreeMap::new(),
+            collapsed_rows: std::collections::BTreeSet::new(),
+            collapsed_columns: std::collections::BTreeSet::new(),
             auto_filter: None,
             filtered_rows: std::collections::BTreeSet::new(),
             tables: Vec::new(),
@@ -2102,11 +2121,46 @@ impl Sheet {
         (id < Self::FRESH_LINE_ID && (id as usize) > ids.len()).then(|| id - 1)
     }
 
+    // FORMULA DISCLOSURE: whether a formula may leave the sheet (to the screen, the clipboard, MCP, a search) is decided only by
+    // `formula_is_hidden` (数式を表示しない on a protected sheet). Every code that hands a formula's text to a person or another
+    // program takes it from `visible_formula`, `shown_formula` or `copy_of`, never from `cell.formula` itself. Saving the file keeps the
+    // formula (the file must round-trip). `tests/formula_disclosure.rs` fails when a new path reads `.formula` without going through here.
+
+    /// Whether worksheet protection hides this cell's formula.
+    pub fn formula_is_hidden(&self, cell: &SheetCell) -> bool {
+        self.protection.is_some()
+            && self.styles.get(cell.style as usize).is_some_and(|style| style.formula_hidden)
+    }
+
+    /// The stored formula, if the worksheet permits displaying it.
+    pub fn visible_formula<'a>(&self, cell: &'a SheetCell) -> Option<&'a str> {
+        if self.formula_is_hidden(cell) {
+            None
+        } else {
+            cell.formula.as_deref()
+        }
+    }
+
     /// The formula of the cell at (`row`, `column`) as Excel's bar and an edit
     /// show it: a this-row reference of the table the cell is in is `[@Qty]`.
-    pub fn formula_shown(&self, row: u32, column: u32, formula: &str) -> String {
+    fn formula_shown(&self, row: u32, column: u32, formula: &str) -> String {
         let table = self.tables.iter().find(|t| t.range.first_row <= row && row <= t.range.last_row && t.range.first_column <= column && column <= t.range.last_column).map(|t| t.name.as_str());
         ibis_calc::formula::this_row_to_display(formula, table)
+    }
+
+    /// The cell's formula as the formula bar, an edit and the "show formulas" view show it, with its `=`; `None` when the cell has
+    /// none or the sheet hides it.
+    pub fn shown_formula(&self, cell: &SheetCell) -> Option<String> {
+        self.visible_formula(cell).map(|f| format!("={}", self.formula_shown(cell.row, cell.column, f)))
+    }
+
+    /// A copy of the cell for the clipboard: a hidden formula is left out and only the value goes (as Excel pastes it).
+    pub fn copy_of(&self, cell: &SheetCell) -> SheetCell {
+        let mut copy = cell.clone();
+        if self.formula_is_hidden(cell) {
+            copy.formula = None;
+        }
+        copy
     }
 
     /// The cell at a row and column, if it holds a value or a format.

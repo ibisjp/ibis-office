@@ -17,6 +17,7 @@ use ibis_doc_model::{
     BorderLine, CellAlign, CellKind, CellRange, CellStyle, CellUnderline, CellVerticalAlign, EMU_PER_POINT, EmuRect, Sheet, TextStyle, VerticalPosition,
 };
 
+use crate::render::font_metrics::rotated_box_margin_px_em;
 use crate::render::shape_view::{Resources, hsla, polygon};
 
 /// Space between a cell's edge and its text, in points.
@@ -41,6 +42,19 @@ const PRINTED_TEXT_PADDING_PT: f32 = 21.0 * 72.0 / 600.0;
 // left-aligned number starts where text does.
 const TEXT_PAD_LEFT_PT: f32 = 2.0;
 const TEXT_PAD_RIGHT_PT: f32 = 3.0;
+/// The part of S (`rotated_box_margin`) that does not depend on the typeface, 0.5 pt: a measured constant that depends on neither the column's width
+/// (8 to 60 characters), nor the row's height (40 to 120 pt), the typeface nor its size (Excel for Windows' EMF and PDF, 99 typeface and size pairs
+/// and 11 synthetic fonts, rms 0.51 px of 600 dpi; `tasks/doc/requests/2026-11-20-189-colwidth-result.md`, `…-rowheight-result.md`). Its source is not
+/// known yet: the exception "測った係数を使ってよい例外" of `docs/rule/implimentationRule.md` (2026-11-22, user), to be replaced when it is found.
+const ROTATED_BOX_MARGIN_FIXED_PT: f32 = 0.5;
+/// How far above the centre of a cell's printed line Excel for Windows' grid line is: the top edge of the line's pixels (a thin line is 8 pixels of 600 dpi, 0.96 pt, and half of
+/// it is 0.48 pt). A turned line's room is counted from it.
+const WIN_GRID_ABOVE_LINE_CENTRE_PT: f32 = 0.48;
+/// How much less room a line turned 90 degrees has at the bottom of its cell than at the top (Excel for Windows' printer EMF of 70 typeface and size pairs,
+/// `tasks/doc/requests/2026-11-25-189-rotated-mechanism-result.md`: the line's box is `rotated_pad_left` from the top and that less 1.8 pt = 15 pixels from the bottom, whatever the text,
+/// typeface, size, row height; its PDF has the same two rooms from the grid line, and the 0.48 pt of `WIN_GRID_ABOVE_LINE_CENTRE_PT` makes the numbers 0.4 and 1.3 pt less from the lines'
+/// centres: 4 typefaces at 9, 11 and 14 pt, 12 strings, rows of 90 and 120 pt). Its source is not known.
+const ROTATED_90_BOTTOM_LESS_PT: f32 = 1.8;
 /// Additional left padding for left-aligned numbers (points): none in Excel's PDF.
 const TEXT_PAD_NUM_LEFT_PT: f32 = 0.0;
 const TEXT_SHIFT_TOP_PT: f32 = 0.9;
@@ -48,6 +62,9 @@ const TEXT_SHIFT_CENTER_PT: f32 = 0.0;
 const TEXT_SHIFT_BOTTOM_PT: f32 = 0.9;
 /// A horizontal offset in pixels (none: positions are Excel's, in points).
 const TEXT_LEFT_OFFSET_PX: f32 = 0.0;
+/// How far right of the cell's middle Excel for Windows prints the middle of a stacked (255 degrees) text: half the difference of the left
+/// padding and the right one (`pl` and `pl - 0.96 pt`, 8 pixels of the printer, as the rotated texts' paddings).
+const STACKED_CENTRE_SHIFT_PT: f32 = 0.96 / 2.0;
 
 /// Excel's grid lines on screen.
 const GRID_COLOR: u32 = 0xd4d4d4;
@@ -94,6 +111,8 @@ struct TextItem {
     cell: (f32, f32),
     font_size: f32,
     rotation: u8,
+    /// Laid out as Excel for Windows prints it (`CellText::printed`).
+    printed: bool,
     /// A check box (ticked or not, and the colour of its tick) drawn in the room of the one piece, in place of text.
     checkbox: Option<(bool, Hsla, f32)>,
 }
@@ -179,7 +198,9 @@ fn snap_fill_bounds(r: Bounds<Pixels>, scale_factor: f32) -> Bounds<Pixels> {
 pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resources) -> Div {
     let extra_cols_px = if !res.print { 50.0 * (sheet.default_column as f32 * scale) } else { 0.0 };
     let extra_rows_px = if !res.print { 1000.0 * (sheet.default_row as f32 * scale) } else { 0.0 };
-    let (w, h) = ((frame.width as f32 * scale).max(extra_cols_px), (frame.height as f32 * scale).max(extra_rows_px));
+    // 限られたグリッド表示 (#273): the grid is only the used range and its margin.
+    let limit = if res.print { None } else { super::limited_grid::limit_px(sheet, scale, res.grid_limit.get()) };
+    let (w, h) = limit.unwrap_or(((frame.width as f32 * scale).max(extra_cols_px), (frame.height as f32 * scale).max(extra_rows_px)));
     let sheet_layout = cached_layout(sheet, scale, res);
     let px_per_point = EMU_PER_POINT as f32 * scale;
     // Printed, a page shows its cells once: the text measured for the
@@ -203,6 +224,10 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                     )
                 };
                 let visible = window.content_mask().bounds;
+                let visible = match limit {
+                    Some((lw, lh)) => visible.intersect(&Bounds::new(o, size(px(lw), px(lh)))),
+                    None => visible,
+                };
                 let shown = |(x, y, w, h): (f32, f32, f32, f32)| {
                     let r = Bounds::new(point(o.x + px(x), o.y + px(y)), size(px(w), px(h)));
                     r.intersects(&visible).then_some(r)
@@ -259,8 +284,8 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                     let color = hsla(opaque(ibis_doc_model::Rgb(GRID_COLOR)));
                     let default_row_px = sheet.default_row as f32 * scale;
                     let default_col_px = sheet.default_column as f32 * scale;
-                    let xs = sheet.column_offsets();
-                    let ys = sheet.row_offsets();
+                    let xs = &sheet_layout.column_offsets;
+                    let ys = &sheet_layout.row_offsets;
                     let extra_cols = 50u32;
                     let extra_rows = 1000u32;
                     let base_max_row = (sheet.rows.len() as u32 + extra_rows).min(1_048_576);
@@ -334,12 +359,13 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                     if items.len() != layout.cells.len() {
                         items.resize_with(layout.cells.len(), || None);
                     }
+                    let printed_mix = if *sheet.printed { 0xD1B5_4A32_D192_ED03u64 } else { 0 };
                     let measure = |text: &str, font: &Font, size: f32| -> f32 {
                         let key = measured_key(text, font, size) ^ ts_key;
                         // A text shaped before (the same characters, font and size, in this scale) keeps its width and
                         // shaping: the sheet's cells hold few different texts (a printed 5,000-page sheet shaped 590,000
                         // cells, 70 % of its export's time).
-                        let cache_key = key ^ (px_per_point.to_bits() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                        let cache_key = key ^ (px_per_point.to_bits() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ printed_mix;
                         if let Some((width, line)) = SHAPED_TEXTS.with(|c| c.borrow().get(&cache_key).cloned()) {
                             if keep_measured {
                                 layout.measured.borrow_mut().insert(key, line);
@@ -393,6 +419,7 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                         }
                     }
                 }
+                let printed_mix = if *sheet.printed { 0xD1B5_4A32_D192_ED03u64 } else { 0 };
                 for (ci, t) in found.iter().flat_map(|&i| items[i as usize].as_deref().unwrap_or(&[]).iter().map(move |t| (i as usize, t))) {
                     let Some(clip) = shown(t.clip) else { continue };
                     // Shaped pieces, or room of a fixed width.
@@ -421,12 +448,35 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                                 underline: None,
                                 strikethrough: piece_strike.then(|| StrikethroughStyle { thickness: px((size / 14.0).max(0.5)), color: Some(piece_color) }),
                             };
-                            Ok(match measured.get(&(measured_key(&p.text, font, size) ^ ts_key)).filter(|l| l.text.as_ref() == p.text) {
+                            let key = measured_key(&p.text, font, size) ^ ts_key;
+                            let cache_key = key ^ (px_per_point.to_bits() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ printed_mix;
+                            let cached_line = measured
+                                .get(&key)
+                                .filter(|l| l.text.as_ref() == p.text)
+                                .cloned()
+                                .or_else(|| {
+                                    SHAPED_TEXTS.with(|c| {
+                                        c.borrow()
+                                            .get(&cache_key)
+                                            .filter(|(_, l)| l.text.as_ref() == p.text)
+                                            .map(|(_, l)| l.clone())
+                                    })
+                                });
+                            Ok(match cached_line {
                                 Some(line) => line.restyled(&[run]),
                                 None => {
-                                    let mut line = window.text_system().shape_line(SharedString::from(p.text.clone()), px(size), &[run], None);
+                                    let mut line = window.text_system().shape_line(SharedString::from(p.text.clone()), px(size), &[run.clone()], None);
                                     whole_point_advances(&mut line, px_per_point, *sheet.printed);
-                                    line
+                                    let width = f32::from(line.width);
+                                    let rc = Rc::new(line);
+                                    SHAPED_TEXTS.with(|c| {
+                                        let mut c = c.borrow_mut();
+                                        if c.len() >= SHAPED_TEXTS_MAX {
+                                            c.clear();
+                                        }
+                                        c.insert(cache_key, (width, rc.clone()));
+                                    });
+                                    rc.restyled(&[run])
                                 }
                             })
                         })
@@ -438,7 +488,7 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                     let total: f32 = shaped.iter().map(piece_width).sum();
                     let count = shaped.len();
                     let trailing = t.pieces.last().is_some_and(|p| p.advance.is_none() && p.text.ends_with(' '));
-                    let (mut x, gap) = compute_text_x(t.align, t.left, t.right, total, count, trailing, t.rotation, px_per_point);
+                    let (mut x, gap) = compute_text_x(t.align, t.left, t.right, total, count, trailing, t.rotation, t.printed, px_per_point);
                     let d_px = 1.0 / window.scale_factor();
                     let (clip_left, clip_top, clip_w, clip_h) = t.clip;
                     let (start, end) = (x.max(clip_left), (x + total + gap * count.saturating_sub(1) as f32).min(clip_left + clip_w));
@@ -847,12 +897,13 @@ pub fn release_layouts() {
     LINK_TEXT.with(|m| m.borrow_mut().clear());
     PRINT_REGIONS.with(|cache| cache.borrow_mut().clear());
     SHAPED_TEXTS.with(|cache| cache.borrow_mut().clear());
+    super::sheet_ui::clear_header_cache();
 }
 
 /// The text displayed for a cell on screen: evaluates show_formulas and show_zeros.
 pub(crate) fn cell_shown_text(sheet: &Sheet, cell: &ibis_doc_model::SheetCell) -> String {
-    if sheet.show_formulas && cell.formula.is_some() {
-        format!("={}", sheet.formula_shown(cell.row, cell.column, cell.formula.as_ref().unwrap()))
+    if let Some(formula) = sheet.show_formulas.then(|| sheet.shown_formula(cell)).flatten() {
+        formula
     } else if !sheet.show_zeros && matches!(cell.value, ibis_doc_model::CellValue::Number(n) if n == 0.0) {
         String::new()
     } else {
@@ -943,6 +994,9 @@ struct SheetLayout {
     scale: f32,
     context: LayoutContext,
     base: Rc<Layout>,
+    /// Cumulative column and row offsets in EMU, matching `source`.
+    column_offsets: Vec<i64>,
+    row_offsets: Vec<i64>,
     /// Each row's top, and the bottom of the last, in pixels.
     row_tops: Vec<f32>,
     /// Merged ranges' first and last rows.
@@ -962,8 +1016,9 @@ impl SheetLayout {
         // What the calculation asked IMAGE for, of the cells that still hold a formula.
         let images: Vec<((u32, u32), ibis_calc::eval::ImageSpec)> = source.web_images.iter().filter(|((r, c), _)| source.cell(*r, *c).is_some_and(|x| x.formula.is_some())).map(|(k, v)| (*k, v.clone())).collect();
         let context = LayoutContext { print: res.print, print_scale: res.print_scale.get(), breaks: res.print_breaks.borrow().clone(), fonts, sheets: res.sheets.clone(), images: images.iter().map(|(k, i)| (*k, i.source.clone())).collect() };
-        let row_tops = sheet
-            .row_offsets()
+        let column_offsets = sheet.column_offsets();
+        let row_offsets = sheet.row_offsets();
+        let row_tops = row_offsets
             .iter()
             .map(|&y| {
                 let raw = y as f32 * scale;
@@ -974,7 +1029,7 @@ impl SheetLayout {
         let overlay = applied.as_ref().as_ref().map(|(_, o)| o);
         let part = if res.print { Part::All } else { Part::Base };
         let base = Rc::new(layout(sheet, scale, &context, overlay, part));
-        Self { source: source.clone(), applied: applied.clone(), scale, context, base, row_tops, merges, parts: Default::default(), images }
+        Self { source: source.clone(), applied: applied.clone(), scale, context, base, column_offsets, row_offsets, row_tops, merges, parts: Default::default(), images }
     }
 
     fn sheet(&self) -> &Sheet {
@@ -1092,14 +1147,14 @@ pub(crate) fn checkbox_at(sheet: &Arc<Sheet>, x: f64, y: f64) -> Option<(u32, u3
 }
 
 /// For the scenarios: the square (left, top, right, bottom; sheet-local EMU) the check box of the cell was drawn in.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 pub(crate) fn checkbox_box(sheet: &Arc<Sheet>, row: u32, column: u32) -> Option<(f64, f64, f64, f64)> {
     let key = Arc::as_ptr(sheet) as usize;
     CHECKBOX_BOX.with(|m| m.borrow().get(&(key, row, column)).copied())
 }
 
 /// For the scenarios: the box (left, top, right, bottom; sheet-local EMU) around the first piece of hyperlink text drawn for the cell (stacked text is one per letter).
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 pub(crate) fn link_text_box(sheet: &Arc<Sheet>, row: u32, column: u32) -> Option<(f64, f64, f64, f64)> {
     let key = Arc::as_ptr(sheet) as usize;
     LINK_TEXT.with(|m| {
@@ -2654,6 +2709,8 @@ struct CellFont {
     rise: f32,
     /// The font's external leading in ems (`external_leading`; 0 where the font cannot be measured).
     leading: f32,
+    /// The font's `usWinAscent` in ems (0 where the font cannot be measured): GDI's `tmAscent` of a turned line's box (`rotated_box_margin`).
+    win_ascent: f32,
     /// The typefaces the sheet's rich text names for parts of a cell (`<rPr><rFont>`), by name.
     runs: Arc<Vec<(String, Font)>>,
     /// The fonts the sheet's furigana are drawn in (`PhoneticDetail::font`), by typeface.
@@ -2766,7 +2823,7 @@ fn measure_printed_text_regions(sheet: &Sheet, res: &Resources) -> Vec<EmuRect> 
                 }).sum();
                 let count = item.pieces.len();
                 let trailing = item.pieces.last().is_some_and(|p| p.advance.is_none() && p.text.ends_with(' '));
-                let (x, gap) = compute_text_x(item.align, item.left, item.right, width, count, trailing, item.rotation, 1.0);
+                let (x, gap) = compute_text_x(item.align, item.left, item.right, width, count, trailing, item.rotation, item.printed, 1.0);
                 let left = x.max(item.clip.0);
                 let right = (x + width + gap * count.saturating_sub(1) as f32).min(item.clip.0 + item.clip.2);
                 if right > left && item.clip.3 > 0.0 && (left < item.cell.0 || right > item.cell.1) {
@@ -2811,7 +2868,7 @@ impl<'a> GlyphWidths<'a> {
 
 /// The text each cell shows, laid out as `text_items` lays it out (lines
 /// joined by `\n`, `#`s and all), as (row, column, text): for the scenarios.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 pub fn shown_texts(sheet: &Sheet, res: &Resources, window: &Window) -> Vec<(u32, u32, String)> {
     let scale = 1.0 / EMU_PER_POINT as f32;
     let fonts = sheet_fonts(sheet, res);
@@ -2898,7 +2955,8 @@ fn cell_font(style: &CellStyle, res: &Resources) -> CellFont {
         .unwrap_or_else(|| res.metrics(&font));
     let rise = ruby_rise(style.font.as_deref(), res).unwrap_or(ascent);
     let leading = external_leading(style.font.as_deref(), res).unwrap_or(0.0);
-    CellFont { font, plain, latin_scale, ascent, descent, rise, leading, runs: Arc::default(), ruby: Arc::default() }
+    let win_ascent = style.font.as_deref().and_then(|name| res.win_row_metrics(name.trim())).map_or(0.0, |m| (m.win_ascent / m.units_per_em) as f32);
+    CellFont { font, plain, latin_scale, ascent, descent, rise, leading, win_ascent, runs: Arc::default(), ruby: Arc::default() }
 }
 
 /// How far above the text's baseline Excel for Windows prints its furigana, in ems of the text's font: the font's `usWinAscent` plus
@@ -2917,6 +2975,15 @@ fn ruby_rise(font: Option<&str>, res: &Resources) -> Option<f32> {
 /// (the 999 patterns of `tasks/doc/requests/2026-11-14-189-rest-many-patterns-result.md`).
 fn external_leading(font: Option<&str>, res: &Resources) -> Option<f32> {
     Some(res.win_row_metrics(font?.trim())?.external_leading())
+}
+
+/// What Excel's box of a turned line is thicker than the line's own (GDI's `tmHeight`) by, per side, in points: S in `tmHeight + 2 S`
+/// (GitHub issue #189: Excel for Windows' EMF and PDF of turned text, 20 typefaces and 11 synthetic ones at 9, 10.5 and 14 pt, 99 typeface and size pairs,
+/// rms 0.51 px of 600 dpi). It is `ROTATED_BOX_MARGIN_FIXED_PT` and half of the typeface's external leading and of how far its ascent passes the em
+/// (`rotated_box_margin_px_em`, from the font file: `tmExternalLeading` and `tmAscent` as GDI rounds them to the pixels of 600 dpi at `size_pt`).
+fn rotated_box_margin(font: &CellFont, size_pt: f32) -> f32 {
+    let ppem = (f64::from(size_pt) * 600.0 / 72.0).round();
+    ROTATED_BOX_MARGIN_FIXED_PT + (rotated_box_margin_px_em(f64::from(font.leading), f64::from(font.win_ascent), ppem) * 72.0 / 600.0) as f32
 }
 
 /// Lay out a cell's text into lines, measuring with `measure` (text, font,
@@ -3597,45 +3664,51 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         let c4_x = -d * sin;
         let c4_y = d * cos;
 
-        let min_bx = c1_x.min(c2_x).min(c3_x).min(c4_x);
-        let max_bx = c1_x.max(c2_x).max(c3_x).max(c4_x);
-        let min_by = c1_y.min(c2_y).min(c3_y).min(c4_y);
-        let max_by = c1_y.max(c2_y).max(c3_y).max(c4_y);
+        let (min_bx, max_bx) = (c1_x.min(c2_x).min(c3_x).min(c4_x), c1_x.max(c2_x).max(c3_x).max(c4_x));
+        let (mut min_by, mut max_by) = (c1_y.min(c2_y).min(c3_y).min(c4_y), c1_y.max(c2_y).max(c3_y).max(c4_y));
+        // Excel's box for a turned line is the line's box (GDI's tmHeight) made 2 S thicker on the side away from the text's top, and the line sits S
+        // from the far edge of it: against the right of a cell a line turned 90 degrees leaves 2 S more room than against the left (GitHub issue #189,
+        // Excel's EMF and PDF; at 180 degrees the room is on the same side, the angle counted from 90 on). The box is swept 2 S that way, up to
+        // the right (`turn` is the angle, from 90 degrees on counted from 90), and aligned as a whole: a centred line sits S the other way.
+        let turn = (if style.rotation <= 90 { style.rotation } else { style.rotation - 90 } as f32).to_radians();
+        let margin = rotated_box_margin(&cell.font, text_size / px_per_point) * px_per_point;
+        min_by -= 2.0 * margin * turn.cos();
+        // Where the line sits across the cell (GitHub issue #189, Excel for Windows' printer EMF at 600 dpi, 70 typeface and size pairs at 90 degrees, and the PDFs of
+        // Arial, Calibri, Meiryo and ＭＳ 明朝 at 9 and 11 pt: `tasks/doc/requests/2026-11-25-189-rotated-mechanism-result.md`): the box (GDI's `tmHeight`) is `rotated_pad_left` from the
+        // left of the cell at every angle, and `rotated_pad_right` from the right, which is 0.96 pt (8 pixels) less than that at 0 degrees and grows by `0.72 pt + E`
+        // (E: the typeface's external leading and how far its ascent passes the em) times the sine of the angle.
+        let size_pt = text_size / px_per_point;
+        let half_e = rotated_box_margin(&cell.font, size_pt) - ROTATED_BOX_MARGIN_FIXED_PT;
+        let pad_left = (1.0 + size_pt / 8.0 + half_e) * px_per_point;
+        let pad_right = (1.0 + size_pt / 8.0 + half_e - 0.96 + (0.72 + 2.0 * half_e) * turn.sin()) * px_per_point;
 
+        // Along a line turned 90 degrees (Excel for Windows): its box is `pl` from the grid line at the top and `pl` less 1.8 pt from the one at the bottom, the grid lines being
+        // 0.48 pt above the printed lines' centres, where this cell's edges are.
+        let win_turned_90 = ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows;
+        let (room_top, room_bottom) = if win_turned_90 {
+            let pl = 1.0 + size_pt / 8.0 + half_e;
+            ((pl - WIN_GRID_ABOVE_LINE_CENTRE_PT) * px_per_point, (pl - ROTATED_90_BOTTOM_LESS_PT + WIN_GRID_ABOVE_LINE_CENTRE_PT) * px_per_point)
+        } else {
+            (pad * 0.5 + v_shift_top, pad * 0.5 + v_shift_bottom + acc_shift)
+        };
         let baseline_y0 = match vertical {
-            CellVerticalAlign::Top | CellVerticalAlign::Justify => {
-                top + pad * 0.5 + v_shift_top - min_by
-            }
+            CellVerticalAlign::Top | CellVerticalAlign::Justify => top + room_top - min_by,
             CellVerticalAlign::Center | CellVerticalAlign::Distributed => {
-                (top + bottom - (min_by + max_by)) / 2.0 + v_shift_center
+                (top + bottom - (min_by + max_by)) / 2.0 + if win_turned_90 { (room_top - room_bottom) / 2.0 } else { v_shift_center }
             }
-            CellVerticalAlign::Bottom => {
-                bottom - pad * 0.5 - v_shift_bottom - acc_shift - max_by
-            }
+            CellVerticalAlign::Bottom => bottom - room_bottom - max_by,
         };
 
-        let (pad_left, pad_right) = (TEXT_PAD_LEFT_PT * px_per_point, TEXT_PAD_RIGHT_PT * px_per_point);
-        // Against the right of the cell, a line turned 90 degrees or more sits its font's external leading further left (游ゴシック 0.31 em: 3.2 pt at
-        // 10.56 pt, 2.4 at 9, 4.3 at 14; ＭＳ 明朝 and Meiryo 0 within 0.5 pt).
-        let leading_shift = if style.rotation >= 90 { cell.font.leading * text_size } else { 0.0 };
         let baseline_x0 = match style.align {
-            CellAlign::Center | CellAlign::CenterAcross | CellAlign::Distributed => {
-                // The whole turned line box is centred across the cell (Excel for Windows, 游ゴシック 11 pt at 30 to 60 degrees: the ink's centre is where
-                // unturned text's is). From 90 degrees the text sits left of it by half the font's external leading (游ゴシック 0.16 em, 1.7 pt at 10.56 pt; ＭＳ 明朝
-                // and Meiryo have none), where it was a fixed 3.5 pt. What is left, about 1 pt in ＭＳ 明朝 and Meiryo at any angle (a shift of the box
-                // towards the bottom left, the same at 9, 10.5 and 14 pt), has no rule yet: the 999 patterns of
-                // `tasks/doc/requests/2026-11-14-189-rest-many-patterns-result.md`.
-                let shift = if style.rotation >= 90 { cell.font.leading * text_size / 2.0 } else { 0.0 };
-                (left + right - (min_bx + max_bx)) / 2.0 - shift
-            }
+            CellAlign::Center | CellAlign::CenterAcross | CellAlign::Distributed => (left + pad_left + right - pad_right - (min_bx + max_bx)) / 2.0,
             CellAlign::Right => {
-                right - pad_right - indent - max_bx - leading_shift
+                right - pad_right - indent - max_bx
             }
             CellAlign::General => {
                 // "Standard" is "right" from 90 to 135 degrees and "left" under 60 and at 180, with the same position as the one it is called
                 // (Excel for Windows, 972 cells: the origin's x differs by 0.12 pt at most from the aligned one's).
                 if kind == CellKind::Number || (style.rotation >= 90 && style.rotation < 180) {
-                    right - pad_right - indent - max_bx - leading_shift
+                    right - pad_right - indent - max_bx
                 } else {
                     left + pad_left + indent - min_bx
                 }
@@ -3664,6 +3737,7 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
             cell: (left, right),
             font_size: base,
             rotation: style.rotation,
+            printed: cell.printed,
             checkbox: None,
         });
         return;
@@ -3715,6 +3789,7 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
                         cell: (left, right),
                         font_size: base,
                         rotation: style.rotation,
+                        printed: cell.printed,
                         checkbox: None,
                     });
                 }
@@ -3873,6 +3948,7 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
             cell: (left, right),
             font_size: base,
             rotation: style.rotation,
+            printed: cell.printed,
             // The tick is the cell's fill (white on a cell without one), as Excel draws it.
             checkbox: cell.checkbox.map(|on| (on, style.fill.map_or(hsla(opaque(ibis_doc_model::Rgb(0xFFFFFF))), |c| hsla(opaque(c))), descent * base)),
         });
@@ -3908,6 +3984,7 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
                 cell: (left, right),
                 font_size: ruby_size,
                 rotation: 0,
+                printed: cell.printed,
                 checkbox: None,
             });
         }
@@ -3999,6 +4076,14 @@ impl EditLayout {
     /// The line the byte `b` of the text is in.
     pub(crate) fn line_of(&self, b: usize) -> usize {
         self.lines.iter().position(|l| b <= l.end).unwrap_or(self.lines.len().saturating_sub(1))
+    }
+}
+
+/// The fill the cell at (`row`, `column`) is drawn with: the conditional formats' (a rule's fill, a colour scale) over its own style's.
+pub(crate) fn drawn_fill(sheet: &Arc<Sheet>, default_style: Option<&CellStyle>, row: u32, column: u32) -> Option<ibis_doc_model::Rgb> {
+    match super::conditional::applied(sheet).as_ref() {
+        Some((drawn, _)) => cell_or_default_style(drawn, default_style, row, column).fill,
+        None => cell_or_default_style(sheet, default_style, row, column).fill,
     }
 }
 
@@ -4157,7 +4242,7 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
             .collect();
         let sum: f32 = shaped.iter().map(|(_, w)| *w).sum();
         let trailing = t.pieces.last().is_some_and(|p| p.advance.is_none() && p.text.ends_with(' '));
-        let (mut x, _) = compute_text_x(t.align, t.left, t.right, sum, shaped.len(), trailing, 0, px_per_point);
+        let (mut x, _) = compute_text_x(t.align, t.left, t.right, sum, shaped.len(), trailing, 0, false, px_per_point);
         x -= origin.0;
         let x0 = x;
         let mut pieces = Vec::new();
@@ -4176,7 +4261,7 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
         let mut one = Vec::new();
         text_items(&probe, px_per_point, &measure, &mut one);
         if let Some(t) = one.first() {
-            let (x0, _) = compute_text_x(t.align, t.left, t.right, 0.0, 1, false, 0, px_per_point);
+            let (x0, _) = compute_text_x(t.align, t.left, t.right, 0.0, 1, false, 0, false, px_per_point);
             lines.push(EditLine { pieces: Vec::new(), baseline: t.baseline - origin.1, ascent: ascent * t.font_size, descent: font.descent * t.font_size, start: 0, end: 0, x0: x0 - origin.0 });
         }
     }
@@ -4287,9 +4372,12 @@ fn starts_right_to_left(text: &str) -> bool {
 /// wide in a cell from 7 to 89 pt starts at 34, a number 51 pt wide in one
 /// from 407 to 489 at 422). Vertical text (rotation 255) is a point left
 /// and on a whole pixel (measured on XALN-00311/00312).
-fn compute_text_x(align: CellAlign, left: f32, right: f32, total: f32, count: usize, trailing: bool, rotation: u8, px_per_point: f32) -> (f32, f32) {
+fn compute_text_x(align: CellAlign, left: f32, right: f32, total: f32, count: usize, trailing: bool, rotation: u8, printed: bool, px_per_point: f32) -> (f32, f32) {
     match align {
         CellAlign::Right => (right - total, 0.0),
+        // Excel for Windows' PDF (Excel 365, 7 typefaces x 4 widths): a stacked text is centred in the room from the cell's left padding `pl` to its
+        // right one `pl - 0.96 pt` (the same two paddings as a horizontal text's), so its middle is 0.48 pt right of the cell's.
+        CellAlign::Center | CellAlign::CenterAcross if rotation == 255 && printed => ((left + right - total) / 2.0 + STACKED_CENTRE_SHIFT_PT * px_per_point, 0.0),
         CellAlign::Center | CellAlign::CenterAcross if rotation == 255 => (((left + right - total) / 2.0 - 1.0 * px_per_point).round(), 0.0),
         CellAlign::Center | CellAlign::CenterAcross => ((((left + right - total) / 2.0) / px_per_point + 1e-3).floor() * px_per_point, 0.0),
         // Spread: the room shared between the pieces, and after a line's
@@ -4455,7 +4543,7 @@ mod tests {
         let cell = CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: "ab\ncd".into(), kind: CellKind::Text, general: None,
             style: CellStyle { rotation: 255, wrap: true, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., 200.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| {
@@ -4476,7 +4564,7 @@ mod tests {
             let cell = CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
                 text: "回転文字".into(), kind: CellKind::Text, general: None,
                 style: CellStyle { align: CellAlign::Center, vertical: ibis_doc_model::CellVerticalAlign::Center, rotation, font_size: 1100, ..Default::default() },
-                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.9849, descent: 0.3022, rise: 0.9849, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.9849, descent: 0.3022, rise: 0.9849, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
                 rect: (0., 0., 84.6, 80.), spans: [(0., 84.6); 3], row_gap: None,
             };
             let measure = |t: &str, _: &gpui_kit::Font, size: f32| t.chars().count() as f32 * size;
@@ -4488,19 +4576,22 @@ mod tests {
             let (sin, cos) = (-(rotation as f32)).to_radians().sin_cos();
             let xs = [a * sin, w * cos + a * sin, w * cos - d * sin, -d * sin].map(|u| item.left + u);
             let (lo, hi) = xs.iter().fold((f32::MAX, f32::MIN), |(l, h), &x| (l.min(x), h.max(x)));
-            assert!(((lo + hi) / 2.0 - 84.6 / 2.0).abs() < 0.01, "rotation {rotation}: the line box spans {lo}..{hi} in a cell 84.6 wide");
+            // The line's box is centred between its room from the left (1 pt + size / 8) and from the right (0.96 pt less, plus 0.72 pt times the sine of the angle: #189).
+            let want = 84.6 / 2.0 + (0.96 - 0.72 * (rotation as f32).to_radians().sin()) / 2.0;
+            assert!(((lo + hi) / 2.0 - want).abs() < 0.01, "rotation {rotation}: the line box spans {lo}..{hi} in a cell 84.6 wide");
         }
     }
 
     /// GitHub issue #189: "standard" alignment of a turned text is the position of "right" from 90 to 135 degrees (Excel for Windows, 972 cells: the origin's x differs by 0.12 pt at
-    /// most), and a line turned 90 degrees or more sits its font's external leading further left against the right of the cell (游ゴシック 0.315 em), half of it from the centre.
+    /// most), and Excel's box for a turned line is 2 S thicker than the line's on the side away from its top (S: `rotated_box_margin`), so against the right of the cell the line
+    /// sits 2 S further left, and a centred one S, where a typeface's external leading raises S by half of it (游ゴシック 0.315 em: 14 px of 600 dpi at 10.5 pt).
     #[test]
-    fn a_turned_texts_standard_alignment_is_right_from_90_degrees_and_leading_moves_it_left() {
+    fn a_turned_texts_standard_alignment_is_right_from_90_degrees_and_the_box_margin_moves_it_left() {
         let at = |rotation: u8, align: CellAlign, leading: f32| {
             let cell = CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
                 text: "回転文字".into(), kind: CellKind::Text, general: None,
                 style: CellStyle { align, vertical: ibis_doc_model::CellVerticalAlign::Center, rotation, font_size: 1050, ..Default::default() },
-                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.9849, descent: 0.3022, rise: 0.9849, leading, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.9849, descent: 0.3022, rise: 0.9849, leading, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
                 rect: (0., 0., 84.6, 80.), spans: [(0., 84.6); 3], row_gap: None,
             };
             let measure = |t: &str, _: &gpui_kit::Font, size: f32| t.chars().count() as f32 * size;
@@ -4508,15 +4599,21 @@ mod tests {
             text_items(&cell, 1., &measure, &mut out);
             out[0].left
         };
+        // 10.5 pt is 88 px of 600 dpi: tmExternalLeading 28 px (0.315 em), half of it 14 px = 1.68 pt on S.
+        let s_leading = 14.0 * 72.0 / 600.0;
         for rotation in [90u8, 120, 135] {
             assert_eq!(at(rotation, CellAlign::General, 0.315), at(rotation, CellAlign::Right, 0.315), "rotation {rotation}");
-            let shift = at(rotation, CellAlign::Right, 0.0) - at(rotation, CellAlign::Right, 0.315);
-            assert!((shift - 0.315 * 10.5).abs() < 1e-3, "rotation {rotation}: right moves {shift}");
+            let turn = f32::from(rotation - 90).max(0.0);
+            let sin = if rotation == 90 { 1.0 } else { turn.to_radians().sin() };
+            let right = at(rotation, CellAlign::Right, 0.0) - at(rotation, CellAlign::Right, 0.315);
+            assert!((right - s_leading * (1.0 + 2.0 * sin)).abs() < 1e-3, "rotation {rotation}: right moves {right}");
             let centre = at(rotation, CellAlign::Center, 0.0) - at(rotation, CellAlign::Center, 0.315);
-            assert!((centre - 0.315 * 10.5 / 2.0).abs() < 1e-3, "rotation {rotation}: centre moves {centre}");
+            assert!((centre - s_leading * sin).abs() < 1e-3, "rotation {rotation}: centre moves {centre}");
         }
+        // At 90 degrees, with no leading, the box is 1 pt + size / 8 from the left and 0.24 pt less from the right: the centred line sits 0.12 pt right of the cell's centre.
+        let centre_at_90 = at(90, CellAlign::Center, 0.0) - (84.6 + (0.9849 - 0.3022) * 10.5) / 2.0;
+        assert!((centre_at_90 - 0.12).abs() < 1e-3, "centred at 90 degrees: {centre_at_90}");
         for rotation in [30u8, 60] {
-            assert_eq!(at(rotation, CellAlign::Right, 0.0), at(rotation, CellAlign::Right, 0.315), "rotation {rotation}: nothing under 90");
             assert_eq!(at(rotation, CellAlign::General, 0.0), at(rotation, CellAlign::Left, 0.0), "rotation {rotation}: standard is left");
         }
         assert_eq!(at(180, CellAlign::General, 0.0), at(180, CellAlign::Left, 0.0), "standard at 180 degrees is left");
@@ -4529,7 +4626,7 @@ mod tests {
         let cell = CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: "家族手当制度がある".into(), kind: CellKind::Text, general: None,
             style: CellStyle { align: CellAlign::Distributed, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 200., 20.), spans: [(0., 200.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 10.;
@@ -4540,7 +4637,7 @@ mod tests {
         assert_eq!(item.align, CellAlign::Distributed);
         assert_eq!(item.pieces.len(), 9, "one piece a character");
         let total: f32 = item.pieces.iter().map(|p| measure(&p.text, &item.font, p.size)).sum();
-        let (x, gap) = super::compute_text_x(item.align, item.left, item.right, total, item.pieces.len(), false, 0, 1.);
+        let (x, gap) = super::compute_text_x(item.align, item.left, item.right, total, item.pieces.len(), false, 0, false, 1.);
         // Nine characters of 10 in a cell of 200 (less its padding): the room between them is shared.
         assert!(gap > 1.0, "the characters are not spread (gap {gap})");
         let end = x + total + gap * 8.0;
@@ -4553,7 +4650,7 @@ mod tests {
         let make = |text: &str| CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { vertical: CellVerticalAlign::Justify, wrap: true, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., 60.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4575,7 +4672,7 @@ mod tests {
         let make = |text: &str| CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { vertical: CellVerticalAlign::Distributed, wrap: true, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., 60.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4616,7 +4713,7 @@ mod tests {
         let cell = CellText { runs: Some(std::sync::Arc::new(runs.clone())), phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: "AAAA BBBB CCCC DDDD".into(), kind: CellKind::Text, general: None,
             style: CellStyle { wrap: true, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 60., 100.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4636,7 +4733,7 @@ mod tests {
         let make = |text: &str| CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { align: CellAlign::Fill, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 34., 20.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4762,7 +4859,7 @@ mod tests {
         let make = |text: &str, kind: CellKind, align: CellAlign| CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: text.into(), kind, general: None,
             style: CellStyle { align, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (10., 0., 110., 20.), spans: [(10., 110.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4770,7 +4867,7 @@ mod tests {
         let x_of = |c: CellText| {
             let mut out = Vec::new();
             text_items(&c, 1., &measure, &mut out);
-            compute_text_x(out[0].align, out[0].left, out[0].right, 30., 1, false, out[0].rotation, 1.).0
+            compute_text_x(out[0].align, out[0].left, out[0].right, 30., 1, false, out[0].rotation, false, 1.).0
         };
         let start = 10. + TEXT_PAD_LEFT_PT + TEXT_LEFT_OFFSET_PX;
         let end = 110. - TEXT_PAD_RIGHT_PT;
@@ -4782,7 +4879,16 @@ mod tests {
         let num_start = start + TEXT_PAD_NUM_LEFT_PT;
         assert!(near(x_of(make("123456", CellKind::Number, CellAlign::Left)), num_start));
         assert!(near(x_of(make("123456", CellKind::Number, CellAlign::Center)), 45.));
-        assert!(near(compute_text_x(CellAlign::Center, 10., 111., 30., 1, false, 0, 1.).0, 45.));
+        assert!(near(compute_text_x(CellAlign::Center, 10., 111., 30., 1, false, 0, false, 1.).0, 45.));
+    }
+
+    /// GitHub #189: Excel 365's PDF puts the middle of a stacked (255 degrees) text 0.48 pt right of the cell's middle (7 typefaces,
+    /// 4 widths: 0.36 to 0.54), not on a whole pixel one point left of it.
+    #[test]
+    fn a_stacked_text_printed_is_centred_half_a_point_right() {
+        let x = |printed: bool| super::compute_text_x(CellAlign::Center, 10., 111., 10.56, 1, false, 255, printed, 1.).0;
+        assert!((x(true) + 10.56 / 2.0 - (60.5 + 0.48)).abs() < 1e-3);
+        assert_eq!(x(false), ((10f32 + 111. - 10.56) / 2.0 - 1.0).round());
     }
 
     #[test]
@@ -4794,7 +4900,7 @@ mod tests {
             kind: CellKind::Text,
             general: None,
             style: CellStyle { vertical: vert, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., height),
             spans: [(0., 100.); 3], row_gap: None,
         };
@@ -4824,7 +4930,7 @@ mod tests {
                 wrap: true,
                 ..Default::default()
             },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             // Cell height = 15.0, where each line height is 10.0, so 3 lines overflow the cell.
             rect: (0., 0., 100., 15.),
             spans: [(0., 100.); 3], row_gap: None,
@@ -4859,7 +4965,7 @@ mod tests {
                 shrink,
                 ..Default::default()
             },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 50., 30.),
             spans: [(0., 50.); 3], row_gap: None,
         };
@@ -4896,7 +5002,7 @@ mod tests {
                 kind: CellKind::Text,
                 general: None,
                 style: CellStyle { font_size: 1100, align: CellAlign::Left, ..Default::default() },
-                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.9, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.9, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
                 rect: (0., 0., 200., 60.),
                 spans: [(0., 200.); 3],
                 row_gap: None,
@@ -4934,7 +5040,7 @@ mod tests {
             kind: CellKind::Text,
             general: None,
             style: CellStyle { font_size: 1200, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, win_ascent: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., 40.),
             spans: [(0., 100.); 3],
             row_gap: None,

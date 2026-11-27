@@ -9,3 +9,18 @@ publish.workspace = true
 [dependencies]
 ibis-calc.workspace = true
 ibis-m-lang.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+apache-avro = { version = "0.22", default-features = false, features = ["snappy"] }
+arrow-array = "60"
+arrow-ipc = { version = "60", default-features = false, features = ["lz4", "zstd"] }
+arrow-schema = "60"
+serde = "1"
+serde_json = { version = "1", features = ["raw_value"] }
+parquet = { version = "60.1", default-features = false, features = ["snap", "flate2-zlib-rs", "lz4", "brotli", "zstd"] }
+# Select the Rust backend for the zstd dependency used by Parquet and Arrow IPC.
+zstd = { version = "0.14", default-features = false, features = ["rust-backend"] }
+turso_core = { version = "0.8.3", default-features = false, features = ["fs", "json", "uuid", "pure-rust-crypto"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dev-dependencies]
+tempfile = "3"

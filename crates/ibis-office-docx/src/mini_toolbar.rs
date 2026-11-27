@@ -80,7 +80,7 @@ impl SlideEditor {
         }
 
         // 選択されている行の位置（page_index ページ上）を特定
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let target_line = lines.iter().find(|l| l.page == page_index && (l.para == start.para || l.para == end.para))?;
 
         // 選択範囲の水平・垂直座標を計算

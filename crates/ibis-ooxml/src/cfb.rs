@@ -36,16 +36,47 @@ struct Entry {
     kind: u8,
     start: u32,
     size: u64,
+    left: u32,
+    right: u32,
+    child: u32,
 }
 
-/// The bytes of the stream called `name` (in the root).
+/// The bytes of the first stream with this leaf name, at any depth. Use
+/// [`stream_path`] when the storage containing it matters.
 pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
+    read_directory_or_stream(data, Some((name, false))).map(|(_, bytes)| bytes.unwrap_or_default())
+}
+
+/// A reachable compound-file directory entry. Paths are relative to the root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryEntry {
+    pub path: String,
+    pub is_storage: bool,
+}
+
+/// List the reachable directory tree, rejecting cycles and invalid references.
+pub fn directory(data: &[u8]) -> Result<Vec<DirectoryEntry>, Error> {
+    read_directory_or_stream(data, None).map(|(entries, _)| entries)
+}
+
+/// Read the stream at an exact root-relative path.
+pub fn stream_path(data: &[u8], path: &str) -> Result<Vec<u8>, Error> {
+    read_directory_or_stream(data, Some((path.trim_start_matches('/'), true)))
+        .map(|(_, bytes)| bytes.unwrap_or_default())
+}
+
+fn read_directory_or_stream(data: &[u8], request: Option<(&str, bool)>) -> Result<(Vec<DirectoryEntry>, Option<Vec<u8>>), Error> {
     let bad = || Error::new("複合ファイルを読めませんでした");
     if !is_cfb(data) {
         return Err(bad());
     }
-    let sector_size = 1usize << u16_at(data, 30).ok_or_else(bad)?;
-    let mini_size = 1usize << u16_at(data, 32).ok_or_else(bad)?;
+    let sector_shift = u16_at(data, 30).ok_or_else(bad)?;
+    let mini_shift = u16_at(data, 32).ok_or_else(bad)?;
+    if !matches!(sector_shift, 9 | 12) || mini_shift != 6 { return Err(bad()); }
+    let sector_size = 1usize << sector_shift;
+    let mini_size = 1usize << mini_shift;
+    let sector_count = data.len() / sector_size;
+    if sector_count == 0 { return Err(bad()); }
     let dir_start = u32_at(data, 48).ok_or_else(bad)?;
     let mini_cutoff = u32_at(data, 56).ok_or_else(bad)? as u64;
     let mini_fat_start = u32_at(data, 60).ok_or_else(bad)?;
@@ -57,26 +88,28 @@ pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
     // The sectors of the FAT: 109 in the header, then the DIFAT's chain.
     let mut fat_sectors: Vec<u32> = (0..109).filter_map(|i| u32_at(data, 76 + i * 4)).filter(|&s| s < FREE).collect();
     let mut next = difat_start;
-    let mut guard = 0;
-    while next < FREE && guard < 100_000 {
+    let mut visited_difat = std::collections::HashSet::new();
+    while next < FREE {
+        if next as usize >= sector_count || !visited_difat.insert(next) { return Err(bad()); }
         let s = sector(next).ok_or_else(bad)?;
         let per = sector_size / 4;
         fat_sectors.extend((0..per - 1).filter_map(|i| u32_at(s, i * 4)).filter(|&x| x < FREE));
         next = u32_at(s, (per - 1) * 4).ok_or_else(bad)?;
-        guard += 1;
+        if fat_sectors.len() > sector_count { return Err(bad()); }
     }
+    let mut seen_fat = std::collections::HashSet::new();
     let mut fat: Vec<u32> = Vec::new();
     for s in fat_sectors {
+        if s as usize >= sector_count || !seen_fat.insert(s) { return Err(bad()); }
         let b = sector(s).ok_or_else(bad)?;
         fat.extend((0..sector_size / 4).filter_map(|i| u32_at(b, i * 4)));
     }
     let chain = |start: u32, table: &[u32]| -> Result<Vec<u32>, Error> {
         let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let mut s = start;
         while s < FREE {
-            if out.len() > table.len() {
-                return Err(bad());
-            }
+            if !seen.insert(s) { return Err(bad()); }
             out.push(s);
             s = *table.get(s as usize).ok_or_else(bad)?;
         }
@@ -95,14 +128,38 @@ pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
             let e = &dir[i * 128..(i + 1) * 128];
             let len = (u16_at(e, 64)? as usize).saturating_sub(2).min(64);
             let units: Vec<u16> = (0..len / 2).filter_map(|k| u16_at(e, k * 2)).collect();
-            Some(Entry { name: String::from_utf16_lossy(&units), kind: e[66], start: u32_at(e, 116)?, size: u64_at(e, 120)? })
+            Some(Entry { name: String::from_utf16_lossy(&units), kind: e[66], start: u32_at(e, 116)?, size: u64_at(e, 120)?, left: u32_at(e, 68)?, right: u32_at(e, 72)?, child: u32_at(e, 76)? })
         })
         .collect();
-    let target = entries.iter().find(|e| e.kind == 2 && e.name == name).ok_or_else(|| Error::new(format!("{name} のデータがありません")))?;
+    let mut paths = Vec::new();
+    let mut target_index = None;
+    if request.is_none() || request.is_some_and(|(_, exact)| exact) {
+        let root = entries.first().filter(|entry| entry.kind == 5).ok_or_else(bad)?;
+        let mut stack = vec![(root.child, String::new())];
+        let mut seen = std::collections::HashSet::new();
+        let mut names = std::collections::HashSet::new();
+        let mut path_bytes = 0usize;
+        while let Some((id, parent)) = stack.pop() {
+            if id == u32::MAX { continue; }
+            let entry = entries.get(id as usize).filter(|e| matches!(e.kind, 1 | 2)).ok_or_else(bad)?;
+            if id == 0 || !seen.insert(id) || entry.name.is_empty() || entry.name.contains('/') { return Err(bad()); }
+            let path = if parent.is_empty() { entry.name.clone() } else { format!("{parent}/{}", entry.name) };
+            path_bytes = path_bytes.checked_add(path.len()).ok_or_else(bad)?;
+            if seen.len() > 100_000 || path.len() > 4096 || path_bytes > 16 * 1024 * 1024 || !names.insert(path.clone()) { return Err(bad()); }
+            if entry.kind == 2 && request.is_some_and(|(wanted, _)| wanted == path) { target_index = Some(id as usize); }
+            paths.push(DirectoryEntry { path: path.clone(), is_storage: entry.kind == 1 });
+            stack.push((entry.left, parent.clone()));
+            stack.push((entry.right, parent));
+            if entry.kind == 1 { stack.push((entry.child, path)); }
+        }
+    }
+    let Some((name, exact)) = request else { return Ok((paths, None)); };
+    let target = if exact { target_index.and_then(|i| entries.get(i)) } else { entries.iter().find(|e| e.kind == 2 && e.name == name) }
+        .ok_or_else(|| Error::new(format!("{name} のデータがありません")))?;
     if target.size >= mini_cutoff {
         let mut bytes = read_chain(target.start)?;
         bytes.truncate(target.size as usize);
-        return Ok(bytes);
+        return Ok((paths, Some(bytes)));
     }
     // A short stream: in the mini stream (the root's data), by the mini FAT.
     let root = entries.first().ok_or_else(bad)?;
@@ -115,7 +172,7 @@ pub fn stream(data: &[u8], name: &str) -> Result<Vec<u8>, Error> {
         out.extend_from_slice(mini_stream.get(at..at + mini_size).ok_or_else(bad)?);
     }
     out.truncate(target.size as usize);
-    Ok(out)
+    Ok((paths, Some(out)))
 }
 
 
@@ -403,11 +460,43 @@ mod tests {
     }
 
     #[test]
+    fn exact_paths_distinguish_nested_streams_and_reject_cycles() {
+        let file = write(&[
+            Item::storage("Folder"),
+            Item::stream("Folder/DocumentText", b"nested".to_vec()),
+            Item::stream("DocumentText", b"root".to_vec()),
+        ]);
+        assert_eq!(stream_path(&file, "DocumentText").unwrap(), b"root");
+        assert_eq!(stream_path(&file, "Folder/DocumentText").unwrap(), b"nested");
+        assert!(stream_path(&file, "Missing/DocumentText").is_err());
+        assert!(directory(&file).unwrap().iter().any(|e| e.path == "Folder/DocumentText" && !e.is_storage));
+        let mut cycle = file;
+        let directory_sector = u32_at(&cycle, 48).unwrap() as usize;
+        let root = (directory_sector + 1) * 512;
+        cycle[root + 76..root + 80].copy_from_slice(&0u32.to_le_bytes());
+        assert!(directory(&cycle).is_err());
+    }
+
+    #[test]
     fn a_large_file_needs_the_difat() {
         // More than 109 FAT sectors (about 7 MB).
         let data = bytes(9_000_000, 9);
         let file = write(&[Item::stream("EncryptedPackage", data.clone())]);
         assert_eq!(stream(&file, "EncryptedPackage").unwrap(), data);
+    }
+
+    #[test]
+    fn rejects_invalid_sector_shift_and_cyclic_directory_chain() {
+        let original = write(&[Item::stream("DocumentText", bytes(100, 1))]);
+        let mut invalid = original.clone();
+        invalid[30..32].copy_from_slice(&255u16.to_le_bytes());
+        assert!(stream(&invalid, "DocumentText").is_err());
+        let mut cyclic = original;
+        let directory = u32_at(&cyclic, 48).unwrap();
+        let fat = u32_at(&cyclic, 76).unwrap();
+        let offset = (fat as usize + 1) * 512 + directory as usize * 4;
+        cyclic[offset..offset + 4].copy_from_slice(&directory.to_le_bytes());
+        assert!(stream(&cyclic, "DocumentText").is_err());
     }
 
     #[test]

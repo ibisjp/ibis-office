@@ -79,6 +79,10 @@ impl SlideEditor {
         let Some(bar) = self.wb().bar_bounds.get() else {
             return super::sheet_ui::BAR_EXPANDED_HEIGHT;
         };
+        // K0089: the bar under the toolbar (at the window's bottom) grows upward and takes its room from the sheet above: what it may be is the sheet's height and its own.
+        if crate::shell::narrow_layout::bars_at_bottom(self, w) && let Some(sheet) = self.workspace_bounds {
+            return (f32::from(sheet.bottom() - sheet.top()) + f32::from(bar.size.height) - 100. - 4.).max(BAR_LINE_HEIGHT + 4.);
+        }
         let top = f32::from(bar.top());
         let bottom = self
             .workspace_bounds

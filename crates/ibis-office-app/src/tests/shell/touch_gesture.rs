@@ -8,8 +8,8 @@
 use gpui_kit::*;
 use ibis_doc_model::{AutoShape, Color, Command, EmuRect, Fill, Geometry, Shape, ShapeId, ShapeKind};
 
-use ibis_office_docx::Docx;
-use ibis_office_xlsx::Xlsx;
+use ibis_office_docx::ext::*;
+use ibis_office_xlsx::ext::*;
 use crate::shell::scenario::Scenario;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {

@@ -9,6 +9,9 @@ publish.workspace = true
 [dependencies]
 miniz_oxide = "0.8"
 sha2 = "0.10"
+aes = "0.8"
+cbc = "0.1"
+md-5 = "0.10"
 hayro-interpret = { version = "0.7", features = ["embed-fonts", "embed-cmaps"], optional = true }
 kurbo = { version = "0.13", optional = true }
 

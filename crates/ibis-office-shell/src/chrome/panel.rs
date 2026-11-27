@@ -69,15 +69,17 @@ pub(crate) fn panel_contents(
         .min_h_0()
         .when(sticky, |d| d.flex_1())
         .when(!sticky, |d| d.flex_none())
-        .child(
-            div()
+        .child({
+            let inner = div()
                 .id("sidebar-body")
                 .w_full()
                 .when(sticky, |d| {
-                    d.h_full().overflow_y_scroll().track_scroll(&scroll)
+                    d.h_full().overflow_y_scroll().no_bounce().track_scroll(&scroll)
                 })
-                .child(body),
-        )
+                .child(body);
+            // A scrolling panel stretches past an end and springs back, as `UIScrollView` does (K0065, `gpui-base`'s `ScrollBounce`).
+            if sticky { gpui_kit::base::ScrollBounce::new("sidebar-bounce", &scroll, inner).enabled(true).touch_only().into_any_element() } else { inner.into_any_element() }
+        })
         .when(sticky, |d| {
             d.child(always_visible_scrollbar_overlay(
                 "sidebar-scrollbar",

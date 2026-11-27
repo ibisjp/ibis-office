@@ -43,6 +43,12 @@ mod tests {
     /// same version (or an older one).
     #[test]
     fn the_font_setup_check_is_forgotten_at_the_first_start_and_at_an_update_only() {
+        // A settings file of its own (not the user's, which other processes and tests use meanwhile). The same folder as the #262 tests of
+        // `settings_dialog` (they set the variable and keep it), so the variable never points elsewhere while this test runs.
+        let dir = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/test-settings-262"));
+        let _ = std::fs::create_dir_all(&dir);
+        // SAFETY: every test in this crate that sets this variable sets this same value.
+        unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
         // The first start: no version was recorded.
         set(CHECKED_KEY, "0.0.1");
         migrate(None, "0.8.8");

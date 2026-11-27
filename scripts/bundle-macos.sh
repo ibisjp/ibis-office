@@ -45,10 +45,10 @@ else
   BIN_DIR=target/debug
 fi
 
-# The version shown for macOS, from version.txt (a platform, a tab and its
+# The version shown for macOS, from build-version.txt (a platform, a tab and its
 # version, per line).
-VERSION=$(awk -F'\t' '$1 == "macOS" { sub(/\r$/, "", $2); print $2 }' version.txt)
-[[ -n $VERSION ]] || { echo "version.txt has no macOS line" >&2; exit 1; }
+VERSION=$(awk -F'\t' '$1 == "macOS" { sub(/\r$/, "", $2); print $2 }' crates/build-version.txt)
+[[ -n $VERSION ]] || { echo "build-version.txt has no macOS line" >&2; exit 1; }
 
 APP=target/$PROFILE/ibisOffice.app
 rm -rf "$APP"
@@ -116,6 +116,12 @@ cat > "$APP/Contents/Info.plist" <<EOF
 			<key>CFBundleTypeRole</key><string>Viewer</string>
 			<key>LSHandlerRank</key><string>Alternate</string>
 			<key>CFBundleTypeExtensions</key><array><string>xps</string><string>oxps</string></array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key><string>DocuWorks document</string>
+			<key>CFBundleTypeRole</key><string>Viewer</string>
+			<key>LSHandlerRank</key><string>Alternate</string>
+			<key>CFBundleTypeExtensions</key><array><string>xdw</string></array>
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>

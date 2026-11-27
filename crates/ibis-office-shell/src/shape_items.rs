@@ -354,7 +354,7 @@ pub fn validated_picture_size(format: ibis_doc_model::MediaFormat, data: &[u8]) 
         }
         if !have_data || !have_end { return None; }
     }
-    #[cfg(all(target_os = "macos", feature = "export"))]
+    #[cfg(all(any(target_os = "macos", windows), feature = "export"))]
     {
         if format == MediaFormat::Svg {
             return Some((width, height));
@@ -364,7 +364,7 @@ pub fn validated_picture_size(format: ibis_doc_model::MediaFormat, data: &[u8]) 
         let decoded = image::load_from_memory_with_format(data, decoder).ok()?;
         Some((decoded.width(), decoded.height()))
     }
-    #[cfg(not(all(target_os = "macos", feature = "export")))]
+    #[cfg(not(all(any(target_os = "macos", windows), feature = "export")))]
     Some((width, height))
 }
 

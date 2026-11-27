@@ -140,9 +140,10 @@ fn remove_dir(dir: &Path) -> std::io::Result<()> {
             #[cfg(windows)]
             {
                 // This program is in that folder: a program running cannot be deleted, so a command removes the folder a few seconds after this one has ended.
+                // CREATE_NO_WINDOW only: with DETACHED_PROCESS too, cmd has no console and opens a visible one (the ping window, #266).
                 use std::os::windows::process::CommandExt as _;
                 let line = format!("ping -n 4 127.0.0.1 >nul & rmdir /S /Q \"{}\"", dir.display());
-                if Command::new("cmd").args(["/C", &line]).creation_flags(0x0800_0008).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().is_ok() {
+                if Command::new("cmd").args(["/C", &line]).creation_flags(0x0800_0000).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().is_ok() {
                     return Ok(());
                 }
             }

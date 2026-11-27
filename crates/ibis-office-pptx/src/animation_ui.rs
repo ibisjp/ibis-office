@@ -86,63 +86,9 @@ fn preset_items(class: C, mine: &[&Animation], selected: usize) -> Vec<MenuEntry
         .collect()
 }
 
-/// An effect PowerPoint names by its preset (`presetID`, `presetSubtype`),
-/// with its usual time (milliseconds): as the file is read back.
+/// An effect PowerPoint names by its preset, with its usual time (`Animation::effect`, in the model, where the MCP tools make it too).
 pub fn effect(shape: ShapeId, class: C, look: L) -> Animation {
-    let side = |s: AnimationSide| match s {
-        AnimationSide::Top => 1,
-        AnimationSide::Right => 2,
-        AnimationSide::Bottom => 4,
-        AnimationSide::Left => 8,
-    };
-    let (preset, duration) = match look {
-        L::Appear => ((1, 0), 1),
-        // 再生・一時停止・停止 are PowerPoint's presets 1, 2 and 3 of the class メディア.
-        L::Media(c) => ((match c { ibis_doc_model::MediaCommand::Play => 1, ibis_doc_model::MediaCommand::Pause => 2, ibis_doc_model::MediaCommand::Stop => 3 }, 0), 1),
-        L::Fade => ((10, 0), 500),
-        L::Fly(s) => ((2, side(s)), 500),
-        // ズーム as PowerPoint numbers it: 16 coming in, 32 going out.
-        L::Zoom => ((23, if class == C::Exit { 32 } else { 16 }), 500),
-        L::Float(s) => ((30, if s == AnimationSide::Bottom { 2 } else { 1 }), 1000),
-        L::Wipe(s) => ((22, side(s)), 500),
-        L::Replay => ((28, 0), 2000),
-        L::Spin(_) => ((8, 0), 2000),
-        L::Scale(..) => ((6, 0), 2000),
-        L::Motion(x, y) => {
-            let subtype = if x == 0 && y > 0 {
-                4
-            } else if x < 0 && y == 0 {
-                8
-            } else if x > 0 && y == 0 {
-                2
-            } else if x == 0 && y < 0 {
-                1
-            } else {
-                0
-            };
-            ((61, subtype), 2000)
-        }
-        L::Other | L::Preset => ((0, 0), 500),
-    };
-    Animation {
-        shape,
-        class,
-        start: AnimationStart::OnClick,
-        look,
-        delay: 0,
-        duration,
-        preset,
-        repeat_count: AnimationRepeat::None,
-        auto_reverse: false,
-        rewind: false,
-        accel: 0,
-        decel: 0,
-        after_effect: AnimationAfterEffect::Hold,
-        trigger: AnimationTrigger::None,
-        paragraph: None, chars: None, text_unit: None, path: Vec::new(),
-        chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
-    }
+    Animation::effect(shape, class, look)
 }
 
 /// 継続時間の候補（秒）。PowerPoint の「継続時間」の候補と同じ区切り。

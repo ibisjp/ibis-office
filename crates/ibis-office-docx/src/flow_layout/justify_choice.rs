@@ -52,7 +52,9 @@ impl Layouter<'_> {
     pub(super) fn justify_choice(&self, p: &FlowParagraph, units: &[Unit], start: usize, i: usize, last_break: Option<usize>, room: f32) -> JustifyChoice {
         let b_end = (i + 1..units.len()).find(|&k| self.break_allowed(p, units, start, k)).unwrap_or(units.len());
         // Characters only; an optional hyphen (`w:softHyphen`) shows as a hyphen at the end of a line, which this does not count (see `shy_hang_tests.rs`).
-        if !(start..b_end).all(|k| matches!(&units[k], Unit::Char { c, .. } if *c != '\u{ad}')) {
+        // (The anchor of a floating figure is a unit of no width among them: it takes nothing from the line and is not what Word's rule is about; GitHub issue #196, the lines beside a
+        // figure squeeze as those of the same text without it, `H1a` and `H1b`.)
+        if !(start..b_end).all(|k| matches!(&units[k], Unit::Char { c, .. } if *c != '\u{ad}') || matches!(&units[k], Unit::Shape { shape, .. } if shape.floating.is_some())) {
             return JustifyChoice::Leave;
         }
         // Line B without the spaces that end it (they hang; so do the full-width spaces that end the paragraph), and without the space between

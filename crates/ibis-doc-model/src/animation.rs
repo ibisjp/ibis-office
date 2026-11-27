@@ -161,6 +161,66 @@ pub enum AnimationTrigger {
 }
 
 impl Animation {
+    /// An effect PowerPoint names by its preset (`presetID`, `presetSubtype`),
+    /// with its usual time (milliseconds): as the file is read back.
+    pub fn effect(shape: ShapeId, class: AnimationClass, look: AnimationLook) -> Self {
+        let side = |s: AnimationSide| match s {
+            AnimationSide::Top => 1,
+            AnimationSide::Right => 2,
+            AnimationSide::Bottom => 4,
+            AnimationSide::Left => 8,
+        };
+        let (preset, duration) = match look {
+            AnimationLook::Appear => ((1, 0), 1),
+            // 再生・一時停止・停止 are PowerPoint's presets 1, 2 and 3 of the class メディア.
+            AnimationLook::Media(c) => ((match c { MediaCommand::Play => 1, MediaCommand::Pause => 2, MediaCommand::Stop => 3 }, 0), 1),
+            AnimationLook::Fade => ((10, 0), 500),
+            AnimationLook::Fly(s) => ((2, side(s)), 500),
+            // ズーム as PowerPoint numbers it: 16 coming in, 32 going out.
+            AnimationLook::Zoom => ((23, if class == AnimationClass::Exit { 32 } else { 16 }), 500),
+            AnimationLook::Float(s) => ((30, if s == AnimationSide::Bottom { 2 } else { 1 }), 1000),
+            AnimationLook::Wipe(s) => ((22, side(s)), 500),
+            AnimationLook::Replay => ((28, 0), 2000),
+            AnimationLook::Spin(_) => ((8, 0), 2000),
+            AnimationLook::Scale(..) => ((6, 0), 2000),
+            AnimationLook::Motion(x, y) => {
+                let subtype = if x == 0 && y > 0 {
+                    4
+                } else if x < 0 && y == 0 {
+                    8
+                } else if x > 0 && y == 0 {
+                    2
+                } else if x == 0 && y < 0 {
+                    1
+                } else {
+                    0
+                };
+                ((61, subtype), 2000)
+            }
+            AnimationLook::Other | AnimationLook::Preset => ((0, 0), 500),
+        };
+        Self {
+            shape,
+            class,
+            start: AnimationStart::OnClick,
+            look,
+            delay: 0,
+            duration,
+            preset,
+            repeat_count: AnimationRepeat::None,
+            auto_reverse: false,
+            rewind: false,
+            accel: 0,
+            decel: 0,
+            after_effect: AnimationAfterEffect::Hold,
+            trigger: AnimationTrigger::None,
+            paragraph: None, chars: None, text_unit: None, path: Vec::new(),
+            chart_element: None, chart_build: None,
+            dgm_element: None, dgm_build: None, behaviors: Vec::new(),
+        }
+    }
+
+
     /// One pass of the effect, ms: its `duration` forward, and again back when it runs back (`autoRev`, ECMA-376 19.5.3: the
     /// simple duration is doubled).
     pub fn pass_ms(&self) -> u32 {

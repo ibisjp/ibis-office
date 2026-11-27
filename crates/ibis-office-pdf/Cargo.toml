@@ -16,4 +16,9 @@ ibis-office-docx.workspace = true
 ibis-doc-model.workspace = true
 ibis-formats.workspace = true
 gpui-kit.workspace = true
-image = { version = "0.25", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
+ibis-xdw.workspace = true
+
+[dev-dependencies]
+ibis-ooxml.workspace = true

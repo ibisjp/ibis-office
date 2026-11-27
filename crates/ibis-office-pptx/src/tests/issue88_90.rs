@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! issues #88 (画面切り替えの効果と効果のオプション), #89 (開始・終了の効果), #90 (ズームの滑らかさ).
 use crate::shell::scenario::Scenario;
-use crate::slideshow::SlideshowExt;
+use crate::ext::*;
 use ibis_doc_model::animation_preset::build_filter_preset;
 use ibis_doc_model::{Animation, AnimationClass, AnimationLook, ShapeId};
 

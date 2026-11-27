@@ -42,7 +42,7 @@ pub(crate) fn new_lines() -> [(Kind, &'static str, &'static str); 3] {
 
 impl SlideEditor {
     /// The menus of the start window's menu bar, in their order. (Windows and Linux; macOS's are the system menu bar's.)
-    pub(crate) fn start_menus(&self) -> Vec<(MenuId, Vec<MenuEntry>)> {
+    pub fn start_menus(&self) -> Vec<(MenuId, Vec<MenuEntry>)> {
         let mut file: Vec<MenuEntry> = new_lines()
             .into_iter()
             .map(|(kind, id, key)| item(id, crate::format::info(kind).icon).shortcut(key).on(move |this, window, cx| this.new_file(kind, window, cx)).into())
@@ -50,11 +50,14 @@ impl SlideEditor {
         file.push(item("file.open", "folder_open").shortcut("⌘O").on(|this, window, cx| this.open_file(&crate::actions::Open, window, cx)).into());
         file.push(crate::chrome_defaults::sub("file.recent", "schedule", recent_entries(self)));
         file.push(SEP);
-        file.push(item("file.close-window", "close").shortcut("⌘W").on(|this, window, cx| this.close_file(&crate::actions::CloseFile, window, cx)).into());
+        // iOS and Android (K0076): closing the window ends the app, so neither this line nor 終了 is shown.
+        if !crate::mobile_os::is_mobile_os() {
+            file.push(item("file.close-window", "close").shortcut("⌘W").on(|this, window, cx| this.close_file(&crate::actions::CloseFile, window, cx)).into());
+        }
         #[cfg(not(target_family = "wasm"))]
-        {
+        if !crate::mobile_os::is_mobile_os() {
             file.push(SEP);
-            file.push(item("file.quit", "logout").shortcut("⌘Q").on(|_, _, cx| cx.dispatch_action(&crate::actions::Quit)).into());
+            file.push(item("file.quit", "logout").shortcut("⌘Q").on(|_, _, cx| crate::app::quit_asking_to_save(cx)).into());
         }
 
         let mut window: Vec<MenuEntry> = vec![item("window.minimize", "remove").on(|_, window, _| window.minimize_window()).into()];
@@ -64,12 +67,19 @@ impl SlideEditor {
         let mut help: Vec<MenuEntry> = Vec::new();
         #[cfg(not(target_family = "wasm"))]
         {
-            help.push(item("help.check-update", "download").on(|_, _, cx| crate::update::check_now(cx)).into());
+            // No update check on iOS and Android (K0087): the stores update the app.
+            if !crate::mobile_os::is_mobile_os() {
+                help.push(item("help.check-update", "download").on(|_, _, cx| crate::update::check_now(cx)).into());
+            }
             help.push(item("help.source-code", "link").on(|_, _, cx| crate::external::open_url(&crate::host::source_url(), cx)).into());
         }
         // The About screen is the app's (the start window has the window it opens in).
         help.push(item("help.about", "info").on(|this, _, cx| this.show_about(cx)).into());
 
+        // iOS and Android (K0087): one window is the app's for now, so there is no ウィンドウ menu to put away or list in.
+        if crate::mobile_os::is_mobile_os() {
+            return vec![(MenuId::File, file), (MenuId::Help, help)];
+        }
         vec![(MenuId::File, file), (MenuId::Window, window), (MenuId::Help, help)]
     }
 }

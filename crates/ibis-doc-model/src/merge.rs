@@ -1207,6 +1207,7 @@ pub fn label_sheet_table(preset: LabelPreset, address_format: &str, next_id: &mu
             header: false,
             cant_split: true,
             cells,
+            ..FlowRow::default()
         });
     }
 

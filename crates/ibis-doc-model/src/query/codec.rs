@@ -379,6 +379,29 @@ pub fn encode_queries(queries: &[Query], parameters: &[Parameter]) -> String {
     for q in queries {
         out.push_str(&format!("query\t{}\t{}\n", esc(&q.name), q.output.as_deref().map(esc).unwrap_or_default()));
         match &q.source {
+            Source::JsonArray { name, key } => out.push_str(&format!("source\tjson-array\t{}\t{}\t{}\n", esc(name), usize::from(key.is_some()), key.as_deref().map(esc).unwrap_or_default())),
+            Source::Delimited { name, encoding, delimiter, start_row, headers } => out.push_str(&format!("source\tdelimited\t{}\t{}\t{}\t{start_row}\t{}\n", esc(name), esc(encoding), delimiter.map(u32::from).map(|code| code.to_string()).unwrap_or_default(), usize::from(*headers))),
+            Source::ParquetFolder { name, columns } => { out.push_str(&format!("source\tparquet-folder\t{}", esc(name))); for column in columns { out.push('\t'); out.push_str(&esc(column)); } out.push('\n'); }
+            Source::Sqlite { name, table } => out.push_str(&format!("source\tsqlite\t{}\t{}\n", esc(name), esc(table))),
+            Source::Avro { name } => out.push_str(&format!("source\tavro\t{}\n", esc(name))),
+            Source::ArrowIpc { name } => out.push_str(&format!("source\tarrow-ipc\t{}\n", esc(name))),
+            Source::JsonLines { name } => out.push_str(&format!("source\tjson-lines\t{}\n", esc(name))),
+            Source::Parquet { names, columns } => {
+                if let [name] = names.as_slice() {
+                    out.push_str(&format!("source\tparquet\t{}", esc(name)));
+                } else {
+                    out.push_str(&format!("source\tparquet-set\t{}", names.len()));
+                    for name in names {
+                        out.push('\t');
+                        out.push_str(&esc(name));
+                    }
+                }
+                for column in columns {
+                    out.push('\t');
+                    out.push_str(&esc(column));
+                }
+                out.push('\n');
+            }
             Source::Blank => out.push_str("source\tblank\n"),
             Source::Table(t) => out.push_str(&format!("source\ttable\t{}\n", esc(t))),
             Source::Range { sheet, range } => out.push_str(&format!("source\trange\t{}\t{}\n", esc(sheet), esc(range))),
@@ -407,6 +430,25 @@ pub fn decode_queries(text: &str) -> (Vec<Query>, Vec<Parameter>) {
             Some("source") => {
                 if let Some(q) = queries.last_mut() {
                     q.source = match f.get(1).copied() {
+                        Some("json-array") if f.len() == 5 => Source::JsonArray { name: unesc(f[2]), key: (f[3] == "1").then(|| unesc(f[4])) },
+                        Some("delimited") if f.len() == 7 => Source::Delimited { name: unesc(f[2]), encoding: unesc(f[3]), delimiter: f[4].parse::<u32>().ok().and_then(char::from_u32), start_row: f[5].parse().unwrap_or(1), headers: f[6] == "1" },
+                        Some("parquet-folder") if f.len() >= 3 => Source::ParquetFolder { name: unesc(f[2]), columns: f[3..].iter().map(|value| unesc(value)).collect() },
+                        Some("sqlite") if f.len() == 4 => Source::Sqlite { name: unesc(f[2]), table: unesc(f[3]) },
+                        Some("avro") if f.len() == 3 => Source::Avro { name: unesc(f[2]) },
+                        Some("arrow-ipc") if f.len() == 3 => Source::ArrowIpc { name: unesc(f[2]) },
+                        Some("json-lines") if f.len() == 3 => Source::JsonLines { name: unesc(f[2]) },
+                        Some("parquet") if f.len() >= 3 => Source::Parquet { names: vec![unesc(f[2])], columns: f[3..].iter().map(|c| unesc(c)).collect() },
+                        Some("parquet-set") => {
+                            let file_count = f.get(2).and_then(|n| n.parse::<usize>().ok())
+                                .filter(|&count| count > 0 && count <= f.len().saturating_sub(3));
+                            match file_count {
+                                Some(count) => Source::Parquet {
+                                    names: f[3..3 + count].iter().map(|n| unesc(n)).collect(),
+                                    columns: f[3 + count..].iter().map(|c| unesc(c)).collect(),
+                                },
+                                None => Source::Parquet { names: Vec::new(), columns: Vec::new() },
+                            }
+                        },
                         Some("blank") => Source::Blank,
                         Some("range") if f.len() >= 4 => Source::Range { sheet: unesc(f[2]), range: unesc(f[3]) },
                         Some("csv") if f.len() >= 7 => Source::Csv { path: unesc(f[2]), delimiter: unesc(f[3]), columns: f[4].parse().unwrap_or(0), encoding: f[5].parse().unwrap_or(65001), quote: unesc(f[6]) },

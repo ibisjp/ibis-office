@@ -108,7 +108,7 @@ impl SlideEditor {
         };
 
         let head_w = self.current_sheet().map_or(0.0, |(_, s)| if s.headings { crate::shell::sheet_metrics::row_header_width(s) } else { 0.0 });
-        let head_h = self.current_sheet().map_or(0.0, |(_, s)| if s.headings { crate::shell::sheet_metrics::COLUMN_HEADER_HEIGHT } else { 0.0 });
+        let head_h = self.current_sheet().map_or(0.0, |(_, s)| if s.headings { crate::shell::sheet_metrics::column_header_height(s) } else { 0.0 });
         if let Some(sx) = split_x {
             let left_w = sx.clamp(24.0, (ws_w - bar_t - 24.0).max(24.0));
             let right_w = (ws_w - bar_t - left_w).max(24.0);

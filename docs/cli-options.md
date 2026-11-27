@@ -4,7 +4,7 @@
 
 ibisOffice is not only a graphical desktop office suite, but also features a powerful command-line interface (CLI) suitable for terminals, automated shell scripts, batch processing, and CI/CD pipelines.
 
-You can perform **headless exports** to convert Word, Excel, and PowerPoint documents into PDF or PNG images at high speed without opening a window, customize print/export settings, and benchmark launch and rendering performance.
+You can perform **headless exports** to convert DOCX, XLSX and PPTX documents into PDF or PNG images at high speed without opening a window, customize print/export settings, and benchmark launch and rendering performance.
 
 ---
 
@@ -72,7 +72,7 @@ Runs completely in the background without opening any GUI window. Documents are 
 
 | Option | Argument | Description |
 |---|---|---|
-| `--export` | `<format>` | Export format (required).<br>• `pdf`: High-quality vector PDF with embedded fonts and graphics.<br>• `png`: Raster image sequence for each page or slide.<br>• `pdf-image`: PDF containing full-page rasterized images.<br>• `ui`: Snapshot of the editor UI window. |
+| `--export` | `<format>` | Export format (required).<br>• `pdf`: High-quality vector PDF with embedded fonts and graphics.<br>• `png`: Raster image sequence for each page or slide.<br>• `pdf-image`: PDF containing full-page rasterized images.<br>• `html`: The document as one HTML page (charts and SmartArt as pictures) written as `<name>.html` in `--out-dir`; for a spreadsheet, `--range` picks the sheet (its first number).<br>• `md` (or `markdown`): Markdown, written as `<name>.md`. Takes DOCX, XLSX, PPTX, PDF, XPS, OFD, Markdown, Law XML and Lawtext files (see [Export fixed-layout documents to Markdown](#export-fixed-layout-documents-to-markdown)).<br>• `txt` (or `text`): Plain text of a PDF, XPS or OFD document, written as `<name>.txt` (see the same section).<br>• `lawxml`: Law XML, written as `<name>.xml`. Takes the same inputs as `md`.<br>• `lawtext`: Lawtext, written as `<name>.lawtext`. Takes the same inputs as `md`.<br>• `ui`: Snapshot of the editor UI window. |
 | `--out-dir` | `<dir>` | Target output directory (default: current directory `.`). Created automatically if it does not exist. |
 | `--width` | `<px>` | Width of PNG export in pixels (default: `1920`). Aspect ratio is preserved. |
 | `--range` | `<range>` | Slide or page range to export (e.g., `1`, `1,3-5`, `2-`). The old name `--slides` still works but prints a warning. Exports all pages/slides if omitted. |
@@ -121,6 +121,8 @@ ibisOffice --export pdf --print-backgrounds --no-print-markup report.docx
 | `--handout-landscape` | (none) | Render handout pages in landscape orientation. |
 | `--handout-order` | `horizontal` \| `vertical` | The order of the slides on a handout page (default: `horizontal`, as PowerPoint). `horizontal` fills a row before the next; `vertical` fills a column before the next (4, 6, 9 to a page). |
 | `--print-frame` | (none) | Draw a thin frame border around each slide. |
+| `--print-paper <a3|a4|a5|b4|b5|letter|legal|tabloid|WxHmm>` | page size of the slide | Put each page on this paper (landscape for a slide as wide as high; notes and portrait handouts stay portrait), scaled to fit and centred, no margin. |
+| `--no-print-fit-paper` | scaled to the paper | With `--print-paper`: keep 100 % instead of scaling to the paper (centred; what is larger is cut off). |
 | `--notes-pages` | (none) | Export as Notes Pages (speaker notes placed beneath each slide). |
 | `--outline-pages` | (none) | Export presentation text outline only. |
 
@@ -231,4 +233,24 @@ ibisOffice --export pdf --handout 2 --print-color bw --print-frame \
   --handout-header "Board of Directors Meeting" \
   --handout-footer "CONFIDENTIAL" \
   --handout-number --out-dir handouts/ agenda.pptx
+```
+
+## Export fixed-layout documents to Markdown
+
+```sh
+ibisOffice --export md --out-dir ./out input.pdf
+```
+
+PDF, XPS (including OXPS), and OFD export extractable text in page order. Encrypted PDFs that open without a password (the owner only restricted printing or copying: RC4, AES-128 or AES-256 with the Standard security handler) are decrypted; a PDF that needs a user password reports so. Reading order within a page is inferred from character positions. Graphics and images decoded by the viewer are included in a positioned SVG for each page. Image-only pages require separate OCR. Semantic tables, signatures, and reproduction of the original layout require separate processing. DOCX Markdown round trips preserve the original EMF/WMF media bytes. Display of those formats in a browser depends on the viewer.
+
+To keep the columns of tables, add `--text-layout physical`: each page's text goes into a ```` ```text ```` block, with each character at the column its position on the page gives (a half-width character one column, a full-width character two, like `pdftotext -layout`), and without Markdown escapes. The default, `--text-layout reading`, writes each line as Markdown with single spaces between words.
+
+```sh
+ibisOffice --export md --text-layout physical --out-dir ./out input.pdf
+```
+
+For the text alone, use `--export txt`: each page's lines, each page ended by a form feed (as `pdftotext` ends it), with no Markdown escapes and no graphics. Nothing is drawn and no image is decoded, so it is faster than `--export md`. `--text-layout physical` works here too.
+
+```sh
+ibisOffice --export txt --text-layout physical --out-dir ./out input.pdf
 ```

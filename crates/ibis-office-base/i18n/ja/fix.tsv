@@ -563,3 +563,37 @@ fix.update.copy-command	コマンドをコピー
 menu.group.wrap-text	文字列の折り返し
 help.register-desktop	アプリの一覧に登録
 help.setup	セットアップ
+pptx.print-panel.paper	用紙
+pptx.print-panel.paper-own	スライドの大きさのまま
+pptx.print-panel.fit-paper	用紙に合わせて拡大／縮小
+docx.show-form-fill	入力フォーム…
+docx.form-fill.title	入力フォーム
+docx.form-fill.empty	入力項目がありません。プレーン テキストのコンテンツ コントロールにカーソルを置き、下で項目 ID を付けると、ここに入力欄が出ます。
+docx.form-fill.count	入力項目：{count} 件
+docx.form-fill.define	項目の設定
+docx.form-fill.define-hint	カーソルがあるプレーン テキストの入力欄に項目 ID（英数字と . _ -）を付けます。同じ ID の欄は、まとめて入力されます。
+docx.form-fill.tag	カーソルの入力欄を項目にする
+docx.form-fill.tagged	入力項目にしました。
+docx.form-fill.bad-id	項目 ID は、英数字と . _ - だけで入力してください。
+docx.form-fill.not-in-control	カーソルがプレーン テキストのコンテンツ コントロールの中にありません。
+docx.form-fill.form-id	書き出すフォーム ID
+docx.form-fill.bad-form-id	フォーム ID は、英数字と . _ - だけで入力してください。
+docx.form-fill.export-csv	CSV で書き出し
+docx.form-fill.export-json	JSON で書き出し
+docx.form-fill.exported	書き出しました
+docx.form-fill.load-csv	CSV を読み込み
+docx.form-fill.csv-loaded	CSV の {count} 行を読み込みました。1 行目を入力しました。
+docx.form-fill.csv-empty	CSV に行がありません。
+docx.form-fill.csv-native-only	ブラウザー版では、まだ CSV を読み込めません。
+docx.form-fill.prev	前の行
+docx.form-fill.next	次の行
+docx.form-fill.write-documents	入力済みの文書を書き出し
+docx.form-fill.write-needs-file	先にフォームを保存してください。そのファイルが文書のひな型になります。
+docx.form-fill.write-needs-csv	先に CSV を読み込んでください。1 行ごとに 1 つの文書を作ります。
+docx.form-fill.write-definition	フォームの定義（JSON または YAML）を選ぶ
+docx.form-fill.write-done	{count} 件の文書（record-1.docx …）をフォルダーに書き出しました。
+docx.form-fill.load-definition	フォームの定義を読み込み
+docx.form-fill.definition-loaded	{count} 件の項目の定義（type・maxChars・format）を読み込みました。
+docx.form-fill.too-long	{chars} 文字です。上限は {max} 文字です。
+docx.form-fill.not-number	数を入力してください（数字と小数点だけ。桁区切りや単位は不可）。
+docx.form-fill.export-refused	書き出しませんでした。先にこの項目を直してください：{fields}

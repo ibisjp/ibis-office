@@ -43,12 +43,27 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::menu_every_item_is_bound_and_acts_xlsx", acts_xlsx),
         ("shell::menu_every_item_is_bound_and_acts_pptx", acts_pptx),
         ("shell::menu_every_item_is_bound_and_acts_pdf", acts_pdf),
+        // #261: the primary (coloured) button of every panel dialog the menus open, in a new empty document, does something.
+        ("shell::panel_primary_acts_docx", || run_panel_primary("docx", Kind::Document)),
+        ("shell::panel_primary_acts_xlsx", || run_panel_primary("xlsx", Kind::Workbook)),
+        ("shell::panel_primary_acts_pptx", || run_panel_primary("pptx", Kind::Presentation)),
         ("shell::menu_states_enable_hard_items_pptx", states_enable_hard_items_pptx),
         ("shell::menu_states_of_the_made_files", states_of_the_made_files),
         ("shell::menu_suspect_docx_select_cell", suspect_docx_select_cell),
         ("shell::menu_suspect_pptx_shadow", suspect_pptx_shadow),
         ("shell::menu_suspect_pptx_palette_selected", suspect_pptx_palette_selected),
         ("shell::menu_suspect_pptx_table_borders", suspect_pptx_table_borders),
+    ]
+}
+
+/// #261 (the rest): the primary button of every panel in every state of each screen (a selected table, picture, chart, shape, cells, ...).
+/// 全状態は時間がかかるので手で回す。状態は IBIS_PANEL_STATES で絞れる (all the states take 1 to 2.5 hours a screen: run by hand with `--ignored`).
+/// with `IBIS_PANEL_STATES` (the names of the states, separated by commas, or by semicolons when a name has a comma: `IBIS_PANEL_STATES=protected,shape`).
+pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
+    vec![
+        ("shell::panel_primary_states_docx", || run_panel_primary_states("docx")),
+        ("shell::panel_primary_states_xlsx", || run_panel_primary_states("xlsx")),
+        ("shell::panel_primary_states_pptx", || run_panel_primary_states("pptx")),
     ]
 }
 
@@ -612,6 +627,169 @@ fn restore(s: &mut Scenario, baseline: &Fingerprint) -> bool {
     &steady_or(s, "restore", false) == baseline
 }
 
+/// Panels whose primary button does nothing observable on purpose, with the reason (none yet).
+const PRIMARY_IDLE_OK: &[(&str, &str)] = &[];
+
+/// Issue #261: in a new, empty document, every enabled menu item is run; when it opens a panel dialog with a primary button, the button
+/// is pressed (the handler the dialog gives the keyboard's Enter: `open_dialog_primary`) and one of these must follow: the dialog
+/// closes, something changes (the document, a message in the panel, an alert), or the button is greyed. A coloured button that
+/// does nothing (as the slicer's OK with no table) is listed in `target/menu-audit/panel-primary-<screen>.tsv` and fails the scenario.
+fn run_panel_primary(name: &str, kind: Kind) {
+    let fresh = || {
+        let mut s = Scenario::new_document(kind);
+        s.size(1400., 900.);
+        s.settle();
+        s
+    };
+    primary_in_state(name, "new document", &fresh, &format!("panel-primary-{name}"), 10, false);
+}
+
+/// Issue #261 (the rest): the same, in every state of the screen that `acts_*` uses (a caret, a selected text, a table, a picture, a
+/// chart, a shape, a cell range, ...), so the panels that need a selection are opened with and without it. The menu bar, the selection's
+/// context menus and the Draw menu are the entrances; a panel opened in a state whose primary button does nothing fails.
+fn run_panel_primary_states(name: &str) {
+    let screen = screen_of(name);
+    let mut bad = Vec::new();
+    let only: Vec<String> = std::env::var("IBIS_PANEL_STATES").map(|v| v.split(if v.contains(';') { ';' } else { ',' }).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default();
+    for state in screen.states {
+        if !only.is_empty() && !only.iter().any(|o| o == state.0) {
+            continue;
+        }
+        let fresh = || open_state(&screen, state);
+        let report = format!("panel-primary-states-{name}-{}", state.0.replace(' ', "-"));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| primary_in_state(name, state.0, &fresh, &report, 0, true)));
+        if let Err(e) = r {
+            bad.push(e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default());
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("
+"));
+}
+
+/// The orders of the toolbar now (a button, its quick half, the lines of its menu and of a select's menu) that are not disabled and
+/// are not a line of the menu bar: `(key, path, handler)`.
+fn toolbar_entries(s: &mut Scenario, bar_ids: &HashSet<&'static str>) -> Vec<(String, String, Handler)> {
+    use crate::shell::chrome::ToolItem;
+    fn lines(entries: &[MenuEntry], path: &str, bar_ids: &HashSet<&'static str>, out: &mut Vec<(String, String, Handler)>) {
+        for entry in entries {
+            match entry {
+                MenuEntry::Item(i) if i.enabled() && !bar_ids.contains(i.id) => {
+                    if let Some(h) = &i.handler {
+                        out.push((format!("toolbar:{}", i.id), format!("{path} > {}", i.label), h.clone()));
+                    }
+                }
+                MenuEntry::Submenu(m) => lines(&m.items, &format!("{path} > {}", m.label), bar_ids, out),
+                MenuEntry::Tiles(items) => {
+                    for i in items.iter().filter(|i| i.enabled() && !bar_ids.contains(i.id)) {
+                        if let Some(h) = &i.handler {
+                            out.push((format!("toolbar:{}", i.id), format!("{path} > {}", i.label), h.clone()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    s.with(|e, _| {
+        let mut out = Vec::new();
+        for item in e.toolbar_items_default() {
+            match item {
+                ToolItem::Button(b) if !b.disabled => {
+                    if let Some(h) = &b.handler {
+                        out.push((format!("toolbar:{}", b.id), format!("toolbar > {}", b.tooltip), h.clone()));
+                    }
+                    if let Some(h) = &b.quick {
+                        out.push((format!("toolbar:{}:quick", b.id), format!("toolbar > {} (quick)", b.tooltip), h.clone()));
+                    }
+                    if let Some(m) = &b.menu {
+                        lines(m, &format!("toolbar > {}", b.tooltip), bar_ids, &mut out);
+                    }
+                }
+                ToolItem::Select { tooltip, menu, disabled: false, .. } => lines(&menu, &format!("toolbar > {tooltip}"), bar_ids, &mut out),
+                _ => {}
+            }
+        }
+        let mut seen = HashSet::new();
+        out.retain(|(k, _, _)| seen.insert(k.clone()));
+        out
+    })
+}
+
+fn primary_in_state(name: &str, state: &str, fresh: &dyn Fn() -> Scenario, report_name: &str, least_opened: usize, toolbar: bool) {
+    let mut s = fresh();
+    let rows = bar_rows(&mut s);
+    let mut seen = HashSet::new();
+    let ids: Vec<Row> = rows.iter().filter(|r| r.enabled && r.has_handler && r.id != "help.update-log" && seen.insert(r.id)).cloned().collect();
+    let bar_ids: HashSet<&'static str> = rows.iter().map(|r| r.id).collect();
+    let mut entries: Vec<(String, String)> = ids.iter().map(|r| (r.id.to_string(), r.path.clone())).collect();
+    if toolbar {
+        entries.extend(toolbar_entries(&mut s, &bar_ids).into_iter().map(|(k, p, _)| (k, p)));
+    }
+    let mut report = String::from("id	status	path
+");
+    let mut bad: Vec<String> = Vec::new();
+    let mut baseline = steady_or(&mut s, "", false);
+    let (mut opened, mut pressed) = (0, 0);
+    for (key, path) in entries {
+        let handler = if let Some(k) = key.strip_prefix("toolbar:") {
+            let _ = k;
+            toolbar_entries(&mut s, &bar_ids).into_iter().find(|(kk, _, _)| *kk == key).map(|(_, _, h)| h)
+        } else {
+            handler_of(&mut s, &key)
+        };
+        let Some(handler) = handler else { continue };
+        let row = Row { path, id: "", label: String::new(), enabled: true, checked: false, has_handler: true, hint: String::new(), group: 0 };
+        let row_id = key.as_str();
+        eprintln!("[panel-primary {name}:{state}] {row_id}");
+        crate::shell::external::take_launched();
+        s.update(|e, w, cx| handler(e, w, cx));
+        s.settle();
+        match s.with(|e, _| e.open_dialog_primary()) {
+            None => {}
+            Some((has_primary, press)) => {
+                opened += 1;
+                let status = match (has_primary, press) {
+                    (false, _) => "no primary".to_string(),
+                    (true, None) => "primary greyed".to_string(),
+                    (true, Some(press)) => {
+                        pressed += 1;
+                        let before = steady_or(&mut s, "", false);
+                        // Deferred, as the keyboard's Enter runs it (the handler updates the editor itself).
+                        s.update(move |_, w, cx| w.defer(cx, move |w, cx| press(&gpui_kit::ClickEvent::default(), w, cx)));
+                        s.settle();
+                        let after = steady_or(&mut s, "", false);
+                        let closed = s.window_count() == 0 || s.with(|e, _| e.open_dialog_primary().is_none());
+                        if closed || after != before || !crate::shell::external::take_launched().is_empty() {
+                            "acts".to_string()
+                        } else {
+                            "NO EFFECT".to_string()
+                        }
+                    }
+                };
+                if status == "NO EFFECT" && !PRIMARY_IDLE_OK.iter().any(|(id, why)| *id == row_id && !why.is_empty()) {
+                    bad.push(format!("{} ({}) in {state}", row_id, row.path));
+                }
+                report.push_str(&format!("{}	{status}	{}
+", row_id, row.path));
+            }
+        }
+        if !restore(&mut s, &baseline) {
+            drop(s);
+            s = fresh();
+            baseline = steady_or(&mut s, "", false);
+        }
+    }
+    report.push_str(&format!("# dialogs opened {opened}, primary pressed {pressed}
+"));
+    let dir = crate::shell::scenario::repo_root().join("target/menu-audit");
+    std::fs::create_dir_all(&dir).ok();
+    std::fs::write(dir.join(format!("{report_name}.tsv")), &report).ok();
+    assert!(opened >= least_opened, "{name}: the menus opened only {opened} panel dialogs");
+    assert!(bad.is_empty(), "{name}: panel dialogs whose primary button does nothing:
+{}", bad.join("
+"));
+}
+
 fn run_screen(screen: &Screen) {
     let mut outcomes: BTreeMap<&'static str, Outcome> = BTreeMap::new();
     let mut disabled_everywhere: BTreeMap<&'static str, (String, String, String)> = BTreeMap::new();
@@ -799,6 +977,8 @@ const IDLE_OK: &[(&str, &str)] = &[
     ("help.check-update", "a network request (the answer comes later, the headless run shows nothing)"),
     ("pptx.review.compare", "native open dialog"),
     ("pptx.insert-object", "native open dialog"),
+    ("insert.medical-image", "native open dialog (the DICOM file)"),
+    ("xlsx.query-from-", "native open dialog (the file to read: Parquet, Arrow IPC, Avro, JSON Lines, SQLite)"),
     ("view.fullscreen", "the platform window's full screen (the headless window has none)"),
     // The window list's line of the window that is already in front, and what needs a second window.
     ("window.open.", "chooses a window that is already in front"),

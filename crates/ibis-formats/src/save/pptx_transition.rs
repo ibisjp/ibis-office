@@ -53,7 +53,8 @@ const SILENT_WAV: &[u8] = &[
 fn transition_xml(t: &Transition, p: &str, p14: Option<&str>, extra: Option<(TransitionNs, &str)>, sound_embed: Option<(&str, &str)>) -> String {
     let spd = speed(t.duration);
     let mut attrs = format!(" spd=\"{spd}\"");
-    if let Some(p14) = p14 {
+    // PowerPoint leaves `p14:dur` out for 1 second: `spd="slow"` is that (K0071 T12, measured in `anim-dur-result`).
+    if let Some(p14) = p14.filter(|_| t.duration != 1000) {
         attrs.push_str(&format!(" {p14}dur=\"{}\"", t.duration));
     }
     if !t.on_click {
@@ -128,7 +129,7 @@ fn timing_attributes(doc:&mut XmlDocument,node:NodeId,t:&Transition,modern:Optio
     if t.on_click {doc.remove_attr(node,"advClick");} else {doc.set_attr(node,"advClick","0");}
     if let Some(after)=t.after {doc.set_attr(node,"advTm",&after.to_string());} else {doc.remove_attr(node,"advTm");}
     let duration=doc.attributes(node).iter().find(|a|a.name.rsplit_once(':').is_some_and(|(p,n)|n=="dur" && doc.resolve_prefix(node,Some(p))==Some(NS_P14))).map(|a|a.name.clone());
-    if let Some(p14)=modern {let name=duration.unwrap_or_else(||format!("{p14}dur"));doc.set_attr(node,&name,&t.duration.to_string());} else if let Some(name)=duration {doc.remove_attr(node,&name);}
+    if let Some(p14)=modern.filter(|_|t.duration!=1000) {let name=duration.unwrap_or_else(||format!("{p14}dur"));doc.set_attr(node,&name,&t.duration.to_string());} else if let Some(name)=duration {doc.remove_attr(node,&name);}
 }
 
 // Timing-only edits retain effect details, sound actions and opaque source data.

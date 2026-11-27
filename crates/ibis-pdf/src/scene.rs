@@ -56,6 +56,8 @@ pub enum FillRule {
 /// Drawing commands emitted by a page interpreter for GPUI rendering.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DisplayCmd {
+    /// Replace the current device-space rectangular clip. None clears it.
+    SetClipRect(Option<PdfRect>),
     PushClip(PdfRect),
     PopClip,
     PushTransparencyGroup {
@@ -78,6 +80,18 @@ pub enum DisplayCmd {
         text: String,
         origin: (f32, f32),
         font_size: f32,
+        rgba: [u8; 4],
+    },
+    DrawStyledGlyphRun {
+        text: String,
+        origin: (f32, f32),
+        font_size: f32,
+        family: String,
+        weight: u16,
+        italic: bool,
+        angle: f32,
+        horizontal_scale: f32,
+        max_width: Option<f32>,
         rgba: [u8; 4],
     },
     DrawImage {

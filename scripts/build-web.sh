@@ -53,7 +53,8 @@ fi
 # The wasm's size, for the download's progress bar: a server that compresses
 # it (GitHub Pages sends gzip) gives Content-Length of the compressed bytes,
 # while the browser hands main.ts the uncompressed ones.
-stat -f %z www/pkg/ibis_office_app_bg.wasm > www/pkg/ibis_office_app_bg.wasm.size
+# BSD stat (macOS) or GNU stat (Linux, Git Bash on Windows).
+stat -f %z www/pkg/ibis_office_app_bg.wasm > www/pkg/ibis_office_app_bg.wasm.size 2>/dev/null || stat -c %s www/pkg/ibis_office_app_bg.wasm > www/pkg/ibis_office_app_bg.wasm.size
 
 # main.ts imports the typings wasm-bindgen just wrote.
 if [[ ! -x node_modules/.bin/tsc ]]; then
@@ -61,7 +62,7 @@ if [[ ! -x node_modules/.bin/tsc ]]; then
   exit 1
 fi
 # The version of this build, for the loader to check a loader-manifest.json against (the parts of the wasm are of one build: scripts/web-loader-setup.mjs).
-printf "export const APP_VERSION = '%s';\n" "$(awk -F'\t' '$1 == "wasm" { sub(/\r$/, "", $2); print $2 }' version.txt)" > www/build-info.ts
+printf "export const APP_VERSION = '%s';\n" "$(awk -F'\t' '$1 == "wasm" { sub(/\r$/, "", $2); print $2 }' crates/build-version.txt)" > www/build-info.ts
 node_modules/.bin/tsc -p www
 # tsc keeps the copyright header of ibisoffice-host.ts in the .js but drops it from the .d.ts: the same header (the first three lines of the
 # source) goes on the .d.ts, as it ships in the Web archive.

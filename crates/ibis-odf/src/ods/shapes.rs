@@ -33,6 +33,24 @@ fn props(styles: &Styles, name: &str) -> HashMap<String, String> {
     out
 }
 
+/// A run of text with the character properties of its `text:span` over its paragraph's (ODF 1.3 section 20.380).
+#[derive(Default, Clone)]
+pub(super) struct Run {
+    pub text: String,
+    pub color: Option<u32>,
+    pub size: Option<f64>,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub font: Option<String>,
+    pub font_east_asian: Option<String>,
+}
+
+pub(super) struct Paragraph {
+    pub align: &'static str,
+    pub runs: Vec<Run>,
+}
+
 pub(super) struct Shape {
     pub row: u32,
     pub col: u32,
@@ -51,12 +69,12 @@ pub(super) struct Shape {
     pub fill: Option<u32>,
     /// Colour and width (EMU) of the outline, and whether it is dashed.
     pub outline: Option<(u32, i64, bool)>,
-    pub text: Vec<String>,
-    pub text_color: Option<u32>,
-    pub text_size: Option<f64>,
-    pub bold: bool,
-    pub align: &'static str,
+    /// The paragraphs of the text, each with its alignment and its runs.
+    pub text: Vec<Paragraph>,
     pub anchor: &'static str,
+    /// The text area's insets (EMU) left, top, right, bottom (`fo:padding-*`) and whether the text wraps (`fo:wrap-option`).
+    pub insets: [Option<i64>; 4],
+    pub wrap: bool,
     pub text_box: bool,
 }
 
@@ -94,17 +112,76 @@ fn preset_of(ty: &str) -> String {
     .to_string()
 }
 
-fn text_lines(n: Node) -> (Vec<String>, Option<String>) {
-    let mut span_style = None;
-    let lines = children(n, TEXT, "p")
-        .map(|p| {
-            if span_style.is_none() {
-                span_style = p.descendants().find(|d| d.is_element() && d.tag_name().name() == "span" && d.tag_name().namespace() == Some(TEXT)).and_then(|s| attr(s, TEXT, "style-name")).map(str::to_string);
+/// The character properties of a run from a style's properties (those of the paragraph style, then the span's).
+fn run_of(p: &HashMap<String, String>) -> Run {
+    Run {
+        text: String::new(),
+        color: p.get("color").and_then(|c| hex(c)),
+        size: p.get("font-size").and_then(|s| super::points(s)),
+        bold: p.get("font-weight").is_some_and(|w| w == "bold" || w.parse::<u32>().is_ok_and(|n| n >= 600)),
+        italic: matches!(p.get("font-style").map(String::as_str), Some("italic" | "oblique")),
+        underline: p.get("text-underline-style").is_some_and(|u| u != "none"),
+        font: p.get("font-name").or_else(|| p.get("font-family")).map(|f| f.trim_matches('\'').to_string()),
+        font_east_asian: p.get("font-name-asian").or_else(|| p.get("font-family-asian")).map(|f| f.trim_matches('\'').to_string()),
+    }
+}
+
+/// The runs of the content of `n` (a `text:p` or a `text:span`), whose properties are `props`.
+fn runs_of(n: Node, styles: &Styles, inherited: &HashMap<String, String>, out: &mut Vec<Run>) {
+    for child in n.children() {
+        if child.is_text() {
+            let mut r = run_of(inherited);
+            r.text = child.text().unwrap_or("").to_string();
+            out.push(r);
+        } else if child.is_element() && child.tag_name().namespace() == Some(TEXT) {
+            match child.tag_name().name() {
+                "span" => {
+                    let mut p = inherited.clone();
+                    if let Some(s) = attr(child, TEXT, "style-name") {
+                        p.extend(props(styles, s));
+                    }
+                    runs_of(child, styles, &p, out);
+                }
+                "s" => {
+                    let mut r = run_of(inherited);
+                    r.text = " ".repeat(attr(child, TEXT, "c").and_then(|c| c.parse().ok()).unwrap_or(1));
+                    out.push(r);
+                }
+                "tab" => {
+                    let mut r = run_of(inherited);
+                    r.text = "\t".into();
+                    out.push(r);
+                }
+                "line-break" => {
+                    let mut r = run_of(inherited);
+                    r.text = "\n".into();
+                    out.push(r);
+                }
+                // A hyperlink, a bookmark and the like: their text counts, as the runs of the span.
+                "a" => runs_of(child, styles, inherited, out),
+                _ => {}
             }
-            p.descendants().filter(|d| d.is_text()).filter_map(|d| d.text()).collect::<String>()
+        }
+    }
+}
+
+fn paragraphs(n: Node, styles: &Styles, shape_style: &HashMap<String, String>) -> Vec<Paragraph> {
+    children(n, TEXT, "p")
+        .map(|p| {
+            let mut props_p = attr(p, TEXT, "style-name").map(|s| props(styles, s)).unwrap_or_default();
+            let align = match props_p.get("text-align").or_else(|| shape_style.get("text-align")).map(String::as_str) {
+                Some("center") => "ctr",
+                Some("end" | "right") => "r",
+                _ => "l",
+            };
+            // The shape's own text properties are the base the paragraph's and the span's override.
+            let mut base = shape_style.clone();
+            base.extend(props_p.drain());
+            let mut runs = Vec::new();
+            runs_of(p, styles, &base, &mut runs);
+            Paragraph { align, runs }
         })
-        .collect();
-    (lines, span_style)
+        .collect()
 }
 
 /// The shapes among the children of the cell at (`row`, `col`).
@@ -131,9 +208,7 @@ pub(super) fn cell_shapes(cell: Node, row: u32, col: u32, styles: &Styles) -> Ve
             (len(n, "x").unwrap_or(0), len(n, "y").unwrap_or(0), w, h, false)
         };
         let style = attr(n, DRAW, "style-name").map(|s| props(styles, s)).unwrap_or_default();
-        let (lines, span_style) = text_lines(shape_node);
-        let span = span_style.map(|s| props(styles, &s)).unwrap_or_default();
-        let get = |k: &str| span.get(k).or_else(|| style.get(k));
+        let text = paragraphs(shape_node, styles, &style);
         let geometry = children(n, DRAW, "enhanced-geometry").next().and_then(|g| attr(g, DRAW, "type")).map(preset_of);
         let eg = children(n, DRAW, "enhanced-geometry").next();
         let cust_geom = if kind == "custom-shape" {
@@ -171,20 +246,14 @@ pub(super) fn cell_shapes(cell: Node, row: u32, col: u32, styles: &Styles) -> Ve
             preset,
             fill,
             outline,
-            text: if lines.iter().all(String::is_empty) { Vec::new() } else { lines },
-            text_color: get("color").and_then(|c| hex(c)),
-            text_size: get("font-size").and_then(|s| super::points(s)),
-            bold: get("font-weight").map(String::as_str) == Some("bold"),
-            align: match style.get("text-align").map(String::as_str) {
-                Some("center") => "ctr",
-                Some("end" | "right") => "r",
-                _ => "l",
-            },
+            text: if text.iter().all(|p| p.runs.iter().all(|r| r.text.is_empty())) { Vec::new() } else { text },
             anchor: match style.get("textarea-vertical-align").map(String::as_str) {
                 Some("middle") => "ctr",
                 Some("bottom") => "b",
                 _ => "t",
             },
+            insets: ["padding-left", "padding-top", "padding-right", "padding-bottom"].map(|k| style.get(k).or_else(|| style.get("padding")).and_then(|v| emu(v))),
+            wrap: style.get("wrap-option").map(String::as_str) != Some("no-wrap"),
             text_box,
         });
     }
@@ -214,9 +283,33 @@ pub(super) fn anchor_xml(s: &Shape, id: usize) -> String {
         let text = if s.text.is_empty() {
             String::new()
         } else {
-            let run_props = format!("<a:rPr lang=\"en-US\"{}{}>{}</a:rPr>", s.text_size.map(|p| format!(" sz=\"{}\"", (p * 100.0).round() as i64)).unwrap_or_default(), if s.bold { " b=\"1\"" } else { "" }, s.text_color.map(|c| format!("<a:solidFill><a:srgbClr val=\"{c:06X}\"/></a:solidFill>")).unwrap_or_default());
-            let paras: String = s.text.iter().map(|l| format!("<a:p><a:pPr algn=\"{}\"/><a:r>{run_props}<a:t>{}</a:t></a:r></a:p>", s.align, esc(l))).collect();
-            format!("<xdr:txBody><a:bodyPr vertOverflow=\"clip\" wrap=\"square\" rtlCol=\"0\" anchor=\"{}\"/><a:lstStyle/>{paras}</xdr:txBody>", s.anchor)
+            let run_xml = |r: &Run| {
+                let attrs = format!(
+                    "{}{}{}{}",
+                    r.size.map(|p| format!(" sz=\"{}\"", (p * 100.0).round() as i64)).unwrap_or_default(),
+                    if r.bold { " b=\"1\"" } else { "" },
+                    if r.italic { " i=\"1\"" } else { "" },
+                    if r.underline { " u=\"sng\"" } else { "" }
+                );
+                let fill = r.color.map(|c| format!("<a:solidFill><a:srgbClr val=\"{c:06X}\"/></a:solidFill>")).unwrap_or_default();
+                let fonts = match (&r.font, r.font_east_asian.as_ref().or(r.font.as_ref())) {
+                    (Some(f), Some(ea)) => format!("<a:latin typeface=\"{}\"/><a:ea typeface=\"{}\"/>", esc(f), esc(ea)),
+                    (None, Some(ea)) => format!("<a:ea typeface=\"{}\"/>", esc(ea)),
+                    _ => String::new(),
+                };
+                let props = format!("<a:rPr lang=\"en-US\"{attrs}>{fill}{fonts}</a:rPr>");
+                r.text
+                    .split('\n')
+                    .enumerate()
+                    .map(|(i, part)| format!("{}{}", if i > 0 { format!("<a:br>{props}</a:br>") } else { String::new() }, if part.is_empty() { String::new() } else { format!("<a:r>{props}<a:t>{}</a:t></a:r>", esc(part)) }))
+                    .collect::<String>()
+            };
+            let paras: String = s.text.iter().map(|p| format!("<a:p><a:pPr algn=\"{}\"/>{}</a:p>", p.align, p.runs.iter().map(run_xml).collect::<String>())).collect();
+            {
+                let [l, tp, r, b] = s.insets.map(|v| v.map(|v| format!("{v}")));
+                let ins: String = [("lIns", l), ("tIns", tp), ("rIns", r), ("bIns", b)].iter().filter_map(|(k, v)| v.as_ref().map(|v| format!(" {k}=\"{v}\""))).collect();
+                format!("<xdr:txBody><a:bodyPr vertOverflow=\"clip\" wrap=\"{}\" rtlCol=\"0\" anchor=\"{}\"{ins}/><a:lstStyle/>{paras}</xdr:txBody>", if s.wrap { "square" } else { "none" }, s.anchor)
+            }
         };
         format!("<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"{}\"/><xdr:cNvSpPr{}/></xdr:nvSpPr><xdr:spPr>{xfrm}{}{fill}{ln}</xdr:spPr>{text}</xdr:sp>", esc(&name), if s.text_box { " txBox=\"1\"" } else { "" }, geometry)
     };

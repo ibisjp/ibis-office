@@ -175,6 +175,14 @@ pub(crate) fn csv_records(text: &str, delimiter: char, quoted: bool) -> Vec<Vec<
 /// their values), a defined name's range, or a range of a sheet (the columns `Column1`, `Column2`…).
 pub fn read_source(p: &Presentation, source: &Source) -> Result<QTable, String> {
     match source {
+        Source::JsonArray { .. } => Err("Select the JSON source".into()),
+        Source::Delimited { .. } => Err("Select the CSV or TSV source".into()),
+        Source::ParquetFolder { .. } => Err("Select the Parquet folder source".into()),
+        Source::Sqlite { .. } => Err("Select the SQLite database source file".into()),
+        Source::Avro { .. } => Err("Select the Avro source file".into()),
+        Source::ArrowIpc { .. } => Err("Select the Arrow IPC source file".into()),
+        Source::JsonLines { .. } => Err("Select the JSON Lines source file".into()),
+        Source::Parquet { .. } => Err("Select the Parquet source files".into()),
         Source::Blank => Ok(QTable {
             columns: vec![QColumn {
                 name: "Column1".to_string(),
@@ -259,6 +267,10 @@ impl Resolver for BookResolver<'_> {
 /// The result of a query: its source worked through every step.
 pub fn result_of(p: &Presentation, query: &Query, queries: &[Query], parameters: &[Parameter], depth: usize) -> Result<QTable, String> {
     let source = read_source(p, &query.source)?;
+    result_from_source(p, query, queries, parameters, depth, source)
+}
+
+pub fn result_from_source(p: &Presentation, query: &Query, queries: &[Query], parameters: &[Parameter], depth: usize, source: QTable) -> Result<QTable, String> {
     let resolver = BookResolver { presentation: p, queries, parameters, current: &query.name, depth };
     let (tables, error) = query.run(source, parameters, &resolver);
     match error {

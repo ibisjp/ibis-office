@@ -23,6 +23,12 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::bundled_icons_of_the_review_menu", bundled_review_icons),
         ("shell::host_without_a_start_window_has_no_start_window_menu_item", no_start_window_menu_item),
         ("shell::host_recent_files_are_added_on_load_and_listed", recent_files_added_and_listed),
+        ("shell::host_csv_and_tsv_are_saved_as_text", text_saves),
+        ("shell::host_save_as_writes_the_format_of_the_name", text_save_as),
+        ("shell::host_save_as_of_a_package_stays_xlsx", xlsx_save_as),
+        ("shell::host_text_file_saves_as_xlsx_by_name", text_to_xlsx),
+        ("shell::host_opening_text_tells_nothing_on_save", text_open_no_note),
+        ("shell::host_old_binary_file_is_saved_as_a_new_name", legacy_saves_as),
     ];
     all.extend(file_window());
     all.extend(rename_and_bars());
@@ -954,5 +960,137 @@ fn export_missing_glyphs() {
             assert!(said.contains(crate::shell::i18n::text("shell.host.exported").as_ref()), "{said}");
         }
     }
+    host::uninstall();
+}
+
+/// A scenario with `name` (bytes `data`) given by a host as its bound file, in the folder `Sales`.
+fn start_with(name: &str, data: &[u8]) -> (Scenario, MemoryHost, String, String) {
+    crate::shell::host_file_dialog::forget_last_folder();
+    let host = MemoryHost::new();
+    let folder = host.add_folder(None, "Sales", true);
+    let file = host.add_file(Some(&folder), name, data);
+    host::install(Rc::new(host.clone()), HostCapabilities::all(), HostOptions::default());
+    host.set_current(Some(&file));
+    let mut s = Scenario::start_view();
+    let version = host.version_of(&file).expect("version");
+    let (n, d, f) = (name.to_string(), data.to_vec(), folder.clone());
+    s.update(|e, w, cx| e.host_load(n, d, version, Some(f), false, None, true, w, cx).expect("the host's document opens"));
+    s.quit_with_last_window();
+    (s, host, folder, file)
+}
+
+/// K0062: a workbook read from .csv / .tsv goes back to `saveFile` as text (UTF-8 BOM, CRLF), never as the xlsx package.
+fn text_saves() {
+    for (name, data, text) in [("data.csv", "a,b\r\n1,2\r\n", "a,b\r\n1,2"), ("data.tsv", "a\tb\r\n1\t2\r\n", "a\tb\r\n1\t2"), ("data.tab", "a\tb\r\n1\t2\r\n", "a\tb\r\n1\t2")] {
+        let (mut s, host, _folder, file) = start_with(name, data.as_bytes());
+        s.update(|e, w, cx| e.save(&crate::shell::actions::Save, w, cx));
+        s.settle();
+        assert!(host.calls().contains(&"saveFile".to_string()), "{name}: saveFile");
+        let saved = host.bytes_of(&file).expect("bytes");
+        assert!(saved.starts_with(&[0xEF, 0xBB, 0xBF]) && !saved.starts_with(b"PK"), "{name}: BOM, not a ZIP");
+        let body = String::from_utf8(saved[3..].to_vec()).expect("utf-8");
+        assert!(body.starts_with(text), "{name}: {body:?}");
+        assert!(body.ends_with("\r\n") && !body.replace("\r\n", "").contains('\n'), "{name}: CRLF only");
+        host::uninstall();
+    }
+}
+
+/// K0062: 名前を付けて保存 writes the format the name's extension says (a text file stays text; a workbook is xlsx).
+fn text_save_as() {
+    let (mut s, host, folder, _file) = start_with("data.csv", "a,b\r\n1,2\r\n".as_bytes());
+    for (typed, saved_name, text) in [("copy", "copy.csv", true), ("copy2.tsv", "copy2.tsv", true)] {
+        s.update(|e, w, cx| e.save_as(&crate::shell::actions::SaveAs, w, cx));
+        s.settle();
+        s.update(|e, w, cx| e.host_fd_select_folder(Some(folder.clone()), w, cx));
+        s.settle();
+        s.update(|e, w, cx| e.host_fd_set_name(typed, w, cx));
+        s.update(|e, w, cx| e.host_fd_confirm(w, cx));
+        s.settle();
+        let id = host.find_file(Some(&folder), saved_name).unwrap_or_else(|| panic!("{saved_name} was saved"));
+        let bytes = host.bytes_of(&id).expect("bytes");
+        assert_eq!(!bytes.starts_with(b"PK"), text, "{saved_name}");
+        if saved_name.ends_with(".tsv") {
+            assert!(String::from_utf8_lossy(&bytes).contains("a\tb"), "tab-separated");
+        } else {
+            assert!(String::from_utf8_lossy(&bytes).contains("a,b"));
+        }
+    }
+    host::uninstall();
+}
+
+/// K0062: a workbook of a package is still saved as xlsx by name.
+fn xlsx_save_as() {
+    let bytes = ibis_formats::blank_file(ibis_formats::Kind::Workbook).expect("a blank workbook");
+    let (mut s, host, folder, _file) = start_with("book.xlsx", &bytes);
+    s.update(|e, w, cx| e.save_as(&crate::shell::actions::SaveAs, w, cx));
+    s.settle();
+    s.update(|e, w, cx| e.host_fd_set_name("other", w, cx));
+    s.update(|e, w, cx| e.host_fd_confirm(w, cx));
+    s.settle();
+    let id = host.find_file(Some(&folder), "other.xlsx").expect("saved as xlsx");
+    assert!(host.bytes_of(&id).expect("bytes").starts_with(b"PK"));
+    host::uninstall();
+}
+
+/// K0062: a file read from an old binary format (.xls) is not written back over its name: 名前を付けて保存 asks for the new name (.xlsx).
+fn legacy_saves_as() {
+    let blank = ibis_formats::blank_file(ibis_formats::Kind::Workbook).expect("a blank workbook");
+    let xls = ibis_formats::write_xls(&ibis_formats::open(blank).expect("opens").presentation).expect("an old binary workbook");
+    assert!(ibis_formats::is_legacy_binary(&xls));
+    let (mut s, host, folder, _file) = start_with("old.xls", &xls);
+    assert!(s.with(|e, _| e.opened_from_legacy), "read as an old binary file");
+    s.update(|e, w, cx| e.save(&crate::shell::actions::Save, w, cx));
+    s.settle();
+    assert!(!host.calls().contains(&"saveFile".to_string()), "no ZIP over the .xls");
+    assert!(s.with(|e, _| e.host.dialog.as_ref().is_some_and(|d| d.mode() == crate::shell::host_file_dialog::Mode::SaveAs)), "save as opens");
+    s.update(|e, w, cx| e.host_fd_confirm(w, cx));
+    s.settle();
+    let id = host.find_file(Some(&folder), "old.xlsx").expect("offered as old.xlsx");
+    assert!(host.bytes_of(&id).expect("bytes").starts_with(b"PK"));
+    assert!(s.with(|e, _| !e.opened_from_legacy), "the bar is gone");
+    host::uninstall();
+}
+
+/// K0062 Q1-Q3, Q7: a workbook read from a text file is saved as xlsx when the name typed ends in .xlsx (as Excel's 名前を付けて保存 does for a
+/// csv it opened); after that it is a workbook (its 上書き保存 is the package) and nothing says that only the values were kept.
+fn text_to_xlsx() {
+    for (name, data) in [("data.csv", "a,b\r\n1,2\r\n"), ("data.tsv", "a\tb\r\n1\t2\r\n"), ("data.tab", "a\tb\r\n1\t2\r\n")] {
+        let (mut s, host, folder, file) = start_with(name, data.as_bytes());
+        s.update(|e, w, cx| e.save_as(&crate::shell::actions::SaveAs, w, cx));
+        s.settle();
+        s.update(|e, w, cx| e.host_fd_select_folder(Some(folder.clone()), w, cx));
+        s.settle();
+        s.update(|e, w, cx| e.host_fd_set_name("book.xlsx", w, cx));
+        s.update(|e, w, cx| e.host_fd_confirm(w, cx));
+        s.settle();
+        let id = host.find_file(Some(&folder), "book.xlsx").unwrap_or_else(|| panic!("{name}: book.xlsx was saved"));
+        let bytes = host.bytes_of(&id).expect("bytes");
+        assert!(bytes.starts_with(b"PK"), "{name}: a package");
+        let reread = ibis_formats::open(bytes).expect("the saved xlsx opens");
+        let sheet = reread.presentation.slides.iter().flat_map(|slide| slide.shapes.iter()).find_map(|shape| match &shape.kind {
+            ibis_doc_model::ShapeKind::Sheet(sheet) => Some(sheet.clone()),
+            _ => None,
+        });
+        assert!(sheet.is_some(), "{name}: the same sheet is in it");
+        assert!(!s.status_texts().join(" / ").contains(crate::shell::i18n::text("shell.host.text-save-values-only").as_ref()), "{name}: no values-only note for an xlsx");
+        s.update(|e, w, cx| e.save(&crate::shell::actions::Save, w, cx));
+        s.settle();
+        assert!(host.bytes_of(&id).expect("bytes").starts_with(b"PK"), "{name}: saved again, still the package");
+        // The file the document was read from is untouched.
+        assert_eq!(host.bytes_of(&file).expect("bytes"), data.as_bytes(), "{name}: the original");
+        host::uninstall();
+    }
+}
+
+/// K0062 Q5: only opening a text file (plain values: numbers, a leading zero, quotes, a date-like text) and saving it tells nothing.
+fn text_open_no_note() {
+    let data = "name,qty,when\r\n\"x,y\",001,2026-01-02\r\nb,2.5,\"a \"\"q\"\"\"\r\n";
+    let (mut s, host, _folder, file) = start_with("plain.csv", data.as_bytes());
+    s.update(|e, w, cx| e.save(&crate::shell::actions::Save, w, cx));
+    s.settle();
+    assert!(host.calls().contains(&"saveFile".to_string()));
+    assert!(host.bytes_of(&file).expect("bytes").starts_with(&[0xEF, 0xBB, 0xBF]));
+    let said = s.status_texts().join(" / ");
+    assert!(!said.contains(crate::shell::i18n::text("shell.host.text-save-values-only").as_ref()), "no note for plain values: {said}");
     host::uninstall();
 }

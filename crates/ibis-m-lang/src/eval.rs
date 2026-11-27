@@ -28,6 +28,8 @@ pub struct Interp {
     globals: std::cell::RefCell<HashMap<String, Value>>,
     culture: Cell<crate::culture::Culture>,
     now: Cell<Option<(i64, f64)>>,
+    /// The local offset from UTC in minutes (the host gives it, as it gives the clock; 0 when it does not).
+    utc_offset: Cell<i32>,
     host: std::cell::RefCell<Option<Rc<dyn crate::host::Host>>>,
 }
 
@@ -39,7 +41,7 @@ impl Default for Interp {
 
 impl Interp {
     pub fn new() -> Self {
-        Interp { lib: crate::builtin::library(), depth: Cell::new(0), steps: Cell::new(0), globals: Default::default(), culture: Cell::new(crate::culture::Culture::Ja), now: Cell::new(None), host: Default::default() }
+        Interp { lib: crate::builtin::library(), depth: Cell::new(0), steps: Cell::new(0), globals: Default::default(), culture: Cell::new(crate::culture::Culture::Ja), now: Cell::new(None), utc_offset: Cell::new(0), host: Default::default() }
     }
 
     /// The culture the conversions use when a call names none (`Culture.Current`): ja-JP unless the host says otherwise.
@@ -55,6 +57,12 @@ impl Interp {
     /// `DateTime.FixedLocalNow` is.
     pub fn set_now(&self, day: i64, seconds: f64) {
         self.now.set(Some((day, seconds)));
+    }
+    pub fn set_utc_offset(&self, minutes: i32) {
+        self.utc_offset.set(minutes);
+    }
+    pub fn utc_offset(&self) -> i32 {
+        self.utc_offset.get()
     }
     pub fn now(&self) -> Result<(i64, f64), MError> {
         self.now.get().ok_or_else(|| MError::expr("The current time is not available."))
@@ -509,6 +517,15 @@ impl Interp {
                 Ok(DateTime(d + total.div_euclid(DAY) as i64, total.rem_euclid(DAY)))
             }
             (BinOp::Sub, DateTime(d1, t1), DateTime(d2, t2)) => Ok(Duration((d1 - d2) as f64 * DAY + t1 - t2)),
+            (BinOp::Sub, DateTimeZone(d1, t1, o1), DateTimeZone(d2, t2, o2)) => Ok(Duration(crate::lib_zone::instant(*d1, *t1, *o1) - crate::lib_zone::instant(*d2, *t2, *o2))),
+            (BinOp::Add, DateTimeZone(d, t, o), Duration(s)) | (BinOp::Add, Duration(s), DateTimeZone(d, t, o)) => {
+                let total = *t + s;
+                Ok(DateTimeZone(d + total.div_euclid(DAY) as i64, total.rem_euclid(DAY), *o))
+            }
+            (BinOp::Sub, DateTimeZone(d, t, o), Duration(s)) => {
+                let total = *t - s;
+                Ok(DateTimeZone(d + total.div_euclid(DAY) as i64, total.rem_euclid(DAY), *o))
+            }
             (BinOp::Sub, Time(x), Time(y)) => Ok(Duration(x - y)),
             (BinOp::Add, Time(t), Duration(s)) | (BinOp::Add, Duration(s), Time(t)) => Ok(Time((t + s).rem_euclid(DAY))),
             (BinOp::Sub, Time(t), Duration(s)) => Ok(Time((t - s).rem_euclid(DAY))),
@@ -535,6 +552,7 @@ impl Interp {
             (Text(x), Text(y)) => x == y,
             (Date(x), Date(y)) => x == y,
             (DateTime(d1, t1), DateTime(d2, t2)) => d1 == d2 && t1 == t2,
+            (DateTimeZone(d1, t1, o1), DateTimeZone(d2, t2, o2)) => crate::lib_zone::instant(*d1, *t1, *o1) == crate::lib_zone::instant(*d2, *t2, *o2),
             (Time(x), Time(y)) | (Duration(x), Duration(y)) => x == y,
             (List(x), List(y)) => {
                 if x.len() != y.len() {
@@ -597,6 +615,7 @@ impl Interp {
             (Logical(x), Logical(y)) => Some(x.cmp(y)),
             (Date(x), Date(y)) => Some(x.cmp(y)),
             (DateTime(d1, t1), DateTime(d2, t2)) => Some(d1.cmp(d2).then(t1.partial_cmp(t2).unwrap_or(Ordering::Equal))),
+            (DateTimeZone(d1, t1, o1), DateTimeZone(d2, t2, o2)) => crate::lib_zone::instant(*d1, *t1, *o1).partial_cmp(&crate::lib_zone::instant(*d2, *t2, *o2)),
             (Time(x), Time(y)) | (Duration(x), Duration(y)) => x.partial_cmp(y),
             _ => None,
         })

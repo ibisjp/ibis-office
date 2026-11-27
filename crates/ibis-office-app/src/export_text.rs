@@ -95,7 +95,7 @@ pub(crate) fn note_paragraphs(text: &NoteText) -> Vec<Paragraph> {
                 .collect();
             let hang = LEVEL_PT * 12_700;
             let level = p.level as i64 * hang;
-            let bullet = p.bullet.as_ref().map(|b| Bullet { text: b.clone(), picture: None, size: 100_000, color: None, auto: None, symbol: None, font: p.bullet_font.clone() });
+            let bullet = p.bullet.as_ref().map(|b| Bullet { text: b.clone(), picture: None, size: 100_000, color: None, color_theme: None, auto: None, symbol: None, font: p.bullet_font.clone() });
             let pt = |v: f32| (v * 12_700.0).round() as i64;
             let own = p.layout.map(|l| (pt(l.left_pt), -pt(l.hang_pt), (l.before_pt * 100.0).round() as u32, ibis_doc_model::LineSpacing::Points((l.pitch_pt * 100.0).round() as u32)));
             Paragraph {

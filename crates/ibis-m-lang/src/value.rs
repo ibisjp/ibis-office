@@ -19,6 +19,9 @@ pub enum Value {
     Date(i64),
     /// Days since 0001-01-01 and seconds in the day.
     DateTime(i64, f64),
+    /// A datetime with its offset from UTC in minutes: the days since 0001-01-01 and seconds of the day *as written* (local to the offset). Equal and
+    /// ordered by the instant (Excel, K0039 second measurement).
+    DateTimeZone(i64, f64, i32),
     /// Seconds in the day.
     Time(f64),
     /// Seconds (negative allowed).
@@ -141,6 +144,7 @@ impl Value {
             Value::Text(_) => "text",
             Value::Date(_) => "date",
             Value::DateTime(..) => "datetime",
+            Value::DateTimeZone(..) => "datetimezone",
             Value::Time(_) => "time",
             Value::Duration(_) => "duration",
             Value::List(_) => "list",
@@ -170,7 +174,8 @@ impl Value {
             Ty::Int64 | Ty::Int32 => matches!(self, Value::Number(n) if n.fract() == 0.0),
             Ty::Text => matches!(self, Value::Text(_)),
             Ty::Date => matches!(self, Value::Date(_)),
-            Ty::DateTime | Ty::DateTimeZone => matches!(self, Value::DateTime(..)),
+            Ty::DateTime => matches!(self, Value::DateTime(..)),
+            Ty::DateTimeZone => matches!(self, Value::DateTimeZone(..)),
             Ty::Time => matches!(self, Value::Time(_)),
             Ty::Duration => matches!(self, Value::Duration(_)),
             Ty::Binary => matches!(self, Value::Binary(_)),
@@ -192,6 +197,7 @@ impl std::fmt::Debug for Value {
             Value::Text(s) => write!(f, "{s:?}"),
             Value::Date(d) => write!(f, "date({d})"),
             Value::DateTime(d, s) => write!(f, "datetime({d},{s})"),
+            Value::DateTimeZone(d, s, o) => write!(f, "datetimezone({d},{s},{o})"),
             Value::Time(s) => write!(f, "time({s})"),
             Value::Duration(s) => write!(f, "duration({s})"),
             Value::List(_) => write!(f, "list"),

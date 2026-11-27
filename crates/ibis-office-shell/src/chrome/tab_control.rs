@@ -184,12 +184,12 @@ impl Element for Tabs {
                     )
             );
         }
-        #[cfg_attr(not(all(feature="scenarios",any(target_os="macos",target_os="linux"))),allow(unused_variables))]
+        #[cfg_attr(not(all(feature="scenarios",any(target_os="macos",target_os="linux",windows))),allow(unused_variables))]
         let probe_id=format!("tab-indicator-{}",self.id);
         strip=strip.child(div().absolute().left(px(at.0)).w(px(at.1)).bottom_0().h(px(4.)).bg(rgb(PRIMARY_BUTTON_BG)).child(canvas(|_,_,_|(),move|bounds,_,_,_|{
-            #[cfg(not(all(feature="scenarios",any(target_os="macos",target_os="linux"))))]
+            #[cfg(not(all(feature="scenarios",any(target_os="macos",target_os="linux",windows))))]
             let _=bounds;
-            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
             crate::scenario::button_probe::record_bounds(&probe_id,bounds);
         }).absolute().inset_0()));
         let mut root = div()
@@ -204,6 +204,10 @@ impl Element for Tabs {
                     .overflow_x_scroll()
                     .track_scroll(&scroll)
                     .on_scroll_wheel(move |e: &ScrollWheelEvent, w, cx| {
+                        // A finger's scroll is the strip's own (it stretches and coasts: K0065, K0078).
+                        if e.touch_fingers != 0 {
+                            return;
+                        }
                         if max_scroll > 0. {
                             let delta = e.delta.pixel_delta(px(20.));
                             let dx = if delta.x != px(0.) { delta.x } else { delta.y };

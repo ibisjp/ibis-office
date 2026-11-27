@@ -16,13 +16,13 @@ This page, in order:
 
 The quickest way is `npm install @ibisjp/ibis-office` (see [Install from npm](#install-from-npm)). The same files are also attached to every release as an archive.
 
-Every release carries the browser version as an archive. The browser version of [v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9) is these three files:
+Every release carries the browser version as an archive. The browser version of [v0.8.10](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.10) is these three files:
 
 | File | What it is |
 |---|---|
-| [`ibisOffice-0.8.9-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip) | The browser version |
-| [`ibisOffice-0.8.9-Web.zip.sha256`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip.sha256) | SHA-256 of the archive |
-| [`ibisOffice-0.8.9-Web.files.sha256`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.files.sha256) | SHA-256 of each file inside the archive, by path |
+| [`ibisOffice-0.8.10-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.zip) | The browser version |
+| [`ibisOffice-0.8.10-Web.zip.sha256`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.zip.sha256) | SHA-256 of the archive |
+| [`ibisOffice-0.8.10-Web.files.sha256`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.files.sha256) | SHA-256 of each file inside the archive, by path |
 
 The files of a version are at `https://github.com/ibisjp/ibis-office/releases/download/v<version>/<file>`. A release's files do not change once it is published.
 
@@ -75,10 +75,10 @@ The archive is the folder to serve, starting at its top:
 Put the unzipped folder anywhere your web server serves static files, and **serve it as it is** (do not rename or move files inside it). A folder per version is the simplest layout:
 
 ```text
-/ibisoffice/0.8.9/index.html
-/ibisoffice/0.8.9/main.js
-/ibisoffice/0.8.9/ibisoffice-host.js
-/ibisoffice/0.8.9/pkg/ibis_office_app_bg.wasm
+/ibisoffice/0.8.10/index.html
+/ibisoffice/0.8.10/main.js
+/ibisoffice/0.8.10/ibisoffice-host.js
+/ibisoffice/0.8.10/pkg/ibis_office_app_bg.wasm
 ...
 ```
 
@@ -108,15 +108,15 @@ If a transition sound or a font cannot be fetched, the editor goes on without it
 
 ### The smallest page that opens a document
 
-Your page puts the editor in an `iframe`, connects with `attachIframe` and gives the document to `load`. Here the page's server keeps files under `/api/files/42` (an example; any storage works) and the editor is served under `/ibisoffice/0.8.9/`:
+Your page puts the editor in an `iframe`, connects with `attachIframe` and gives the document to `load`. Here the page's server keeps files under `/api/files/42` (an example; any storage works) and the editor is served under `/ibisoffice/0.8.10/`:
 
 ```html
 <!doctype html>
 <meta charset="utf-8">
-<iframe id="office" src="/ibisoffice/0.8.9/index.html?host=1"
+<iframe id="office" src="/ibisoffice/0.8.10/index.html?host=1"
         style="width:100%; height:100vh; border:0"></iframe>
 <script type="module">
-  import { attachIframe } from '/ibisoffice/0.8.9/ibisoffice-host.js';
+  import { attachIframe } from '/ibisoffice/0.8.10/ibisoffice-host.js';
 
   const handle = await attachIframe(document.getElementById('office'), {
     options: { locale: 'en', user: { name: 'Taro Yamada' }, ui: { closeButton: true, startWindow: false } },

@@ -360,10 +360,27 @@ fn programs(cells: &[Vec<String>], whole: &[String], output: &str) -> Vec<Vec<Pi
     best[n].iter().map(|(_, l)| l.clone()).collect()
 }
 
+/// The longest text (a cell or an example) a way is searched for.
+pub(crate) const MAX_TEXT_CHARS: usize = 64;
+/// The most examples learnt from.
+const MAX_EXAMPLES: usize = 100;
+/// The most cells beside the column read.
+pub(crate) const MAX_SOURCE_COLUMNS: usize = 8;
+/// The most rows of the region a suggestion is computed for.
+pub(crate) const MAX_REGION_ROWS: u32 = 2000;
+
 /// The answers for `rows` (each row's cells beside the column), learnt
 /// from `examples` (the first rows' cells and what was typed for them).
 /// `None` when no one way makes every example.
 pub(crate) fn flash_fill(examples: &[(Vec<String>, String)], rows: &[Vec<String>]) -> Option<Vec<String>> {
+    // Like Excel, no suggestion for long texts or many cells: the search
+    // grows with the square of the output length and the number of parts.
+    let too_long = |t: &str| t.chars().count() > MAX_TEXT_CHARS;
+    if examples.len() > MAX_EXAMPLES
+        || examples.iter().any(|(row, out)| too_long(out) || row.len() > MAX_SOURCE_COLUMNS || row.iter().any(|c| too_long(c)))
+    {
+        return None;
+    }
     let (first, rest) = examples.split_first()?;
     let split = |row: &[String]| row.iter().map(|c| tokens(c)).collect::<Vec<_>>();
     let candidates = programs(&split(&first.0), &first.0, &first.1);
@@ -391,6 +408,15 @@ mod tests {
 
     fn row(cells: &[&str]) -> Vec<String> {
         cells.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn long_texts_give_no_suggestion_quickly() {
+        let long: String = "長い日本語の文章です。".repeat(40);
+        let examples = [(row(&[&long, &long]), long.clone())];
+        let started = std::time::Instant::now();
+        assert!(flash_fill(&examples, &[row(&[&long, &long])]).is_none());
+        assert!(started.elapsed().as_millis() < 50);
     }
 
     #[test]
@@ -473,6 +499,12 @@ mod tests {
     }
 }
 
+type PreviewKey = (usize, u64, u32, u32, String);
+type PreviewCache = Option<(PreviewKey, Vec<(u32, String)>)>;
+thread_local! {
+    static FLASH_FILL_CACHE: std::cell::RefCell<PreviewCache> = const { std::cell::RefCell::new(None) };
+}
+
 #[ibis_office_macros::editor_ext(FlashFill)]
 impl crate::shell::editor::SlideEditor {
     /// Compute inline Flash Fill ghost predictions `(row, predicted_text)` for `column` starting at `row`
@@ -496,7 +528,7 @@ impl crate::shell::editor::SlideEditor {
             None,
         )[0];
         let sources: Vec<u32> = (region.first_column..=region.last_column).filter(|&c| c != column).collect();
-        if sources.is_empty() {
+        if sources.is_empty() || sources.len() > MAX_SOURCE_COLUMNS || region.last_row - region.first_row >= MAX_REGION_ROWS || typed.chars().count() > MAX_TEXT_CHARS {
             return Vec::new();
         }
         let text = |r: u32, c: u32| {
@@ -573,7 +605,14 @@ impl crate::shell::editor::SlideEditor {
         let Some((_, sheet)) = self.current_sheet() else {
             return Vec::new();
         };
-        Self::compute_flash_fill_preview(sheet, edit.column, edit.row, &edit.text)
+        // Drawn every frame: computed again only when what is typed changes.
+        let key = (std::sync::Arc::as_ptr(sheet) as usize, edit.slide.0, edit.column, edit.row, edit.text.to_string());
+        if let Some(hit) = FLASH_FILL_CACHE.with(|c| c.borrow().as_ref().filter(|(k, _)| *k == key).map(|(_, v)| v.clone())) {
+            return hit;
+        }
+        let value = Self::compute_flash_fill_preview(sheet, edit.column, edit.row, &edit.text);
+        FLASH_FILL_CACHE.with(|c| *c.borrow_mut() = Some((key, value.clone())));
+        value
     }
 
     /// If an inline Flash Fill ghost preview is active, accept it and fill the column in one Undo step.
@@ -656,5 +695,36 @@ impl crate::shell::editor::SlideEditor {
         }
         self.status = Some(crate::shell::i18n::format("flash-fill.done", &[("count", &count)]).into());
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod preview_time_tests {
+    use super::FlashFillCrate as _;
+    use ibis_doc_model::{CellKind, CellValue, Sheet, SheetCell};
+
+    /// A table like an issue list: long Japanese sentences in many rows; typing
+    /// in the empty column beside must neither suggest nor take long.
+    #[test]
+    fn long_sentences_table_gives_no_preview_quickly() {
+        let mut sheet = Sheet::default();
+        let (rows, cols) = (400u32, 7u32);
+        sheet.rows = vec![20; rows as usize];
+        sheet.columns = vec![80; cols as usize + 1];
+        sheet.styles = vec![ibis_doc_model::CellStyle::default()];
+        for r in 0..rows {
+            for c in 0..cols {
+                let text = format!("{r}行目の文章です。長い日本語の説明が続きます。{}", "あいうえお".repeat(((r + c) % 40 + 5) as usize));
+                sheet.put_cell(r, c, Some(SheetCell { runs: None, phonetic: None, row: r, column: c, value: CellValue::Text(text.clone()), text, kind: CellKind::Text, formula: None, style: 0 }));
+            }
+            if r < 3 {
+                let text = format!("{r}行目の文章です。長い日本語の説明が続きます。{}", "あいうえお".repeat(((r) % 40 + 5) as usize));
+                sheet.put_cell(r, cols, Some(SheetCell { runs: None, phonetic: None, row: r, column: cols, value: CellValue::Text(text.clone()), text, kind: CellKind::Text, formula: None, style: 0 }));
+            }
+        }
+        let started = std::time::Instant::now();
+        let preview = crate::shell::editor::SlideEditor::compute_flash_fill_preview(&sheet, cols, 3, "3");
+        assert!(preview.is_empty());
+        assert!(started.elapsed().as_millis() < 50, "{:?}", started.elapsed());
     }
 }

@@ -12,6 +12,7 @@ use gpui_kit::*;
 use crate::shell::chrome::{MenuEntry, MenuId, MenuItem, MenuPart, SidebarPanel, ToolButton, ToolItem, text_secondary};
 use crate::shell::chrome_defaults::{SEP, item, sub};
 use crate::shell::editor::SlideEditor;
+use crate::ext::*;
 use crate::shell::palette::rgb;
 
 /// `FormatEditor::menu_items`.
@@ -51,6 +52,7 @@ fn view_start(editor: &SlideEditor) -> Vec<MenuEntry> {
         SEP,
         item("pptx.snap-to-grid", "").checked(editor.is_pptx_snap_to_grid_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_grid(cx)).into(),
         item("pptx.snap-to-shape", "").checked(editor.is_pptx_snap_to_shape_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_shape(cx)).into(),
+        item("pptx.grid-guides.settings", "tune").on(|this, w, cx| this.open_grid_guides_panel(w, cx)).into(),
         SEP,
         item("pptx.notes", "").into(),
         SEP,

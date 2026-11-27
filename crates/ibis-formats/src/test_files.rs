@@ -806,3 +806,41 @@ pub fn docx_with_unupdated_toc(data: &[u8], result: &str, dirty: bool, update_fi
     }
     package.save(ibis_ooxml::SaveOptions::default()).unwrap()
 }
+
+/// A document (`data`) with a SmartArt graphic (図表) of three boxes in its own paragraph, as Word saves one: the graphic's frame in the body (`dgm:relIds`), its data
+/// part and the drawing part Word keeps of it (`dsp:drawing`, whose shapes the data part's `dsp:dataModelExt` names by relationship). The texts are 計画, 設計, 実装;
+/// the frame is 12 cm by 6 cm.
+pub fn docx_with_smartart(data: &[u8]) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(data.to_vec()).unwrap();
+    let main = "word/document.xml";
+    let data_part = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst/><dgm:cxnLst/><dgm:bg/><dgm:whole/><dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram"><dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" relId="rIdSmartDrawing" minVer="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:ext></dgm:extLst></dgm:dataModel>"#;
+    // Three rounded boxes of 3.2 cm by 2 cm, 1.2 cm apart, in the frame of 12 cm by 6 cm.
+    let boxes: String = [("計画", 0_i64), ("設計", 1_584_000), ("実装", 3_168_000)]
+        .iter()
+        .enumerate()
+        .map(|(i, (text, x))| {
+            format!(
+                r#"<dsp:sp modelId="{{0000000{i}-0000-0000-0000-000000000000}}"><dsp:nvSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvSpPr/></dsp:nvSpPr><dsp:spPr><a:xfrm><a:off x="{x}" y="720000"/><a:ext cx="1152000" cy="720000"/></a:xfrm><a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:ln w="12700"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:ln></dsp:spPr><dsp:style><a:lnRef idx="2"><a:scrgbClr r="0" g="0" b="0"/></a:lnRef><a:fillRef idx="1"><a:scrgbClr r="0" g="0" b="0"/></a:fillRef><a:effectRef idx="0"><a:scrgbClr r="0" g="0" b="0"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></dsp:style><dsp:txBody><a:bodyPr spcFirstLastPara="0" vert="horz" wrap="square" lIns="45720" tIns="45720" rIns="45720" bIns="45720" numCol="1" spcCol="1270" anchor="ctr" anchorCtr="0"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="ja-JP" sz="1400" kern="1200"/><a:t>{text}</a:t></a:r></a:p></dsp:txBody><dsp:txXfrm><a:off x="{x}" y="720000"/><a:ext cx="1152000" cy="720000"/></dsp:txXfrm></dsp:sp>"#
+            )
+        })
+        .collect();
+    let drawing = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><dsp:drawing xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>{boxes}</dsp:spTree></dsp:drawing>"#
+    );
+    package.set_bytes("word/diagrams/data1.xml", data_part.as_bytes().to_vec());
+    package.set_bytes("word/diagrams/drawing1.xml", drawing.into_bytes());
+    package.set_override("word/diagrams/data1.xml", "application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml").unwrap();
+    package.set_override("word/diagrams/drawing1.xml", "application/vnd.ms-office.drawingml.diagramDrawing+xml").unwrap();
+    let data_id = package.add_relationship(main, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData", "diagrams/data1.xml", false).unwrap();
+    let drawing_id = package.add_relationship(main, "http://schemas.microsoft.com/office/2007/relationships/diagramDrawing", "diagrams/drawing1.xml", false).unwrap();
+    let data_part = String::from_utf8(package.read("word/diagrams/data1.xml").unwrap()).unwrap().replace("rIdSmartDrawing", &drawing_id);
+    package.set_bytes("word/diagrams/data1.xml", data_part.into_bytes());
+    let paragraph = format!(
+        r#"<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="4320000" cy="2160000"/><wp:docPr id="9001" name="図表 1"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:dm="{data_id}" r:lo="{data_id}" r:qs="{data_id}" r:cs="{data_id}"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+    );
+    let xml = String::from_utf8(package.read(main).unwrap()).unwrap();
+    let at = xml.rfind("<w:sectPr").unwrap();
+    let xml = format!("{}{}{}", &xml[..at], paragraph, &xml[at..]);
+    package.set_bytes(main, xml.into_bytes());
+    package.save(ibis_ooxml::SaveOptions::default()).unwrap()
+}

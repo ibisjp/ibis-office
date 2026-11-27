@@ -39,6 +39,21 @@ impl SlideEditor {
             let picked = cx.prompt_for_new_path(&directory, Some(&name));
             cx.spawn_in(window, async move |editor, cx| {
                 let Ok(Ok(Some(path))) = picked.await else { return };
+                if format == DocxConvertFormat::Html {
+                    // The page with its charts and SmartArt as pictures: `--export html` of the document (#208), the way of the presentation and the workbook; without the program, the text page below.
+                    let job = editor.update(cx, |editor, _| editor.write_html_with_pictures(path.clone(), None)).ok().and_then(Result::ok);
+                    if let Some(job) = job {
+                        let result = cx.background_executor().spawn(async move { job() }).await;
+                        let _ = editor.update_in(cx, |editor, _, cx| {
+                            let status = match result {
+                                Ok(written) => format!("{}: {}", text("docx.convert.exported"), written.display()),
+                                Err(error) => error,
+                            };
+                            editor.set_status(status, cx);
+                        });
+                        return;
+                    }
+                }
                 let _ = editor.update_in(cx, |editor, _, cx| {
                     if let Err(error) = editor.export_docx_to_file(format, &path, cx) { editor.set_status(error, cx); }
                 });
@@ -55,6 +70,21 @@ impl SlideEditor {
                 DocxConvertFormat::Markdown => "text/markdown;charset=utf-8",
                 _ => "application/octet-stream",
             };
+            if format == DocxConvertFormat::Html && self.presentation().flow.is_some() {
+                // The charts and SmartArt as pictures drawn in this window into textures (`shell::html_raster`, #208).
+                let presentation = self.presentation().clone();
+                self.html_with_pictures(
+                    move |raster| ibis_formats::docx_convert::export_html_with(presentation.flow.as_ref().expect("a document"), raster),
+                    move |this, html, window, cx| {
+                        if !this.browser_export(name.clone(), mime, html.into_bytes(), window, cx) {
+                            this.set_status(format!("{}: {name}", text("docx.convert.exported")), cx);
+                        }
+                    },
+                    window,
+                    cx,
+                );
+                return;
+            }
             match export_docx_format(&self.presentation().clone(), format) {
                 Ok(bytes) => {
                     // A host that keeps the files takes the export in its file window; else it is downloaded.

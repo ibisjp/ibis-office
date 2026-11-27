@@ -17,7 +17,8 @@
 //! - `pad = floor(|ppem − tmAscent| + 1.5)`. Known: it equals `|ppem − tmAscent| + 1`, and with the rounded `tmAscent` (not the
 //!   exact `usWinAscent × ppem / unitsPerEm`) it fits ＭＳ Ｐゴシック at 72 pt as well. Unknown: why Excel adds it, and why it is
 //!   the distance from the ascent to the em that is added.
-//! - `extra = 2 × max(0, floor((round(EL) − 1) / 2))`, with the external leading
+//! - `extra = 2 × max(0, floor((round(EL) − t) / 2))` with `t = 0` where `tmAscent = ppem` (the row's `pad` is 1) and `t = 1` where it is not,
+//!   with the external leading
 //!   `EL = max(0, hhea.lineGap + hhea.ascender − hhea.descender − usWinAscent − usWinDescent) / unitsPerEm × ppem`
 //!   (GDI's tmExternalLeading is built so). Known: it is 0 for typefaces without it (Calibri, Segoe UI ...), and gives the steps of
 //!   2 pixels at EL = 2.5, 4.5, 6.5 ... in Arial (ppem 77 on), Times New Roman (ppem 59 on) and SimSun (ppem 18, 33, 47, 61, 75).
@@ -30,10 +31,11 @@
 //!
 //! 游ゴシック and 游明朝: the formula gives 游ゴシック 11 pt (ppem 15, usWinAscent 2017, usWinDescent 619, hhea lineGap 1024:
 //! 15 + 5 + 1 + 4) 25 pixels = 18.75 pt, which is Excel 365's standard height of a workbook in that font (COM measurement, 2026-11-09).
-//! Known: at other sizes the `extra` steps of these two come one pixel of EL later than the formula's in places (earlier measurement:
-//! 游明朝 fits `extra = 2 × floor(round(EL) / 2)` at 86 of 86 sizes, 游ゴシック the formula at 74 of 86 and that at 64 of 86), the cause of
-//! the one-pixel phase is not known; those rows can be one pixel off. A typeface that is not installed (a stand-in's file would give the
-//! stand-in's rows) and sizes under 11 ppem (the bitmap fonts) keep the height the file stores.
+//! With `t` as above (2026-11-26, Windows scenario `xlsx::row_fit_paths_agree`: a 14 pt bold 游ゴシック row, 32 px in Excel, 30 px with `t = 1`
+//! throughout) it fits the 90 sizes (ppem 11 to 100) of each of 游ゴシック and 游明朝 of `tasks/doc/m77-row-height-table.tsv`, and the other five
+//! typefaces of that table as before (630 of 630). Unknown: why the step comes one pixel of EL earlier where the ascent is the em.
+//! A typeface that is not installed (a stand-in's file would give the stand-in's rows) and sizes under 11 ppem (the bitmap fonts) keep the
+//! height the file stores.
 
 use std::sync::Arc;
 
@@ -74,7 +76,10 @@ fn line_pixels(m: &WinRowMetrics, size: u32) -> f64 {
     };
     let pad = ((ppem - ascent).abs() + 1.5).floor();
     let leading = (m.hhea_line_gap + m.hhea_ascent - m.hhea_descent - m.win_ascent - m.win_descent).max(0.0) / em * ppem;
-    let extra = 2.0 * ((round(leading) - 1.0) / 2.0).floor().max(0.0);
+    // Where the ascent is the em (`pad` is 1) the step comes one pixel of EL earlier (游ゴシック up to ppem 33, 游明朝 always: 90 of 90 sizes of each in
+    // Microsoft Excel 365's rows, `tasks/doc/m77-row-height-table.tsv`, and the other five typefaces of the table at 90 of 90 as before).
+    let edge = if ascent == ppem { 0.0 } else { 1.0 };
+    let extra = 2.0 * ((round(leading) - edge) / 2.0).floor().max(0.0);
     ascent + descent + pad + extra
 }
 
@@ -416,7 +421,8 @@ mod tests {
 
     /// The furigana's line under 11 ppem (Microsoft Excel 365, #M121: the row grows by the line of the furigana's font): Arial 6 pt is 11
     /// pixels and 9 pt 16 (measured 11 and 16), where a row of that font is not given (`pixels_from_metrics`). 游ゴシック 6 pt comes out 13
-    /// against 12 measured: the one pixel of its known phase (module comment). The estimate of a whole row (18 pt, 24 px) it replaced was
+    /// against 12 measured: the one pixel of its known phase (module comment); 9 pt (ppem 12, the ascent is the em: `extra` steps one pixel of EL earlier) is 21, the
+    /// 21 px of Excel 365 in `tasks/doc/m77-row-height-table.tsv` (it was 19 before 4324dc5b0). The estimate of a whole row (18 pt, 24 px) it replaced was
     /// 12 px over for the 6 pt lines.
     #[test]
     fn the_furigana_line_is_the_formula_below_11_ppem_too() {
@@ -426,7 +432,7 @@ mod tests {
         assert_eq!(line_pixels(&arial, 900), 16.0);
         let yu_gothic = metrics((2017.0, 619.0), (1802.0, -455.0, 1024.0), 2048.0, None);
         assert_eq!(line_pixels(&yu_gothic, 600), 13.0);
-        assert_eq!(line_pixels(&yu_gothic, 900), 19.0);
+        assert_eq!(line_pixels(&yu_gothic, 900), 21.0);
     }
 
     /// Yu Gothic 11 pt (ppem 15; the values of YuGothR.ttc: usWinAscent 2017, usWinDescent 619, hhea ascender 1802, descender -455,

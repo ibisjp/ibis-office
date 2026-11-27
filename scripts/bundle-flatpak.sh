@@ -31,8 +31,8 @@ esac
 REMAP="--remap-path-prefix=$HOME/.cargo/registry/src=crates.io --remap-path-prefix=$HOME/.cargo/git/checkouts=git --remap-path-prefix=$HOME/.rustup=rustup --remap-path-prefix=$(pwd)=."
 RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build ${FLAGS[@]+"${FLAGS[@]}"} --locked -p ibis-office-app
 
-VERSION=$(awk -F'\t' '$1 == "Linux" { sub(/\r$/, "", $2); print $2 }' version.txt)
-[[ -n $VERSION ]] || { echo "version.txt has no Linux line" >&2; exit 1; }
+VERSION=$(awk -F'\t' '$1 == "Linux" { sub(/\r$/, "", $2); print $2 }' crates/build-version.txt)
+[[ -n $VERSION ]] || { echo "build-version.txt has no Linux line" >&2; exit 1; }
 
 WORK=target/dist/flatpak
 STAGE="$WORK/staged"

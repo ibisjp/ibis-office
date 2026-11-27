@@ -16,13 +16,13 @@ ibisOffice のブラウザー版は、静的なファイルの集まり（ロー
 
 いちばん手軽なのは `npm install @ibisjp/ibis-office` です（[npm から入れる](#npm-から入れる)）。同じファイルを、各リリースにアーカイブとしても付けています。
 
-リリースごとに、ブラウザー版をアーカイブにして添付しています。[v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9) のブラウザー版は、次の 3 つです。
+リリースごとに、ブラウザー版をアーカイブにして添付しています。[v0.8.10](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.10) のブラウザー版は、次の 3 つです。
 
 | ファイル | 内容 |
 |---|---|
-| [`ibisOffice-0.8.9-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip) | ブラウザー版 |
-| [`ibisOffice-0.8.9-Web.zip.sha256`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip.sha256) | アーカイブの SHA-256 |
-| [`ibisOffice-0.8.9-Web.files.sha256`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.files.sha256) | アーカイブの中の各ファイルのパスと SHA-256 |
+| [`ibisOffice-0.8.10-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.zip) | ブラウザー版 |
+| [`ibisOffice-0.8.10-Web.zip.sha256`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.zip.sha256) | アーカイブの SHA-256 |
+| [`ibisOffice-0.8.10-Web.files.sha256`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.files.sha256) | アーカイブの中の各ファイルのパスと SHA-256 |
 
 各版のファイルは `https://github.com/ibisjp/ibis-office/releases/download/v<版>/<ファイル名>` にあります。公開したリリースのファイルは、後から変わりません。
 
@@ -75,10 +75,10 @@ npx ibis-office-copy public/ibisoffice   # エディターを public/ibisoffice/
 展開したフォルダーを、Web サーバーが静的ファイルとして配る場所に置き、**中のファイルは動かさずそのまま配ってください**。版ごとにフォルダーを分けるのがいちばん簡単です。
 
 ```text
-/ibisoffice/0.8.9/index.html
-/ibisoffice/0.8.9/main.js
-/ibisoffice/0.8.9/ibisoffice-host.js
-/ibisoffice/0.8.9/pkg/ibis_office_app_bg.wasm
+/ibisoffice/0.8.10/index.html
+/ibisoffice/0.8.10/main.js
+/ibisoffice/0.8.10/ibisoffice-host.js
+/ibisoffice/0.8.10/pkg/ibis_office_app_bg.wasm
 ...
 ```
 
@@ -108,15 +108,15 @@ npx ibis-office-copy public/ibisoffice   # エディターを public/ibisoffice/
 
 ### 文書を開く最小のページ
 
-ご自身のページがエディターを `iframe` に入れ、`attachIframe` でつなぎ、`load` に文書を渡します。次の例では、ページのサーバーがファイルを `/api/files/42`（例です。どんな保存先でもかまいません）に持ち、エディターは `/ibisoffice/0.8.9/` から配っています。
+ご自身のページがエディターを `iframe` に入れ、`attachIframe` でつなぎ、`load` に文書を渡します。次の例では、ページのサーバーがファイルを `/api/files/42`（例です。どんな保存先でもかまいません）に持ち、エディターは `/ibisoffice/0.8.10/` から配っています。
 
 ```html
 <!doctype html>
 <meta charset="utf-8">
-<iframe id="office" src="/ibisoffice/0.8.9/index.html?host=1"
+<iframe id="office" src="/ibisoffice/0.8.10/index.html?host=1"
         style="width:100%; height:100vh; border:0"></iframe>
 <script type="module">
-  import { attachIframe } from '/ibisoffice/0.8.9/ibisoffice-host.js';
+  import { attachIframe } from '/ibisoffice/0.8.10/ibisoffice-host.js';
 
   const handle = await attachIframe(document.getElementById('office'), {
     options: { locale: 'ja', user: { name: '山田太郎' }, ui: { closeButton: true, startWindow: false } },

@@ -496,6 +496,14 @@ pub fn query_to_m(query: &Query) -> String {
 fn source_lines(source: &Source, first: &str) -> (Vec<String>, String) {
     let line = |name: &str, body: String| format!("    {} = {body}", id(name));
     match source {
+        Source::JsonArray { .. } => (vec![line(first, "Ibis.JsonArraySource()".to_string())], first.to_string()),
+        Source::Delimited { .. } => (vec![line(first, "Ibis.DelimitedSource()".to_string())], first.to_string()),
+        Source::ParquetFolder { .. } => (vec![line(first, "Ibis.ParquetFolderSource()".to_string())], first.to_string()),
+        Source::ArrowIpc { .. } => (vec![line(first, "Ibis.ArrowIpcSource()".to_string())], first.to_string()),
+        Source::Avro { .. } => (vec![line(first, "Ibis.AvroSource()".to_string())], first.to_string()),
+        Source::Sqlite { .. } => (vec![line(first, "Ibis.SqliteSource()".to_string())], first.to_string()),
+        Source::JsonLines { .. } => (vec![line(first, "Ibis.JsonLinesSource()".to_string())], first.to_string()),
+        Source::Parquet { .. } => (vec![line(first, "Ibis.ParquetSource()".to_string())], first.to_string()),
         Source::Blank => (vec![line(first, "#table({}, {})".to_string())], first.to_string()),
         Source::Table(name) => (vec![line(first, format!("Excel.CurrentWorkbook(){{[Name={}]}}[Content]", q(name)))], first.to_string()),
         Source::Range { sheet, range } => (vec![line(first, format!("Excel.CurrentWorkbook(){{[Name={}]}}[Content] /* {range} */", q(sheet)))], first.to_string()),

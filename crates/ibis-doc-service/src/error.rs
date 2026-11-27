@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolError {
     /// `not_allowed_path`, `invalid_argument`, `file_not_found`, `unsupported_format`, `needs_password`, `file_too_large`, `no_such_document`, `no_such_sheet`,
-    /// `no_such_shape`, `out_of_range`, `read_only`, `discard_required`, `file_changed_on_disk`, `unsupported_operation`, `edit_rejected`, `internal`.
+    /// `no_such_shape`, `out_of_range`, `read_only`, `discard_required`, `file_changed_on_disk`, `unsupported_operation`, `edit_rejected`, `internal`, and (design 159) `revision_mismatch`, `revision_not_found`, `unsupported_revision`, `ambiguous_folder`, `git_not_available`.
     pub code: &'static str,
     pub message: String,
 }

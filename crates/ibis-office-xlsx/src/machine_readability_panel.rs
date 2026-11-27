@@ -235,6 +235,8 @@ impl SlideEditor {
             let wb = self.wb_mut();
             wb.cells.insert(issue.sheet_id, (col, row));
             wb.cell_ends.remove(&issue.sheet_id);
+            // The cell is brought into view (K0100): it may be far off the part of the sheet on screen.
+            self.scroll_cell_into_view();
         }
         if let Some(p) = self.wb_mut().panels.machine_readability.as_mut() {
             p.selected_issue = Some(issue_idx);

@@ -18,6 +18,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::issue238_the_group_is_written_as_tab_selected", saved_as_tab_selected),
         ("xlsx::issue238_fitting_links_rules_and_conditional_formats_go_to_the_group", spread_more),
         ("xlsx::issue238_a_file_saved_with_a_group_opens_as_the_group", opens_as_group),
+        ("xlsx::issue238_menus_are_greyed_in_a_group_and_select_all_stays", menus_in_group),
+        ("xlsx::issue238_fitting_goes_to_every_sheet_each_to_its_own_contents", fitting_per_sheet),
     ]
 }
 
@@ -51,14 +53,16 @@ fn tabs_select_together() {
     let (mut s, ids) = four_sheets();
     assert!(group(&mut s).is_empty(), "one sheet: no group");
     assert_eq!(s.with(|e, _| e.display_title_formatted()), "xlsx-sales.xlsx");
-    // Ctrl + click on the third: the first and the third (the third is now the present one).
+    // Ctrl + click on the third: the first and the third (the first stays the present one, as in Excel).
     click(&mut s, ids[2], true, false);
     assert_eq!(group(&mut s), vec![ids[0], ids[2]]);
-    assert_eq!(s.with(|e, _| e.current_slide), ids[2]);
+    assert_eq!(s.with(|e, _| e.current_slide), ids[0]);
     assert!(s.with(|e, _| e.in_sheet_group(ids[0]) && !e.in_sheet_group(ids[1])));
     assert_eq!(s.with(|e, _| e.group_title_suffix()), Some(crate::shell::i18n::text("_xlsx.group-title").to_string()));
-    // Ctrl + click on a sheet of the group takes it out.
+    // Ctrl + click on the present sheet takes nothing out; on another sheet of the group it takes that one out.
     click(&mut s, ids[0], true, false);
+    assert_eq!(group(&mut s), vec![ids[0], ids[2]], "the present sheet cannot be taken out");
+    click(&mut s, ids[2], true, false);
     assert!(group(&mut s).is_empty(), "one sheet left is no group");
     // Shift + click: from the present sheet to the one clicked.
     s.update({
@@ -194,19 +198,28 @@ fn spread_more() {
     let one = |command: SheetCommand| crate::sheet_group::spread(vec![Command::Sheet(command)], ids[0], &ids[..2]).expect("not refused");
     let targets = |commands: &[Command]| -> Vec<SlideId> { commands.iter().filter_map(|c| if let Command::Sheet(c) = c { crate::sheet_group::sheet_target(c) } else { None }).collect() };
     for command in [
-        SheetCommand::SetColumnWidthFitted { sheet: ids[0], first: 0, last: 1, size: 1000 },
         SheetCommand::SetColumnWidthAuto { sheet: ids[0], first: 0, last: 1, size: 1000 },
-        SheetCommand::SetRowHeightFitted { sheet: ids[0], first: 0, last: 1, size: 1000 },
-        SheetCommand::SetHyperlink { sheet: ids[0], range, link: None },
-        SheetCommand::SetValidation { sheet: ids[0], ranges: vec![range], rule: None },
         SheetCommand::SetSize { sheet: ids[0], axis: Axis::Rows, first: 0, last: 0, size: 100 },
     ] {
         let spread = one(command.clone());
         assert_eq!(targets(&spread), vec![ids[0], ids[1]], "{command:?}: the present sheet's and its copy for the other sheet of the group (not the sheet outside it)");
     }
+    // Greyed out in Excel while several sheets are selected: refused here (the Windows check of #238, 2026-11-20).
+    for command in [
+        SheetCommand::SetHyperlink { sheet: ids[0], range, link: None },
+        SheetCommand::SetValidation { sheet: ids[0], ranges: vec![range], rule: None },
+        SheetCommand::UpdateConditional { sheet: ids[0], index: 0, format: Default::default() },
+        SheetCommand::SetComment { sheet: ids[0], row: 0, column: 0, comment: None },
+    ] {
+        assert!(crate::sheet_group::spread(vec![Command::Sheet(command.clone())], ids[0], &ids[..2]).is_err(), "{command:?} is refused on several sheets");
+    }
+    // A width or height fitted to contents is made for each sheet from that sheet's own contents (not copied): it is not spread.
+    for command in [SheetCommand::SetColumnWidthFitted { sheet: ids[0], first: 0, last: 1, size: 1000 }, SheetCommand::SetRowHeightFitted { sheet: ids[0], first: 0, last: 1, size: 1000 }] {
+        assert_eq!(one(command.clone()).len(), 1, "{command:?}");
+    }
     // What is not spread stays on the present sheet.
-    let alone = one(SheetCommand::UpdateConditional { sheet: ids[0], index: 0, format: Default::default() });
-    assert_eq!(alone.len(), 1, "an update of a rule by its number is the present sheet's alone");
+    let alone = one(SheetCommand::SetTabColor { sheet: ids[0], color: None });
+    assert_eq!(alone.len(), 1, "a command that is not spread stays on the present sheet");
 }
 
 /// A file whose sheets 1 and 3 have `tabSelected` opens with them selected together, the present sheet being one of them.
@@ -227,4 +240,50 @@ fn opens_as_group() {
     // The group is saved again as it is, and ended with 「シートのグループ解除」.
     s.update(|e, _, cx| e.ungroup_sheets(cx));
     assert!(group(&mut s).is_empty());
+}
+
+/// Excel: fitting a column to its contents with sheets selected together fits every sheet of the group, each to its own contents (not the present sheet's width
+/// copied): a long text on the first sheet and a short one on the second give two widths.
+fn fitting_per_sheet() {
+    let (mut s, ids) = four_sheets();
+    let width = |s: &mut Scenario, index: usize| s.with(move |e, _| sheet_of_slide(&e.presentation().slides[index]).map(|sh| sh.columns[12]));
+    // Different texts in column M of the first two sheets (alone, one at a time).
+    s.click_cell("M3");
+    s.enter("a very long text that needs a wide column to be seen whole", "enter");
+    click(&mut s, ids[1], false, false);
+    s.click_cell("M3");
+    s.enter("x", "enter");
+    click(&mut s, ids[0], false, false);
+    click(&mut s, ids[1], true, false);
+    assert_eq!(group(&mut s), vec![ids[0], ids[1]]);
+    s.update(|e, window, cx| e.fit_columns(12, window, cx));
+    s.settle();
+    let (first, second) = (width(&mut s, 0).unwrap(), width(&mut s, 1).unwrap());
+    assert!(first > second * 3, "each sheet is fitted to its own text: {first} and {second}");
+    assert_eq!(width(&mut s, 2), width(&mut s, 3), "the sheets outside the group are not touched");
+}
+
+/// Excel: with sheets selected together the lines of the commands it refuses are grey, and the tab menu keeps 「すべてのシートを選択」 (with 「グループ解除」 added).
+fn menus_in_group() {
+    let (mut s, ids) = four_sheets();
+    let disabled = |s: &mut Scenario, id: &'static str| s.with(move |e, _| e.menus().find_entry(id).map(|m| match m { crate::shell::chrome::MenuEntry::Item(i) => i.disabled, _ => false }));
+    assert_eq!(disabled(&mut s, "xlsx.remove-duplicates"), Some(false));
+    click(&mut s, ids[1], true, false);
+    for id in ["xlsx.remove-duplicates", "xlsx.insert-table", "xlsx.validation"] {
+        assert_eq!(disabled(&mut s, id), Some(true), "{id} is grey in a group");
+    }
+    // The Insert menu's chart submenu is greyed whole.
+    let chart_grey = s.with(|e, _| match e.menus().find_entry("insert.chart") {
+        Some(crate::shell::chrome::MenuEntry::Submenu(sub)) => sub.items.iter().all(|i| !matches!(i, crate::shell::chrome::MenuEntry::Item(i) if !i.disabled)),
+        _ => false,
+    });
+    assert!(chart_grey, "the chart submenu is grey in a group");
+    let tab = s.with(|e, _| e.tab_menu());
+    let has = |id: &str| tab.iter().any(|m| matches!(m, crate::shell::chrome::MenuEntry::Item(i) if i.id == id));
+    assert!(has("xlsx.tab-select-all") && has("xlsx.tab-ungroup"));
+    s.update(|e, _, cx| e.select_all_sheets(cx));
+    let tab = s.with(|e, _| e.tab_menu());
+    assert!(tab.iter().any(|m| matches!(m, crate::shell::chrome::MenuEntry::Item(i) if i.id == "xlsx.tab-select-all")), "still offered while all are selected");
+    s.update(|e, _, cx| e.ungroup_sheets(cx));
+    assert_eq!(disabled(&mut s, "xlsx.remove-duplicates"), Some(false));
 }

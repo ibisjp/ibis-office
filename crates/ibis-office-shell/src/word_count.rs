@@ -74,3 +74,73 @@ pub fn count_words_and_chars(text: &str) -> (usize, usize, usize) {
 
     (words, no_spaces, with_spaces)
 }
+
+/// What Word's 文字カウント counts in one paragraph (GitHub issue 295; Word's numbers: `tasks/doc/requests/2026-11-25-295-word-count-result.md`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ParagraphCounts {
+    /// 単語数: a run of characters between spaces, tabs and line breaks is one word (`well-known,` and `3.14` are one each); each full-width character and each
+    /// half-width katakana is one word of its own.
+    pub words: usize,
+    /// 全角文字 + 半角カタカナの数 (the characters that count as a word each); 半角英数の単語数 is `words - far_east`.
+    pub far_east: usize,
+    /// 文字数 (スペースを含めない).
+    pub no_spaces: usize,
+    /// 文字数 (スペースを含める): the above and the spaces, tabs, full-width spaces and line breaks (a page break and a column break are not characters here).
+    pub with_spaces: usize,
+}
+
+impl ParagraphCounts {
+    /// Word counts a paragraph (数 段落数) only if it has a character that is not a space, a tab or a line break: an empty paragraph, one of a page break only and
+    /// one of spaces only are not counted.
+    pub fn counts_as_paragraph(&self) -> bool {
+        self.no_spaces > 0
+    }
+
+    pub fn add(&mut self, other: ParagraphCounts) {
+        self.words += other.words;
+        self.far_east += other.far_east;
+        self.no_spaces += other.no_spaces;
+        self.with_spaces += other.with_spaces;
+    }
+}
+
+/// Count one paragraph's `text` as Word's 文字カウント does. In `text` a note's mark is U+0002 (one character, never a word of its own: `test` and the mark
+/// after it are one word), a picture or object is U+FFFC (no character), a line break U+000B (a character with spaces, ends a word), a page break U+000C and a
+/// column break U+000E (no character, end a word).
+pub fn count_paragraph(text: &str) -> ParagraphCounts {
+    let mut c = ParagraphCounts::default();
+    let mut in_word = false;
+    for ch in text.chars() {
+        match ch {
+            '\u{2}' => {
+                c.no_spaces += 1;
+                c.with_spaces += 1;
+            }
+            '\u{b}' => {
+                c.with_spaces += 1;
+                in_word = false;
+            }
+            '\u{fffc}' | '\u{c}' | '\u{e}' | '\r' | '\n' => in_word = false,
+            _ if ch.is_whitespace() => {
+                c.with_spaces += 1;
+                in_word = false;
+            }
+            _ if is_cjk_char(ch) => {
+                c.no_spaces += 1;
+                c.with_spaces += 1;
+                c.words += 1;
+                c.far_east += 1;
+                in_word = false;
+            }
+            _ => {
+                c.no_spaces += 1;
+                c.with_spaces += 1;
+                if !in_word {
+                    c.words += 1;
+                    in_word = true;
+                }
+            }
+        }
+    }
+    c
+}

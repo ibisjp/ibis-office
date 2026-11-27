@@ -1059,7 +1059,20 @@ pub fn m_to_query(code: &str, base: &Query) -> Result<Query, CodeError> {
             return Err(with_line(CodeError { key: "syntax", detail: name, line: 0 }));
         }
         if names.is_empty() {
-            let mut from = source_of(&body).map_err(with_line)?;
+            let mut from = if matches!((body.as_str(), &base.source),
+                ("Ibis.ParquetSource()", Source::Parquet { .. })
+                | ("Ibis.JsonLinesSource()", Source::JsonLines { .. })
+                | ("Ibis.JsonArraySource()", Source::JsonArray { .. })
+                | ("Ibis.DelimitedSource()", Source::Delimited { .. })
+                | ("Ibis.ParquetFolderSource()", Source::ParquetFolder { .. })
+                | ("Ibis.SqliteSource()", Source::Sqlite { .. })
+                | ("Ibis.AvroSource()", Source::Avro { .. })
+                | ("Ibis.ArrowIpcSource()", Source::ArrowIpc { .. })
+            ) {
+                base.source.clone()
+            } else {
+                source_of(&body).map_err(with_line)?
+            };
             names.push(name.clone());
             at += 1;
             // A workbook file is followed by the step that picks its sheet or table.

@@ -122,6 +122,8 @@ medical.pii.location.comments	スライド {no} コメント
 medical.pii.location.sheet-cell	シート {no} (R{row}C{column})
 medical.pii.location.text	スライド {no} テキスト
 medical.pii.location.hidden-sheet	シート `{name}`
+medical.pii.location.document	文書
+medical.pii.location.paragraph	段落 {no}
 medical.pii.detail.hidden-slide	非表示スライドが含まれています
 medical.pii.detail.notes	発表者ノートにテキストが含まれています
 medical.pii.detail.comments	{count} 件のコメントが含まれています

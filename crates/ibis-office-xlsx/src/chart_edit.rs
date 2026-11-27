@@ -330,7 +330,7 @@ impl SlideEditor {
             let value=input.read(cx).value().trim().trim_start_matches('#').to_string();
             let fill=if value.is_empty(){Fill::None}else{
                 let Some(color)=u32::from_str_radix(&value,16).ok().filter(|_|value.len()==6) else{return;};
-                Fill::Solid(Color {rgb:Rgb(color),alpha:255})
+                Fill::Solid(Color {rgb:Rgb(color),alpha:255, theme: None })
             };
             this.change_sheet_chart(|c|c.background=fill,cx);
         }).detach();
@@ -1406,6 +1406,7 @@ impl SlideEditor {
                             symbol,
                             size: 5,
                             fill,
+                            edge: None,
                         });
                     }
                 }

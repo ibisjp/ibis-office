@@ -100,7 +100,9 @@ impl SlideEditor {
                 shape.frame.y + ys.get(t.range.first_row as usize).copied().unwrap_or(0),
             );
         } else {
-            panel.message = text("xlsx.timeline-insert.select-pivot").to_string();
+            // As the slicer: a message box with one OK, not a panel whose OK does nothing (#261).
+            self.show_alert(text("xlsx.insert-timeline").trim_end_matches('…').to_string().into(), text("xlsx.timeline-insert.select-pivot"), cx);
+            return;
         }
         panel.checked = vec![false; panel.fields.len()];
         let state = self.wb_mut();

@@ -21,8 +21,14 @@ fn fallback_names() {
     let names = crate::render::shape_view::browser_fallback_names(&TextStyle { font: Some("MS Mincho".into()), ..TextStyle::default() });
     let end = names.iter().position(String::is_empty).expect("a separator before the East Asian stand-ins");
     assert_eq!(&names[..end], ["MS Mincho"]);
-    assert!(names[end + 1..].iter().any(|n| n == "Hiragino Sans"));
+    // #301: a mincho typeface gets mincho stand-ins, never a gothic (Hiragino Sans is a gothic).
+    assert!(names[end + 1..].iter().any(|n| n == "Hiragino Mincho ProN"));
+    assert!(!names[end + 1..].iter().any(|n| n == "Hiragino Sans"));
     assert!(!names[..end].iter().any(|n| n.contains("Hiragino")));
+    let names = crate::render::shape_view::browser_fallback_names(&TextStyle { font: Some("MS Gothic".into()), ..TextStyle::default() });
+    let end = names.iter().position(String::is_empty).expect("a separator before the East Asian stand-ins");
+    assert!(names[end + 1..].iter().any(|n| n == "Hiragino Sans"));
+    assert!(!names[end + 1..].iter().any(|n| n.contains("Mincho")));
 
     let names = crate::render::shape_view::browser_fallback_names(&TextStyle { font: Some("Arial".into()), ..TextStyle::default() });
     assert_eq!(names, ["Arial", "Liberation Sans", "Arimo"]);

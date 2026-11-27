@@ -245,6 +245,13 @@ fn menu_button_at(s: &mut Scenario, name: &str) -> (f32, f32) {
     (f32::from(b.center().x), f32::from(b.center().y))
 }
 
+/// Where the middle of the menu's ▲ (`up`) or ▼ is drawn (laid over the first or the last line of the menu, which now takes the whole room: K0078).
+fn menu_arrow_at(name: &str) -> (f32, f32) {
+    use crate::shell::scenario::button_probe as buttons;
+    let b = buttons::bounds(name).unwrap_or_else(|| panic!("{name}: {:?}", buttons::all()));
+    (f32::from(b.center().x), f32::from(b.center().y))
+}
+
 fn menu_start(s: &mut Scenario) -> usize {
     s.with(|e, _| e.open_menu.as_ref().map_or(usize::MAX, |o| o.start()))
 }
@@ -263,7 +270,7 @@ fn fix15_long_menu_scrolls() {
     assert_eq!(menu_start(&mut s), 0);
     s.screenshot("top");
     // ▼ is the menu's last row: at the window's bottom edge (menu 64..~672).
-    s.hover((300.0, 348.0));
+    s.hover(menu_arrow_at("menu-scroll-down"));
     s.wait(400);
     let after_hover = menu_start(&mut s);
     assert!(after_hover > 0, "hovering ▼ scrolled: {after_hover}");
@@ -282,7 +289,7 @@ fn fix15_long_menu_scrolls() {
     s.wheel((300.0, 300.0), -60.0);
     assert!(menu_start(&mut s) > up, "the wheel down scrolled");
     // ▲ (the first row, at the menu's top) scrolls back to the top.
-    s.hover((300.0, 82.0));
+    s.hover(menu_arrow_at("menu-scroll-up"));
     s.wait(3000);
     assert_eq!(menu_start(&mut s), 0);
     // A tall window: no rows.
@@ -489,7 +496,8 @@ fn fix17_print_is_bound() {
     for file in ["test/editing/xlsx-sales.xlsx", "test/editing/pptx-plan.pptx"] {
         let mut s = Scenario::open(file);
         let bound = s.update(|_, window, _| window.bindings_for_action(&crate::Print).iter().map(|b| b.keystrokes().iter().map(|k| k.unparse()).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>());
-        assert!(bound.iter().any(|k| k == "cmd-p"), "{file}: {bound:?}");
+        let print_key = if cfg!(windows) { "ctrl-p" } else { "cmd-p" };
+        assert!(bound.iter().any(|k| k == print_key), "{file}: {bound:?}");
     }
     let mut s = Scenario::open("test/editing/docx-report.docx");
     let bound = s.update(|_, window, _| window.bindings_for_action(&crate::Print).len());
@@ -710,7 +718,8 @@ fn update_manual_alert() {
     let size = s.update(|_, window, _| window.bounds().size);
     let mut clicked = 0;
     let before = update::alerts_for_test().len();
-    'scan: for y in (20..400).step_by(6) {
+    // The scan starts below the 36 px title bar: on Windows the window controls (minimize, maximize, close) are drawn there, and a click on one is a window operation the test window does not implement.
+    'scan: for y in (40..400).step_by(6) {
         for x in (200..(f32::from(size.width) as i32)).step_by(12) {
             let position = point(px(x as f32), px(y as f32));
             let at = update::alerts_for_test().len();
@@ -1488,7 +1497,7 @@ fn fix_xlsx_save_copy_and_recent() {
     assert_eq!(s.shown("A1"), "コピーテスト");
 
     // XLSX-FILE-006: コピーを作成（copy_to）
-    let copy_path = crate::shell::scenario::repo_root().join("target/scenario/xlsx::save_copy/copy.xlsx");
+    let copy_path = crate::shell::scenario::scenario_dir("xlsx::save_copy").join("copy.xlsx");
     if let Some(parent) = copy_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -2403,7 +2412,7 @@ fn fix_docx_word_count_dialog() {
     assert!(whole_stats.pages >= 1, "pages >= 1");
     assert!(whole_stats.words > 0, "words > 0");
     assert!(whole_stats.characters_no_spaces > 0, "chars no spaces > 0");
-    assert!(whole_stats.characters_with_spaces >= whole_stats.characters_no_spaces, "chars with spaces >= chars no spaces");
+    assert!(whole_stats.characters_with_spaces >= whole_stats.characters_no_spaces as i64, "chars with spaces >= chars no spaces");
     assert!(whole_stats.paragraphs > 0, "paragraphs > 0");
     assert!(whole_stats.lines > 0, "lines > 0");
 
@@ -2453,7 +2462,7 @@ fn fix_docx_word_count_dialog() {
     let (exp_words, exp_no, exp_with) = crate::docx::help_panels::count_words_and_chars(&selected_str);
     assert_eq!(sel_stats.words, exp_words, "selection words match");
     assert_eq!(sel_stats.characters_no_spaces, exp_no, "selection chars without spaces match");
-    assert_eq!(sel_stats.characters_with_spaces, exp_with, "selection chars with spaces match");
+    assert_eq!(sel_stats.characters_with_spaces, exp_with as i64, "selection chars with spaces match");
     assert_eq!(sel_stats.paragraphs, 1, "single paragraph selected");
 
     // 5. パネルを閉じる
@@ -3628,7 +3637,12 @@ fn fix_xlsx_sheet_tabs_scrollbar_and_fixed_add() {
     s.screenshot("few_inline_plus");
 
     // Click inline + button to add the 4th sheet.
-    s.click((310.0, y));
+    // The button follows the last tab, whose width is the typeface's (about 310 on a Mac): its centre is half the 28-pt button past the tab.
+    let plus_x = s.with(|e, _| {
+        let scroll = e.sheet_state().expect("a workbook").tab_scroll.clone();
+        f32::from(scroll.bounds_for_item(2).expect("the last tab is laid out").right()) + f32::from(scroll.offset().x) + 14.0
+    });
+    s.click((plus_x, y));
     assert_eq!(sheets(&mut s), 4, "clicked inline + button to add 4th sheet");
 
     // 2. Add sheets to overflow (increase up to 22 sheets).
@@ -6369,7 +6383,7 @@ fn fix77_save_as_opendocument() {
 fn fix76_scrollbars_always() {
     use gpui_kit::component::scroll::ScrollbarMode;
     use gpui_kit::component::theme::Theme;
-    let dir = crate::shell::scenario::repo_root().join("target/scenario/shell::fix76_scrollbars_always/settings");
+    let dir = crate::shell::scenario::scenario_dir("shell::fix76_scrollbars_always").join("settings");
     let _ = std::fs::remove_dir_all(&dir);
     // SAFETY: the scenarios run one at a time on the main thread; nothing else reads the environment meanwhile.
     unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
@@ -6877,7 +6891,8 @@ fn fix_textbox_02_docx_second_line_large_font_third_line_alignment() {
     s.settle();
 
     // Move caret to end of Line 3 and select "After" on Line 3.
-    s.key("cmd-down");
+    // The end of the text: Cmd+Down on a Mac, Ctrl+End on Windows (where Ctrl+Down goes to the next paragraph's start).
+    s.key(if cfg!(windows) { "ctrl-end" } else { "cmd-down" });
     s.settle();
     let (caret_y, p1_y, p2_y, p2_h) = s.with(|e, _| {
         let marks = e.caret_marks().unwrap();
@@ -6974,6 +6989,7 @@ fn fix_textbox_04_docx_shift_up_down_multiline_selection() {
 
 /// 5. docx: Left, Right, Home/Cmd+Left, End/Cmd+Right, Cmd+Up, Cmd+Down navigation.
 fn fix_textbox_05_docx_left_right_home_end_navigation() {
+    let mac = cfg!(target_os = "macos");
     let mut s = Scenario::open("test/editing/docx-report.docx");
     docx_open_box_edit(&mut s);
     s.key("cmd-a");
@@ -6987,34 +7003,36 @@ fn fix_textbox_05_docx_left_right_home_end_navigation() {
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 6, "Home moves to start of line 2");
     s.key("end");
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 11, "End moves to end of line 2");
-    s.key("cmd-up");
+    s.key(if mac { "cmd-up" } else { "ctrl-home" }); // Windows: Ctrl+Home is the start of the text
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 0, "Cmd+Up moves to start of text box");
-    s.key("cmd-right");
+    s.key(if mac { "cmd-right" } else { "end" }); // Windows: End is the line end
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 5, "Cmd+Right moves to end of line 1");
     s.key("right");
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 6, "Right crosses newline to start of line 2");
     s.key("left");
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 5, "Left crosses newline back to end of line 1");
-    s.key("cmd-down");
+    s.key(if mac { "cmd-down" } else { "ctrl-end" });
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 11, "Cmd+Down moves to end of text box");
 }
 
 /// 6. docx: Alt+Left / Alt+Right word navigation and Shift+Alt+Left / Right word selection.
 fn fix_textbox_06_docx_word_navigation_and_selection() {
+    // Word by word is Alt+arrow on macOS, Ctrl+arrow elsewhere.
+    let word = if cfg!(target_os = "macos") { "alt" } else { "ctrl" };
     let mut s = Scenario::open("test/editing/docx-report.docx");
     docx_open_box_edit(&mut s);
     s.key("cmd-a");
     s.type_text("alpha beta gamma");
     s.settle();
 
-    s.key("alt-left");
+    s.key(&format!("{word}-left"));
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 11, "Alt+Left jumps to start of 'gamma'");
-    s.key("alt-left");
+    s.key(&format!("{word}-left"));
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 6, "Alt+Left jumps to start of 'beta'");
-    s.key("alt-shift-right");
-    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), 6..10, "Shift+Alt+Right selects 'beta'");
-    s.key("alt-left");
-    s.key("alt-left");
+    s.key(&format!("{word}-shift-right"));
+    assert_eq!(s.with(|e, _| e.text_editing().unwrap().range()), if cfg!(target_os = "macos") { 6..10 } else { 6..11 }, "Shift+word-right selects 'beta' (Windows' word move ends at the start of the next word: 'beta ')");
+    s.key(&format!("{word}-left"));
+    s.key(&format!("{word}-left"));
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 0);
 }
 
@@ -7428,9 +7446,12 @@ fn fix_textbox_21_xlsx_word_nav_and_delete_shortcuts() {
     s.type_text("one two three");
     s.settle();
 
-    s.key("alt-left");
+    // Word navigation is Alt+Left / Right on a Mac and Ctrl+Left / Right on Windows (where Alt+arrows do nothing, `text_keys.rs`); Alt+Backspace
+    // (a word) and Cmd+Backspace (to the line's start: Ctrl+Backspace on Windows, `cmd` reads as Ctrl there) are the same.
+    let (word_left, word_right) = if cfg!(windows) { ("ctrl-left", "ctrl-right") } else { ("alt-left", "alt-right") };
+    s.key(word_left);
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 8);
-    s.key("alt-right");
+    s.key(word_right);
     assert_eq!(s.with(|e, _| e.text_editing().unwrap().caret), 13);
     s.key("alt-backspace");
     s.settle();
@@ -7902,7 +7923,7 @@ fn fix97_menu_scrollbar_visible_and_flush_to_edges() {
     s.screenshot("fix97-menu-top");
 
     // Hover ▼ to scroll into the middle (both ▲ and ▼ shown).
-    s.hover((300.0, 348.0));
+    s.hover(menu_arrow_at("menu-scroll-down"));
     s.wait(400);
     let mid_start = menu_start(&mut s);
     assert!(mid_start > 0, "scrolled down into middle: {mid_start}");
@@ -10501,46 +10522,48 @@ fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
     use gpui_kit::{point, px};
 
     let mut s = Scenario::open("test/editing/docx-report.docx");
+    // A low window: the margins tab is longer than the dialog, so its body scrolls under the fixed footer.
+    s.size(1200.0, 420.0);
     s.update(|e, window, cx| {
         e.open_page_setup_panel(window, cx);
     });
     s.settle();
 
-    // 1. Verify the page setup panel is open in the right sidebar and has recorded bounds for its aligned rows and sticky footer `apply` button.
-    let (field_bounds, apply_y_before, field0_y_before) = s.with(|e, _| {
-        let p = e
-            .doc_state()
-            .and_then(|st| st.helper.page_setup.as_ref())
-            .expect("page_setup panel is open");
-        let ui = p.ui.borrow();
-        let keys = [
-            "field-0",
-            "field-1",
-            "field-2",
-            "field-3",
-            "field-4",
-            "grid-lines-input",
-            "grid-line-pitch",
-            "grid-chars",
-            "grid-char-space",
-            "start",
-            "field-7",
-            "field-8",
-            "field-5",
-            "field-6",
-        ];
-        let mut collected = Vec::new();
-        for k in keys {
-            let b = ui.get(k).copied().unwrap_or_else(|| panic!("missing UI bounds for {k}"));
-            collected.push((k, f32::from(b.origin.x), f32::from(b.size.width)));
-        }
-        let apply_b = ui.get("apply").copied().expect("sticky footer apply button bounds");
-        let f0_b = ui.get("field-0").copied().expect("field-0 bounds");
-        (collected, f32::from(apply_b.origin.y), f32::from(f0_b.origin.y))
+    // 1. Verify the page setup dialog has recorded bounds for its aligned rows (each tab shows its own) and the sticky footer `apply` button.
+    let tab_keys: [&[&str]; 4] = [
+        &["columns", "grid-chars", "grid-char-space", "grid-lines-input", "grid-line-pitch"],
+        &["field-0", "field-1", "field-2", "field-3", "field-4"],
+        &["field-7", "field-8"],
+        &["start", "field-5", "field-6"],
+    ];
+    let mut field_bounds = Vec::new();
+    for (tab, keys) in tab_keys.iter().enumerate() {
+        s.update(|e, _, cx| {
+            e.doc_state_mut().unwrap().helper.page_setup.as_mut().unwrap().tab = tab;
+            cx.notify();
+        });
+        s.settle();
+        s.with(|e, _| {
+            let ui = e.doc_state().and_then(|st| st.helper.page_setup.as_ref()).expect("page_setup panel is open").ui.borrow();
+            for k in *keys {
+                let b = ui.get(*k).copied().unwrap_or_else(|| panic!("missing UI bounds for {k} on tab {tab}"));
+                field_bounds.push((*k, f32::from(b.origin.x), f32::from(b.size.width)));
+            }
+        });
+    }
+    // The margins tab again: the scroll test below uses it.
+    s.update(|e, _, cx| {
+        e.doc_state_mut().unwrap().helper.page_setup.as_mut().unwrap().tab = 1;
+        cx.notify();
+    });
+    s.settle();
+    let (apply_y_before, field0_y_before) = s.with(|e, _| {
+        let ui = e.doc_state().and_then(|st| st.helper.page_setup.as_ref()).unwrap().ui.borrow();
+        (f32::from(ui.get("apply").expect("sticky footer apply button bounds").origin.y), f32::from(ui.get("field-0").expect("field-0 bounds").origin.y))
     });
 
-    // Every input box in `doc_page_setup_panel` must have the same width and the exact same left X coordinate (`origin.x`),
-    // ensuring vertical alignment across margins (mm), document grid (行/pt/字), start page, paper size (mm), and header/footer (mm).
+    // Every input box in the dialog must have the same width and the exact same left X coordinate (`origin.x`),
+    // ensuring vertical alignment across the grid, margins (mm), paper size (mm), start page and header/footer (mm).
     let expected_x = field_bounds[0].1;
     // Each row's mark covers the standard field (`FIELD_WIDTH`) with its spinner: the unit is drawn inside the field's box, after the text.
     let field_width = f32::from(crate::shell::chrome::FIELD_WIDTH);
@@ -10548,7 +10571,7 @@ fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
     for (k, x, w) in &field_bounds {
         assert!(
             (*x - expected_x).abs() <= 0.5,
-            "input {k} left edge x={x} must align with field-0 x={expected_x}"
+            "input {k} left edge x={x} must align with the first field x={expected_x}"
         );
         assert!(
             (*w - expected_w).abs() <= 0.5,
@@ -10556,7 +10579,7 @@ fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
         );
     }
 
-    // 2. Scroll the right-pane body down (`sidebar_scroll`) and verify that `field-0` scrolls up
+    // 2. Scroll the dialog body down (`sidebar_scroll`) and verify that `field-0` scrolls up
     // while the sticky footer `apply` ("OK") button stays fixed at the exact same bottom Y coordinate!
     s.update(|e, _, cx| {
         e.dialog.scroll.set_offset(point(px(0.0), px(-120.0)));
@@ -10620,12 +10643,22 @@ fn shared_radio_group_layouts() {
         cx.notify();
     });
     s.settle();
-    let (across, vertical, pages) = s.with(|e, _| {
-        let p = e.doc_state().unwrap().helper.page_setup.as_ref().unwrap();
-        let ui = p.ui.borrow();
-        (ui["direction-across"], ui["direction-vertical"],
-         ["page-normal", "page-mirror", "page-book-fold", "page-reverse-book-fold", "page-two-on-one"]
-            .map(|key| ui[key]))
+    let tab = |s: &mut Scenario, tab: usize| {
+        s.update(|e, _, cx| {
+            e.doc_state_mut().unwrap().helper.page_setup.as_mut().unwrap().tab = tab;
+            cx.notify();
+        });
+        s.settle();
+    };
+    tab(&mut s, 0);
+    let (across, vertical) = s.with(|e, _| {
+        let ui = e.doc_state().unwrap().helper.page_setup.as_ref().unwrap().ui.borrow();
+        (ui["direction-across"], ui["direction-vertical"])
+    });
+    tab(&mut s, 1);
+    let pages = s.with(|e, _| {
+        let ui = e.doc_state().unwrap().helper.page_setup.as_ref().unwrap().ui.borrow();
+        ["page-normal", "page-mirror", "page-book-fold", "page-reverse-book-fold", "page-two-on-one"].map(|key| ui[key])
     });
     assert_eq!(across.origin.y, vertical.origin.y, "short options share a flow row");
     assert!(vertical.origin.x >= across.origin.x + across.size.width, "flow options do not overlap");
@@ -10633,12 +10666,8 @@ fn shared_radio_group_layouts() {
     for b in pages {
         assert_eq!(b.size.height, across.size.height, "a radio label never wraps inside its button");
     }
-    // Bring the direction group into the viewport, then exercise the real shared button's handler.
-    s.update(|e, _, cx| {
-        e.dialog.scroll.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-300.)));
-        cx.notify();
-    });
-    s.settle();
+    // Show the direction group, then exercise the real shared button's handler.
+    tab(&mut s, 0);
     let target = s.with(|e, _| e.doc_state().unwrap().helper.page_setup.as_ref().unwrap().ui.borrow()["direction-vertical"]);
     s.click(center(target));
     s.settle();
@@ -10740,7 +10769,7 @@ fn click_update_button(s: &mut Scenario) -> usize {
     let window = s.update(|_, window, _| window.window_handle());
     let size = s.update(|_, window, _| window.bounds().size);
     let before = update::alerts_for_test().len();
-    for y in (20..400).step_by(6) {
+    for y in (40..400).step_by(6) {
         for x in (200..(f32::from(size.width) as i32)).step_by(12) {
             let position = point(px(x as f32), px(y as f32));
             s.update_window(window, |w, app| {

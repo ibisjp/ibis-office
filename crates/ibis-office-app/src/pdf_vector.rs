@@ -88,10 +88,15 @@ pub struct Layer {
     /// The frames of the charts, in the same pixels: what is painted inside one keeps its fills in grey in the pure black and white print (a chart's bars are
     /// not white as a shape's fill is: `tasks/doc/requests/2026-11-20-225-bw-hairline-result.md`).
     pub charts: Vec<(f32, f32, f32, f32)>,
+    /// What is painted keeps its line widths in points when the page is put on a paper (`PdfWriter::fit_to_paper`): the frame round a slide.
+    pub fixed_lines: bool,
 }
 
-/// The width of the black line PowerPoint's pure black and white print draws round a plain fill that has no line: 0.5 of the units of its print PDF (0.75 pt
-/// each), whatever the paper's scale, with round ends and joins (Windows PowerPoint's `PrintOut` PDFs, `tasks/doc/requests/2026-11-20-225-bw-hairline-result.md`).
+/// The width of the black line PowerPoint's pure black and white print draws round a plain fill that has no line, and of any line the printer takes for one
+/// pixel or less: 0.5 of the units of the print PDF (0.75 pt each), whatever the paper's scale, with round ends and joins. It is not PowerPoint's: the printer
+/// driver (Microsoft Print to PDF) writes `0.5 w` for every line of a pixel (1/600 inch) or less, from any program (a .NET `PrintDocument` printing pens of 0 to
+/// 0.1667 hundredths of an inch gives it too; `tasks/doc/requests/2026-11-21-225-chart-stripes-result.md`); why the driver's constant is 0.5 is not known.
+/// (`tasks/doc/requests/2026-11-20-225-bw-hairline-result.md` has the plain fills' edge.)
 pub const HAIRLINE_PT: f32 = 0.375;
 
 /// A PDF being written: pages are collected, then written together, once it
@@ -144,8 +149,40 @@ impl PdfWriter {
     /// points (to put what the window drew on whole pixels where the paper
     /// wants it between them).
     pub fn add_page_shifted(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, shift: (f32, f32)) {
-        let layer = Layer { records, scale_factor, k: page_pt.0 / width_px.max(1.0), origin: shift, clip: None, hairline: Vec::new(), charts: Vec::new() };
+        let layer = Layer { records, scale_factor, k: page_pt.0 / width_px.max(1.0), origin: shift, clip: None, hairline: Vec::new(), charts: Vec::new(), fixed_lines: false };
         self.pages.push(PendingPage { page_pt, number: None, links: Vec::new(), layers: vec![layer] });
+    }
+
+    /// Put every page on `paper` (`--print-paper`): the page's drawing scaled and moved as `Paper::fit` says, its layers' scale and place, clip and links with it. What the
+    /// layers hold in window pixels (`hairline`, `charts`) stays, as they go with `k`.
+    pub fn fit_to_paper(&mut self, paper: crate::export_print::Paper, fit: bool) {
+        for page in &mut self.pages {
+            let f = paper.fit(page.page_pt, fit);
+            let (s, (dx, dy)) = (f.scale, f.shift);
+            for layer in &mut page.layers {
+                layer.k *= s;
+                layer.origin = (layer.origin.0 * s + dx, layer.origin.1 * s + dy);
+                layer.clip = layer.clip.map(|(x, y, w, h)| (x * s + dx, y * s + dy, w * s, h * s));
+                if layer.fixed_lines {
+                    for record in &mut layer.records {
+                        if let PaintRecord::Quad { border_widths, .. } = record {
+                            let narrow = |w: Pixels| gpui_kit::px(f32::from(w) / s);
+                            *border_widths = gpui_kit::Edges { top: narrow(border_widths.top), right: narrow(border_widths.right), bottom: narrow(border_widths.bottom), left: narrow(border_widths.left) };
+                        }
+                    }
+                }
+            }
+            for link in &mut page.links {
+                let (x, y, w, h) = link.rect;
+                link.rect = (x * s + dx, y * s + dy, w * s, h * s);
+                if let LinkTo::Page { x, y, .. } = &mut link.to {
+                    // (A destination is a place on its own page, which is scaled and moved the same way when the pages are alike.)
+                    *x = *x * s + dx;
+                    *y = *y * s + dy;
+                }
+            }
+            page.page_pt = f.page_pt;
+        }
     }
 
     /// The page added last has its first layer's plain filled shapes at `frames` (see [`Layer::hairline`]).
@@ -222,7 +259,10 @@ impl PdfWriter {
                     let extent = vertical_extent(&data, index);
                     let advances = glyph_advances(&data, index, &variations);
                     let coords: Vec<(krilla::text::Tag, f32)> = variations.iter().map(|(tag, value)| (krilla::text::Tag::new(tag), *value)).collect();
-                    let font = Font::new_variable(data.clone().into(), index, &coords)?;
+                    let font = match descriptor_metrics_font(&data, index) {
+                        Some(patched) => Font::new_variable(Arc::new(patched).into(), index, &coords)?,
+                        None => Font::new_variable(data.clone().into(), index, &coords)?,
+                    };
                     Some(PdfFont { font, characters, data, index, glyph_count, extent, advances, glyphs: Vec::new(), outlined: false, synthetic })
                 })
             });
@@ -242,7 +282,8 @@ impl PdfWriter {
         for layer in &pending.layers {
         let (records, scale_factor, k, shift) = (layer.records.as_slice(), layer.scale_factor, layer.k, layer.origin);
         let hairline = print_color() == crate::export_print::PrintColor::BlackWhite;
-        let in_chart = |bounds: &Bounds<Pixels>| hairline && layer.charts.iter().any(|f| f32::from(bounds.left()) >= f.0 - 1.5 && f32::from(bounds.top()) >= f.1 - 1.5 && f32::from(bounds.right()) <= f.0 + f.2 + 1.5 && f32::from(bounds.bottom()) <= f.1 + f.3 + 1.5);
+        PAGE_MAP.with(|m| m.set((k, shift)));
+        let in_chart = |bounds: &Bounds<Pixels>| layer.charts.iter().any(|f| f32::from(bounds.left()) >= f.0 - 1.5 && f32::from(bounds.top()) >= f.1 - 1.5 && f32::from(bounds.right()) <= f.0 + f.2 + 1.5 && f32::from(bounds.bottom()) <= f.1 + f.3 + 1.5);
         let edge = |bounds: &Bounds<Pixels>| hairline && layer.hairline.iter().any(|f| (f.0 - f32::from(bounds.left())).abs() < 1.5 && (f.1 - f32::from(bounds.top())).abs() < 1.5 && (f.2 - f32::from(bounds.size.width)).abs() < 1.5 && (f.3 - f32::from(bounds.size.height)).abs() < 1.5);
         let clipped = match layer.clip {
             Some((x, y, w, h)) => match rect_path(x, y, x + w, y + h) {
@@ -269,7 +310,7 @@ impl PdfWriter {
                     IN_CHART.with(|c| c.set(in_chart(bounds)));
                     with_clip(&mut surface, clip, within(bounds, clip), |s| {
                         let outer = rounded_rect(bounds, corner_radii);
-                        if let (Some(path), Some(fill)) = (&outer, fill_of(background, bounds)) {
+                        if let (Some(path), Some(fill)) = (&outer, fill_of(s, background, bounds, PaintKind::Fill)) {
                             s.set_stroke(None);
                             s.set_fill(Some(fill));
                             s.draw_path(path);
@@ -325,13 +366,15 @@ impl PdfWriter {
                             None => triangles_path(triangles),
                         };
                         let Some(path) = path else { return };
-                        let Some(fill) = fill_of(background, &bounds) else { return };
-                        match outline.as_ref().and_then(|o| o.stroke) {
+                        let stroked = outline.as_ref().and_then(|o| o.stroke);
+                        // A line is a line (black in grey, grey in black and white inside a chart), not an area.
+                        let Some(fill) = fill_of(s, background, &bounds, if stroked.is_some() { PaintKind::Line } else { PaintKind::Fill }) else { return };
+                        match stroked {
                             Some(stroke) => {
                                 s.set_fill(None);
                                 s.set_stroke(Some(Stroke {
                                     paint: fill.paint,
-                                    width: f32::from(stroke.width),
+                                    width: if IN_CHART.with(|c| c.get()) { printed_line_width(f32::from(stroke.width), k) } else { f32::from(stroke.width) },
                                     opacity: fill.opacity,
                                     line_cap: if stroke.round_caps { LineCap::Round } else { LineCap::Butt },
                                     line_join: if stroke.round_joins { LineJoin::Round } else { LineJoin::Miter },
@@ -895,8 +938,25 @@ thread_local! {
 }
 
 thread_local! {
+    /// The layer being written: its pixels to the page's points (`k`, and the page point of its pixel (0, 0)), for what is fixed to the paper (`dots_fill`).
+    static PAGE_MAP: std::cell::Cell<(f32, (f32, f32))> = const { std::cell::Cell::new((1.0, (0.0, 0.0))) };
+}
+
+thread_local! {
     /// What is being drawn is inside a chart (the pure black and white print keeps a chart's fills in grey).
     static IN_CHART: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A device pixel of the printer PowerPoint prints to (Microsoft Print to PDF, 600 dpi) in points: 0.12 pt, 0.16 of the units of its PDF (0.75 pt).
+const DEVICE_PIXEL_PT: f32 = 72.0 / 600.0;
+
+/// The width a line of a chart is drawn at on the page, in the window's pixels (`k` points of the page to a pixel): PowerPoint draws it in whole device pixels,
+/// `n = round(width in points / DEVICE_PIXEL_PT)` of them, and a line of one pixel or less as the driver's thin line of `HAIRLINE_PT` (the same rule as the shapes':
+/// `n = round(pt x s x 6.25)` with `s` the units of its PDF per point of the slide; `tasks/doc/requests/2026-11-20-225-chart-print-result.md`).
+pub(crate) fn printed_line_width(width_px: f32, k: f32) -> f32 {
+    let k = k.max(1e-6);
+    let n = (width_px * k / DEVICE_PIXEL_PT).round();
+    (if n >= 2.0 { n * DEVICE_PIXEL_PT } else { HAIRLINE_PT }) / k
 }
 
 fn print_color() -> crate::export_print::PrintColor {
@@ -909,22 +969,97 @@ fn color(c: Hsla, kind: crate::export_print::PaintKind) -> (krilla::color::Color
     let Rgba { r, g, b, a } = Rgba::from(c);
     let u = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     let opacity = NormalizedF32::new(a.clamp(0.0, 1.0)).unwrap_or(NormalizedF32::ONE);
-    let mode = match (print_color(), kind) {
-        (crate::export_print::PrintColor::BlackWhite, PaintKind::Fill) if IN_CHART.with(|c| c.get()) => crate::export_print::PrintColor::Gray,
-        (mode, _) => mode,
+    // Inside a chart the pure black and white print keeps the grey of the colours (Rec.709): of the fills, and of the lines (in grey the lines are black).
+    let in_chart_bw = print_color() == crate::export_print::PrintColor::BlackWhite && IN_CHART.with(|c| c.get());
+    let (r, g, b) = match kind {
+        PaintKind::Fill | PaintKind::Line if in_chart_bw => crate::export_print::PrintColor::Gray.map_for(PaintKind::Fill, (u(r), u(g), u(b))),
+        _ => print_color().map_for(kind, (u(r), u(g), u(b))),
     };
-    let (r, g, b) = mode.map_for(kind, (u(r), u(g), u(b)));
     (rgb::Color::new(r, g, b).into(), opacity)
+}
+
+/// The tiles of the automatic series' patterns of the pure black and white print, series 3 to 19 (the series numbered `((n - 1) mod 19) + 1`; 1 is black and 2 white, both
+/// plain fills): rows of the tile (`|` between them) from the top, `#` black. A cell is a unit (1/96 inch) square; the tile's row 0 is the cell row `j = 0`, which is the
+/// one above the first row of the slide (the cells are numbered `i = floor(x - Ox)`, `j = floor(y - Oy) + 1` from the slide's top left corner `(Ox, Oy)` on the page: Microsoft
+/// 365's PDFs of bars, areas and pies of 6, 12 and 24 series on slides, notes and 1 to 10 slides a page, `tasks/doc/requests/2026-11-23-225-patterns-7plus-result.md`;
+/// the same table is `tasks/doc/requests/2026-11-23-225-patterns-7plus-tiles.tsv`).
+const DOT_TILES: [&str; 17] = [
+    ".#|#.", // 3: 2 x 2, 50%
+    "####|.###|####|##.#", // 4: 4 x 4, 87.5%
+    "..#.|#...", // 5: 4 x 2, 25%
+    "........|#.......|........|....#...", // 6: 8 x 4, 6.25%
+    ".|#|#|.", // 7: 1 x 4, 50%
+    "##..", // 8: 4 x 1, 50%
+    "#..#|##..|.##.|..##", // 9: 4 x 4, 50%
+    "#..#|..##|.##.|##..", // 10: 4 x 4, 50%
+    "#..#|#..#|.##.|.##.", // 11: 4 x 4, 50%
+    "#..#|####|.##.|####", // 12: 4 x 4, 75%
+    ".|#|.|.", // 13: 1 x 4, 25%
+    "#...", // 14: 4 x 1, 25%
+    "...#|#...|.#..|..#.", // 15: 4 x 4, 25%
+    "#...|...#|..#.|.#..", // 16: 4 x 4, 25%
+    "#...|####|#...|#...", // 17: 4 x 4, 43.75%
+    "#......#|#......#|.#....#.|..#..#..|...##...|...##...|..#..#..|.#....#.", // 18: 8 x 8, 25%
+    "........|#.......|........|........|........|....#...|........|........", // 19: 8 x 8, 3.125%
+];
+
+/// The black or white of the cell (`x`, `y`) of the pattern of automatic series `n` (3 to 19), in units of 1/96 inch counted from the slide's top left corner (see `DOT_TILES`
+/// for the rows).
+pub(crate) fn dot_is_black(n: u8, x: u32, y: u32) -> bool {
+    let Some(tile) = DOT_TILES.get(usize::from(n).wrapping_sub(3)) else { return false };
+    let rows: Vec<&str> = tile.split('|').collect();
+    let row = rows[y as usize % rows.len()].as_bytes();
+    row[x as usize % row.len()] == b'#'
+}
+
+/// The pattern as a tiling pattern fixed to the slide's top left corner: its cells are 1/96 inch (0.75 pt) squares, whatever the slide's scale (PowerPoint prints them so:
+/// the cells keep their size on a handout, and move with the slide). The pattern's space is the page in points; its transform takes that to the layer's pixels
+/// (the page's point `p` is `origin + k * pixel`, and the layer's origin is the slide's top left corner).
+fn dots_fill(s: &mut Surface, n: u8) -> Fill {
+    const UNIT_PT: f32 = 0.75;
+    // The tile is 8 by 8 cells, whatever its own period (1, 2, 4 or 8 across and down).
+    const SIDE: u32 = 8;
+    let (k, _) = PAGE_MAP.with(|m| m.get());
+    let mut builder = s.stream_builder();
+    {
+        let mut tile = builder.surface();
+        let paint = |v: u8| Fill { paint: rgb::Color::new(v, v, v).into(), opacity: NormalizedF32::ONE, rule: FillRule::NonZero };
+        if let Some(path) = rect_path(0.0, 0.0, SIDE as f32 * UNIT_PT, SIDE as f32 * UNIT_PT) {
+            tile.set_fill(Some(paint(255)));
+            tile.draw_path(&path);
+        }
+        tile.set_fill(Some(paint(0)));
+        for y in 0..SIDE {
+            for x in 0..SIDE {
+                if dot_is_black(n, x, y)
+                    && let Some(path) = rect_path(x as f32 * UNIT_PT, y as f32 * UNIT_PT, (x + 1) as f32 * UNIT_PT, (y + 1) as f32 * UNIT_PT)
+                {
+                    tile.draw_path(&path);
+                }
+            }
+        }
+        tile.finish();
+    }
+    let k = k.max(1e-6);
+    // The tile's row 0 is the cell row 0, a unit above the slide's top.
+    let pattern = krilla::paint::Pattern { stream: builder.finish(), transform: Transform::from_row(1.0 / k, 0.0, 0.0, 1.0 / k, 0.0, -UNIT_PT / k), width: SIDE as f32 * UNIT_PT, height: SIDE as f32 * UNIT_PT };
+    Fill { paint: pattern.into(), opacity: NormalizedF32::ONE, rule: FillRule::NonZero }
 }
 
 /// The fill for a background over `bounds`: a color, or a linear gradient
 /// (at the CSS angle GPUI's gradients have); `None` when transparent.
-fn fill_of(background: &Background, bounds: &Bounds<Pixels>) -> Option<Fill> {
+fn fill_of(s: &mut Surface, background: &Background, bounds: &Bounds<Pixels>, kind: PaintKind) -> Option<Fill> {
+    // The dots of the pure black and white print's automatic series (`shape_view::print_dots_background`).
+    if let Some((angle, _)) = background.as_linear_gradient()
+        && let Some(n) = crate::render::shape_view::print_dots_series(angle)
+    {
+        return Some(dots_fill(s, n));
+    }
     if let Some(c) = background.as_solid() {
         if c.a <= 0.0 {
             return None;
         }
-        let (paint, opacity) = color(c, PaintKind::Fill);
+        let (paint, opacity) = color(c, kind);
         return Some(Fill { paint: paint.into(), opacity, rule: FillRule::NonZero });
     }
     let (angle, stops) = background.as_linear_gradient()?;
@@ -966,6 +1101,40 @@ fn vertical_extent(data: &[u8], index: u32) -> (f32, f32) {
     let windows = font.os2().ok().map(|os2| (f32::from(os2.us_win_ascent()) / em, f32::from(os2.us_win_descent()) / em));
     let bounds = (f32::from(head.y_max()) / em, -f32::from(head.y_min()) / em);
     windows.filter(|(a, _)| *a > 0.0).or(Some(bounds)).filter(|(a, d)| *a > 0.0 && *d >= 0.0).unwrap_or((1.5, 1.0))
+}
+
+/// A copy of the font whose `OS/2` values make krilla write the `/FontDescriptor` numbers Word writes (GitHub issue #188), or `None` when the
+/// font already gives them (or has no `OS/2` version 2 table). krilla reads the descriptor's `/Ascent` from `sTypoAscender` and `/CapHeight` from
+/// `sCapHeight`; Word writes `/Ascent` = `hhea.ascender`, `/Descent` = `OS/2.sTypoDescender` (krilla does the same) and `/CapHeight` =
+/// `OS/2.sTypoAscender` (not `sCapHeight`). Word's and PowerPoint's PDFs (tasks/doc/issue54-check-20261109/m29-heading/word-issue54-symbols.pdf, tasks/doc/m64-images/powerpoint-turn-matrix5.pdf, the Windows result of #188) show it for Meiryo
+/// (1060 / -122 / 878: hhea 2171, typo 1798 and -250 of 2048), MS Mincho and MS Gothic (859 / -141 / 859), Yu Mincho and Yu Gothic (880 / -120 /
+/// 880) and Arial (905 / -210 / 728). So the copy gets `sTypoAscender` := `hhea.ascender` and `sCapHeight` := the old `sTypoAscender`; nothing
+/// but the descriptor reads those two fields of the copy (the glyphs, the advances and the subset come from the tables that are the same).
+/// `/FontBBox` (Word: head xMin, sTypoDescender, head xMax, sTypoAscender) is the union of the used glyphs' outlines in krilla and cannot be
+/// reached from the font's bytes.
+pub(crate) fn descriptor_metrics_font(data: &[u8], index: u32) -> Option<Vec<u8>> {
+    let u16_at = |at: usize| data.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize);
+    let u32_at = |at: usize| data.get(at..at + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    // A collection's directory starts at the face's offset.
+    let start = if data.get(0..4) == Some(b"ttcf") { u32_at(12 + 4 * index as usize)? } else { 0 };
+    let tables = u16_at(start + 4)?;
+    let table = |tag: &[u8; 4]| (0..tables).find_map(|i| (data.get(start + 12 + 16 * i..start + 16 + 16 * i)? == tag).then(|| u32_at(start + 20 + 16 * i)).flatten());
+    let hhea = table(b"hhea")?;
+    let os2 = table(b"OS/2")?;
+    // sCapHeight is in OS/2 version 2 and later.
+    if u16_at(os2)? < 2 || u16_at(os2 + 88).is_none() {
+        return None;
+    }
+    let hhea_ascender = u16_at(hhea + 4)?;
+    let typo_ascender = u16_at(os2 + 68)?;
+    let cap_height = u16_at(os2 + 88)?;
+    if hhea_ascender == typo_ascender && cap_height == typo_ascender {
+        return None;
+    }
+    let mut copy = data.to_vec();
+    copy[os2 + 68..os2 + 70].copy_from_slice(&(hhea_ascender as u16).to_be_bytes());
+    copy[os2 + 88..os2 + 90].copy_from_slice(&(typo_ascender as u16).to_be_bytes());
+    Some(copy)
 }
 
 /// The advances of a font's glyphs, in ems (`hmtx`); empty when they

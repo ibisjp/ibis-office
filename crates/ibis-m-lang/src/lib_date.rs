@@ -19,7 +19,7 @@ const DAY: f64 = 86400.0;
 fn ymd(v: &Value) -> Result<Option<(i64, i64, i64)>, MError> {
     match v {
         Value::Null => Ok(None),
-        Value::Date(d) | Value::DateTime(d, _) => Ok(Some(civil_from_days(*d))),
+        Value::Date(d) | Value::DateTime(d, _) | Value::DateTimeZone(d, ..) => Ok(Some(civil_from_days(*d))),
         v => Err(MError::expr(format!("We cannot convert a value of type {} to type Date.", v.type_name()))),
     }
 }
@@ -41,7 +41,7 @@ fn with_day(v: &Value, day: i64) -> Result<Value, MError> {
 
 fn day_of(v: &Value) -> i64 {
     match v {
-        Value::Date(d) | Value::DateTime(d, _) => *d,
+        Value::Date(d) | Value::DateTime(d, _) | Value::DateTimeZone(d, ..) => *d,
         _ => 0,
     }
 }
@@ -75,7 +75,7 @@ fn get(a: &[Value], f: impl Fn(i64, i64, i64, i64) -> f64) -> Result<Value, MErr
 fn secs(v: &Value) -> Result<Option<f64>, MError> {
     match v {
         Value::Null => Ok(None),
-        Value::Time(s) | Value::DateTime(_, s) => Ok(Some(*s)),
+        Value::Time(s) | Value::DateTime(_, s) | Value::DateTimeZone(_, s, _) => Ok(Some(*s)),
         v => Err(MError::expr(format!("We cannot convert a value of type {} to type Time.", v.type_name()))),
     }
 }
@@ -126,7 +126,7 @@ pub fn register(l: &mut HashMap<&'static str, Value>) {
     // A date from a date, a datetime, a serial number or a text of the ISO form; the rest is the culture's (the request, item 8).
     reg(l, "DateTime.Date", 1, 1, |_, a| match &a[0] {
         Value::Null => Ok(Value::Null),
-        Value::DateTime(d, _) | Value::Date(d) => Ok(Value::Date(*d)),
+        Value::DateTime(d, _) | Value::Date(d) | Value::DateTimeZone(d, ..) => Ok(Value::Date(*d)),
         v => Err(MError::expr(format!("We cannot convert a value of type {} to type DateTime.", v.type_name()))),
     });
     reg(l, "DateTime.Time", 1, 1, |_, a| Ok(secs(&a[0])?.map_or(Value::Null, Value::Time)));
@@ -143,7 +143,7 @@ pub fn register(l: &mut HashMap<&'static str, Value>) {
     reg(l, "Duration.TotalSeconds", 1, 1, |_, a| Ok(dur(&a[0])?.map_or(Value::Null, Value::Number)));
     reg(l, "Duration.From", 1, 1, |it, a| match &a[0] {
         Value::Null => Ok(Value::Null),
-        v => typed(v, Ty::Duration, it.culture()),
+        v => typed(it, v, Ty::Duration, it.culture()),
     });
     reg(l, "Number.Power", 2, 2, |_, a| match (&a[0], &a[1]) {
         (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
@@ -208,8 +208,8 @@ fn since_week_start(day: i64, first: i64) -> i64 {
     (weekday(day) - first).rem_euclid(7)
 }
 
-fn typed(v: &Value, ty: Ty, c: Culture) -> Result<Value, MError> {
-    match crate::table::convert_value(v, &TypeSpec { ty, nullable: true }, c) {
+fn typed(it: &Interp, v: &Value, ty: Ty, c: Culture) -> Result<Value, MError> {
+    match crate::table::convert_value(v, &TypeSpec { ty, nullable: true }, c, it.utc_offset()) {
         Value::Failed(e) => Err((*e).clone()),
         v => Ok(v),
     }
@@ -219,13 +219,17 @@ fn from_text(it: &Interp, a: &[Value], ty: Ty) -> Result<Value, MError> {
     let c = culture_arg(it, a.get(1))?;
     match &a[0] {
         Value::Null => Ok(Value::Null),
-        v @ Value::Text(_) => typed(v, ty, c),
+        v @ Value::Text(_) => typed(it, v, ty, c),
         v => Err(MError::expr(format!("We cannot convert a value of type {} to type Text.", v.type_name()))),
     }
 }
 
 /// `Date.ToText(d, format?, culture?)` and the same of datetime and time: no format is the culture's own form; a format string is read by
 /// `format.rs`; the format and the culture may be given as a record `[Format=…, Culture=…]` (a date then takes no time part in its format).
+pub(crate) fn to_text_pub(it: &Interp, a: &[Value]) -> Result<Value, MError> {
+    to_text(it, a)
+}
+
 fn to_text(it: &Interp, a: &[Value]) -> Result<Value, MError> {
     let (mut format, mut culture_arg_value) = (a.get(1).cloned(), a.get(2).cloned());
     if let Some(r @ Value::Record(_)) = &format {
@@ -243,7 +247,17 @@ fn to_text(it: &Interp, a: &[Value]) -> Result<Value, MError> {
         (Value::Null, _) => Ok(Value::Null),
         (Value::Duration(_), Some(_)) => Err(MError::expr("The \"format\" parameter of Duration.ToText has no effect and is not supported.")),
         (Value::Date(d), Some(f)) => crate::format::format_moment(moment(*d, 0.0), &f, c, "DateTime").map(Value::text),
+        // `U` is the long date and time of the instant in UTC: the clock time less the local offset.
+        (Value::DateTime(d, s), Some(f)) if &*f == "U" => {
+            let total = *d as f64 * 86400.0 + s - f64::from(it.utc_offset()) * 60.0;
+            crate::format::format_moment(moment(total.div_euclid(86400.0) as i64, total.rem_euclid(86400.0)), &f, c, "DateTime").map(Value::text)
+        }
         (Value::DateTime(d, s), Some(f)) => crate::format::format_moment(moment(*d, *s), &f, c, "DateTime").map(Value::text),
+        // A datetimezone's `zz` and `zzz` are its offset; a datetime's `z` is not a format at all.
+        (Value::DateTimeZone(d, s, o), Some(f)) if f.chars().count() > 1 => {
+            crate::format::format_moment(moment(*d, *s), &crate::lib_zone::prepare_format(&f, *o)?, c, "DateTimeZone").map(Value::text)
+        }
+        (Value::DateTimeZone(d, s, _), Some(f)) => crate::format::format_moment(moment(*d, *s), &f, c, "DateTimeZone").map(Value::text),
         // A time has no day: the format is read on the first of January of year 1.
         (Value::Time(s), Some(f)) => crate::format::format_moment(moment(0, *s), &f, c, "Time").map(Value::text),
         (v, _) => crate::table::scalar_text_in(v, c).map(Value::text).ok_or_else(|| MError::expr(format!("We cannot convert a value of type {} to type Text.", v.type_name()))),
@@ -307,17 +321,17 @@ pub fn register_more(l: &mut HashMap<&'static str, Value>) {
     });
     reg(l, "Date.From", 1, 2, |it, a| {
         let c = culture_arg(it, a.get(1))?;
-        typed(&a[0], Ty::Date, c)
+        typed(it, &a[0], Ty::Date, c)
     });
     reg(l, "DateTime.From", 1, 2, |it, a| {
         let c = culture_arg(it, a.get(1))?;
-        typed(&a[0], Ty::DateTime, c)
+        typed(it, &a[0], Ty::DateTime, c)
     });
     reg(l, "Time.From", 1, 2, |it, a| {
         let c = culture_arg(it, a.get(1))?;
         match &a[0] {
             Value::Null => Ok(Value::Null),
-            v => typed(v, Ty::Time, c),
+            v => typed(it, v, Ty::Time, c),
         }
     });
     reg(l, "Date.FromText", 1, 2, |it, a| from_text(it, a, Ty::Date));
@@ -340,7 +354,11 @@ pub fn register_more(l: &mut HashMap<&'static str, Value>) {
     reg(l, "Date.ToText", 1, 3, |it, a| to_text(it, a));
     reg(l, "DateTime.ToText", 1, 3, |it, a| to_text(it, a));
     reg(l, "Time.ToText", 1, 3, |it, a| to_text(it, a));
-    reg(l, "Duration.ToText", 1, 2, |it, a| to_text(it, &[a[0].clone(), Value::Null, a.get(1).cloned().unwrap_or(Value::Null)]));
+    // The second argument is a `format` that has no effect: Excel refuses it (`Duration.ToText(d, "c")` is an Expression.Error).
+    reg(l, "Duration.ToText", 1, 2, |it, a| match a.get(1) {
+        None | Some(Value::Null) => to_text(it, &[a[0].clone()]),
+        Some(_) => Err(MError::expr("The \"format\" parameter of Duration.ToText has no effect and is not supported.")),
+    });
 }
 
 /// The windows of `Date.IsIn…`: the unit of the date and of today are numbered (days; weeks from Sunday unless a first day is given; months;
@@ -446,5 +464,5 @@ fn number_type(it: &Interp, a: &[Value], ty: Ty) -> Result<Value, MError> {
     if matches!(a[0], Value::Null) {
         return Ok(Value::Null);
     }
-    typed(&a[0], ty, culture_arg(it, a.get(1))?)
+    typed(it, &a[0], ty, culture_arg(it, a.get(1))?)
 }

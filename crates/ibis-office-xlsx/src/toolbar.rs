@@ -1095,9 +1095,15 @@ impl SlideEditor {
             let picked = cx.prompt_for_new_path(&directory, Some(&name));
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(path))) = picked.await else { return };
+                // The page with its charts as pictures (`--export html`, #208); without the program, the page as it is made here.
+                let job = this.update(cx, |this, _| this.write_html_with_pictures(path.clone(), Some(index + 1))).ok().and_then(Result::ok);
+                let result: Result<std::path::PathBuf, String> = match job {
+                    Some(job) => cx.background_executor().spawn(async move { job() }).await,
+                    None => std::fs::write(&path, html).map(|()| path.clone()).map_err(|e| e.to_string()),
+                };
                 this.update(cx, |this, cx| {
-                    this.status = Some(match std::fs::write(&path, html) {
-                        Ok(()) => crate::shell::i18n::format("_xlsx.exported-to-path", &[("path", &path.display())]).into(),
+                    this.status = Some(match result {
+                        Ok(written) => crate::shell::i18n::format("_xlsx.exported-to-path", &[("path", &written.display())]).into(),
                         Err(e) => crate::shell::i18n::format("_xlsx.couldn-t-export-error", &[("error", &e)]).into(),
                     });
                     cx.notify();
@@ -1108,11 +1114,21 @@ impl SlideEditor {
         }
         #[cfg(target_family = "wasm")]
         {
-            // A host that keeps the files takes the export in its file window; else it is downloaded.
-            if !self.browser_export(name.clone(), "text/html;charset=utf-8", html.into_bytes(), window, cx) {
-                self.status = Some(crate::shell::i18n::format("_xlsx.exported-to-path", &[("path", &name)]).into());
-                cx.notify();
-            }
+            // The charts as pictures drawn in this window into textures (`shell::html_raster`, #208).
+            let _ = html;
+            let presentation = self.presentation().clone();
+            self.html_with_pictures(
+                move |raster| crate::sheet_html::sheet_to_html_with(&presentation, index, raster).unwrap_or_default(),
+                move |this, html, window, cx| {
+                    // A host that keeps the files takes the export in its file window; else it is downloaded.
+                    if !this.browser_export(name.clone(), "text/html;charset=utf-8", html.into_bytes(), window, cx) {
+                        this.status = Some(crate::shell::i18n::format("_xlsx.exported-to-path", &[("path", &name)]).into());
+                        cx.notify();
+                    }
+                },
+                window,
+                cx,
+            );
         }
     }
 
@@ -1257,6 +1273,9 @@ impl SlideEditor {
 
     /// グループ化 (`deeper`) or グループ解除 along an explicit `axis` (rows or columns).
     pub(crate) fn group_lines_on_axis(&mut self, axis: Axis, deeper: bool, cx: &mut Context<Self>) {
+        if self.outline_refused_by_protection(axis, true) {
+            return;
+        }
         self.commit_cell_edit(cx);
         let Some(r) = self.selected_range() else { return };
         let (first, last) = match axis {
@@ -1274,6 +1293,9 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let Some((_, sheet)) = self.current_sheet() else { return };
         let (axis, at, _) = self.outline_axis();
+        if self.outline_refused_by_protection(axis, false) {
+            return;
+        }
         let levels = if axis == Axis::Rows { &sheet.outline_rows } else { &sheet.outline_columns };
         let Some(&level) = levels.get(&at) else { return };
         let (mut first, mut last) = (at, at);
@@ -1284,7 +1306,7 @@ impl SlideEditor {
             last += 1;
         }
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::SetHidden { sheet: slide, axis, first, last, hidden: collapse })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::CollapseGroup { sheet: slide, axis, first, last, collapse })], cx);
     }
 
     /// シートを複製: a copy right after it, named as Excel names it (「月次売上 (2)」; a number in parentheses at the end is counted up: 「業務管理(2610)」→「業務管理(2611)」).
@@ -2109,6 +2131,16 @@ fn text_warp_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 }
 
 pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
+    menus_of_sheet(editor, menus);
+    // Sheets selected together: the lines Excel greys out (`sheet_group::GREYED_MENU_IDS`).
+    if !editor.sheet_group().is_empty() {
+        for (_, entries) in menus.menus.iter_mut() {
+            crate::sheet_group::grey_for_group(entries);
+        }
+    }
+}
+
+fn menus_of_sheet(editor: &SlideEditor, menus: &mut Menus) {
     // ツール > スペル > スペルチェック… / 類義語辞典
     fill_submenu(
         menus,
@@ -2535,6 +2567,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     let wb_protected = editor.workbook_protection().is_some();
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr(if wb_protected { "xlsx.unprotect-workbook" } else { "xlsx.protect-workbook" }).icon("lock").on(|this, window, cx| this.open_protect_workbook_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.allow-edit-ranges").icon("lock").on(|this, window, cx| this.open_allow_edit_ranges_panel(window, cx)).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(crate::shell::pii_check::pii_check_item().into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("review.accessibility-check").icon("accessibility").on(|this, window, cx| this.open_xlsx_accessibility_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.machine-readability-check").icon("rule").on(|this, window, cx| this.open_machine_readability_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("review.compatibility-check").icon("rule").on(|this, window, cx| this.open_xlsx_compatibility_panel(window, cx)).into());
@@ -2602,6 +2635,25 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         match insert_after(entries, "xlsx.import-text", from_table) {
             Ok(()) => break,
             Err(back) => from_table = back,
+        }
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        let json_lines = MenuItem::tr("xlsx.query-from-json-lines").icon("table_chart").on(|this, window, cx| this.pick_single_file_query(crate::query_editor::SingleFileQuery::JsonLines, None, false, window, cx));
+        let parquet = MenuItem::tr("xlsx.query-from-parquet").icon("table_chart").on(|this, window, cx| this.pick_parquet_query(false, None, false, window, cx));
+        let arrow = MenuItem::tr("xlsx.query-from-arrow-ipc").icon("table_chart").on(|this, window, cx| this.pick_single_file_query(crate::query_editor::SingleFileQuery::ArrowIpc, None, false, window, cx));
+        let avro = MenuItem::tr("xlsx.query-from-avro").icon("table_chart").on(|this, window, cx| this.pick_single_file_query(crate::query_editor::SingleFileQuery::Avro, None, false, window, cx));
+        let sqlite = MenuItem::tr("xlsx.query-from-sqlite").icon("table_chart").on(|this, window, cx| this.pick_record_source(false, None, false, window, cx));
+        let json = MenuItem::tr("xlsx.query-from-json-array").icon("table_chart").on(|this, window, cx| this.pick_record_source(true, None, false, window, cx));
+        let delimited = MenuItem::tr("xlsx.query-from-delimited").icon("table_chart").on(|this, window, cx| this.open_delimited_query(window, cx));
+        let folder = MenuItem::tr("xlsx.query-from-parquet-folder").icon("table_chart").on(|this, window, cx| this.pick_parquet_query(true, None, false, window, cx));
+        for mut source in [folder.into(), delimited.into(), sqlite.into(), json.into(), avro.into(), arrow.into(), json_lines.into(), parquet.into()] {
+            for (_, entries) in menus.menus.iter_mut() {
+                match insert_after(entries, "xlsx.import-text", source) {
+                    Ok(()) => break,
+                    Err(back) => source = back,
+                }
+            }
         }
     }
     let mut query_blank: MenuEntry = MenuItem::tr("xlsx.query-blank").icon("note_add").on(|this, window, cx| this.open_blank_query(window, cx)).into();
@@ -2987,10 +3039,28 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     // データ > グループ化 and the rest of the outline.
     let data = menus.items_mut(crate::shell::chrome::MenuId::Data);
     data.push(MenuEntry::Separator);
-    data.push(MenuItem::tr("xlsx.group").on(|this, _, cx| this.group_lines(true, cx)).into());
-    data.push(MenuItem::tr("xlsx.ungroup").on(|this, _, cx| this.group_lines(false, cx)).into());
-    data.push(MenuItem::tr("xlsx.collapse").on(|this, _, cx| this.collapse_group(true, cx)).into());
-    data.push(MenuItem::tr("xlsx.expand").on(|this, _, cx| this.collapse_group(false, cx)).into());
+    // Excel greys these on a protected sheet: grouping and ungrouping always, showing and hiding the details unless the sheet allows formatting the
+    // rows (columns) of the selection (measured on Windows, #291 W4).
+    let (outline_axis, _, _) = editor.outline_axis();
+    let (no_group, no_detail) = (editor.outline_refused_by_protection(outline_axis, true), editor.outline_refused_by_protection(outline_axis, false));
+    data.push(MenuItem::tr("xlsx.group").disabled(no_group).on(|this, _, cx| this.group_lines(true, cx)).into());
+    data.push(MenuItem::tr("xlsx.ungroup").disabled(no_group).on(|this, _, cx| this.group_lines(false, cx)).into());
+    data.push(MenuItem::tr("xlsx.collapse").disabled(no_detail).on(|this, _, cx| this.collapse_group(true, cx)).into());
+    data.push(MenuItem::tr("xlsx.expand").disabled(no_detail).on(|this, _, cx| this.collapse_group(false, cx)).into());
+    // データ > アウトラインの設定: where the totals of the groups are (Excel's 設定 dialog's 詳細データの下／右; unchecked: the totals are above/left).
+    let (summary_above, summary_left) = editor.current_sheet().map_or((false, false), |(_, s)| (s.outline_summary_above, s.outline_summary_left));
+    for (id, shown, axis) in [("xlsx.outline-summary-below", !summary_above, Axis::Rows), ("xlsx.outline-summary-right", !summary_left, Axis::Columns)] {
+        data.push(MenuItem::tr(id).checked(shown).on(move |this, _, cx| {
+            let Some((_, s)) = this.current_sheet() else { return };
+            let (above, left) = (s.outline_summary_above, s.outline_summary_left);
+            let slide = this.current_slide;
+            let command = match axis {
+                Axis::Rows => SheetCommand::SetOutlineSummary { sheet: slide, above: !above, left },
+                Axis::Columns => SheetCommand::SetOutlineSummary { sheet: slide, above, left: !left },
+            };
+            this.run_sheet(vec![Command::Sheet(command)], cx);
+        }).into());
+    }
     data.push(MenuEntry::Separator);
     data.extend(super::pivot::menu_items());
     data.push(MenuEntry::Separator);
@@ -3628,6 +3698,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.evaluate-formula", |this, window, cx| this.open_evaluate_formula(window, cx));
     menus.connect("xlsx.watch-window", |this, window, cx| this.open_watch_window(window, cx));
     menus.connect("review.accessibility-check", |this, window, cx| this.open_xlsx_accessibility_panel(window, cx));
+    menus.connect("review.pii-check", |this, _, cx| this.pii_check(cx));
     menus.connect("xlsx.machine-readability-check", |this, window, cx| this.open_machine_readability_panel(window, cx));
     menus.connect("review.compatibility-check", |this, window, cx| this.open_xlsx_compatibility_panel(window, cx));
     menus.connect("xlsx.error-options", |this, window, cx| this.open_error_options_panel(window, cx));
@@ -3773,6 +3844,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             let active = editor.is_xlsx_theme_palette_active(pid);
             let menu_id = match pid {
                 "office" => "xlsx.theme-palette.office",
+                // Its own id (it had the submenu's, `xlsx.theme-palette`, as every preset the list below did not name: two lines of one id).
+                "office_2013_2022" => "xlsx.theme-palette.office-2013-2022",
                 "aspect" => "xlsx.theme-palette.aspect",
                 "apex" => "xlsx.theme-palette.apex",
                 "slate" => "xlsx.theme-palette.slate",
@@ -3921,6 +3994,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         crate::shell::chrome::Submenu::tr("xlsx.chart-quick-layout", "dashboard_customize", quick_layout_items).into(),
     );
     menus.connect("xlsx.theme-palette.office", |this, _, cx| this.apply_xlsx_theme_palette("office", cx));
+    menus.connect("xlsx.theme-palette.office-2013-2022", |this, _, cx| this.apply_xlsx_theme_palette("office_2013_2022", cx));
     menus.connect("xlsx.theme-palette.aspect", |this, _, cx| this.apply_xlsx_theme_palette("aspect", cx));
     menus.connect("xlsx.theme-palette.apex", |this, _, cx| this.apply_xlsx_theme_palette("apex", cx));
     menus.connect("xlsx.theme-palette.slate", |this, _, cx| this.apply_xlsx_theme_palette("slate", cx));
@@ -4484,7 +4558,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             .disabled(!has_shape)
             .on(|this, _, cx| {
                 let shadow = ibis_doc_model::Shadow::simple(
-                    ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128 },
+                    ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128, theme: None },
                     0,
                     50_800,
                     2_700_000,
@@ -4496,7 +4570,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             .disabled(!has_shape)
             .on(|this, _, cx| {
                 let shadow = ibis_doc_model::Shadow::simple(
-                    ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128 },
+                    ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128, theme: None },
                     0,
                     50_800,
                     0,
@@ -4508,7 +4582,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             .disabled(!has_shape)
             .on(|this, _, cx| {
                 let shadow = ibis_doc_model::Shadow::simple(
-                    ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128 },
+                    ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128, theme: None },
                     50_800,
                     50_800,
                     2_700_000,
@@ -5087,15 +5161,15 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
 
     menus.connect("xlsx.shape-effect.shadow-none", |this, _, cx| { this.shadow_sheet_shape(None, cx); });
     menus.connect("xlsx.shape-effect.shadow-bottom-right", |this, _, cx| {
-        let shadow = ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128 }, 0, 50_800, 2_700_000);
+        let shadow = ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128, theme: None }, 0, 50_800, 2_700_000);
         this.shadow_sheet_shape(Some(shadow), cx);
     });
     menus.connect("xlsx.shape-effect.shadow-right", |this, _, cx| {
-        let shadow = ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128 }, 0, 50_800, 0);
+        let shadow = ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128, theme: None }, 0, 50_800, 0);
         this.shadow_sheet_shape(Some(shadow), cx);
     });
     menus.connect("xlsx.shape-effect.shadow-soft", |this, _, cx| {
-        let shadow = ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128 }, 50_800, 50_800, 2_700_000);
+        let shadow = ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128, theme: None }, 50_800, 50_800, 2_700_000);
         this.shadow_sheet_shape(Some(shadow), cx);
     });
 

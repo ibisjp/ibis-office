@@ -321,3 +321,81 @@ pub(crate) fn write_view(package: &mut ibis_ooxml::Package, presentation: &str, 
     doc.insert(common, end, node);
     Ok(())
 }
+
+/// The grid and guide settings of `viewProps.xml` (`text` is that part): `p:gridSpacing` (EMU), and `snapToGrid` (default true), `snapToObjects`
+/// (default false) and `showGuides` (default false) of `p:cSldViewPr` (ECMA-376 19.2.2.3, 19.2.2.7). A file whose slide view is not there
+/// snaps to nothing (ibisOffice's own start).
+pub(crate) fn read_view_grid(text: &str) -> ibis_doc_model::ViewGrid {
+    let mut grid = ibis_doc_model::ViewGrid::default();
+    let Ok(doc) = roxmltree::Document::parse(text) else { return grid };
+    let root = doc.root_element();
+    fn child<'a, 'i>(from: roxmltree::Node<'a, 'i>, name: &str) -> Option<roxmltree::Node<'a, 'i>> {
+        from.children().find(|n| n.is_element() && n.tag_name().name() == name)
+    }
+    if let Some(g) = child(root, "gridSpacing") {
+        let cx = g.attribute("cx").and_then(|v| v.parse::<i64>().ok());
+        let cy = g.attribute("cy").and_then(|v| v.parse::<i64>().ok());
+        if let (Some(cx), Some(cy)) = (cx, cy) {
+            grid.spacing = ibis_doc_model::EmuSize::new(cx.max(1), cy.max(1));
+        }
+    }
+    if let Some(view) = child(root, "slideViewPr").and_then(|n| child(n, "cSldViewPr")) {
+        let flag = |name: &str, default: bool| match view.attribute(name) {
+            Some("1") | Some("true") => true,
+            Some("0") | Some("false") => false,
+            _ => default,
+        };
+        grid.snap_to_grid = flag("snapToGrid", true);
+        grid.snap_to_objects = flag("snapToObjects", false);
+        grid.show_guides = flag("showGuides", false);
+    }
+    grid
+}
+
+/// Write `grid` into `viewProps.xml` as PowerPoint does: `snapToGrid="0"` when off (on is the default and not written), `snapToObjects="1"` and
+/// `showGuides="1"` when on, and `p:gridSpacing` (before `p:extLst`). The part and its slide view are there (`write_notes_pane` makes them).
+pub(crate) fn write_view_grid(package: &mut ibis_ooxml::Package, presentation: &str, grid: &ibis_doc_model::ViewGrid) -> Result<(), Error> {
+    let Some(part) = view_props_part(package, presentation) else { return Ok(()) };
+    let doc = package.xml_mut(&part)?;
+    let root = doc.root_element().ok_or_else(|| Error::new("viewProps.xml が空です"))?;
+    let x = Prefixes::at(doc, root);
+    let find = |doc: &XmlDocument, from: NodeId, name: &str| doc.elements(from).find(|&n| doc.local_name(n) == name);
+    let common = match find(doc, root, "slideViewPr").and_then(|n| find(doc, n, "cSldViewPr")) {
+        Some(n) => n,
+        None => {
+            let node = x.import(doc, &format!("<{p}slideViewPr><{p}cSldViewPr><{p}cViewPr varScale=\"1\"><{p}scale><{a}sx n=\"100\" d=\"100\"/><{a}sy n=\"100\" d=\"100\"/></{p}scale><{p}origin x=\"0\" y=\"0\"/></{p}cViewPr></{p}cSldViewPr></{p}slideViewPr>", p = x.p, a = x.a))?;
+            let next = doc.elements(root).find(|&n| matches!(doc.local_name(n), "outlineViewPr" | "notesTextViewPr" | "sorterViewPr" | "notesViewPr" | "gridSpacing" | "extLst"));
+            match next {
+                Some(next) => doc.insert_before(next, node),
+                None => {
+                    let end = doc.children(root).len();
+                    doc.insert(root, end, node);
+                }
+            }
+            match find(doc, root, "slideViewPr").and_then(|n| find(doc, n, "cSldViewPr")) {
+                Some(n) => n,
+                None => return Ok(()),
+            }
+        }
+    };
+    if grid.snap_to_grid { doc.remove_attr(common, "snapToGrid") } else { doc.set_attr(common, "snapToGrid", "0") }
+    if grid.snap_to_objects { doc.set_attr(common, "snapToObjects", "1") } else { doc.remove_attr(common, "snapToObjects") }
+    if grid.show_guides { doc.set_attr(common, "showGuides", "1") } else { doc.remove_attr(common, "showGuides") }
+    let spacing = match find(doc, root, "gridSpacing") {
+        Some(n) => n,
+        None => {
+            let node = x.import(doc, &format!("<{p}gridSpacing cx=\"{}\" cy=\"{}\"/>", grid.spacing.width, grid.spacing.height, p = x.p))?;
+            match find(doc, root, "extLst") {
+                Some(next) => doc.insert_before(next, node),
+                None => {
+                    let end = doc.children(root).len();
+                    doc.insert(root, end, node);
+                }
+            }
+            return Ok(());
+        }
+    };
+    doc.set_attr(spacing, "cx", &grid.spacing.width.to_string());
+    doc.set_attr(spacing, "cy", &grid.spacing.height.to_string());
+    Ok(())
+}

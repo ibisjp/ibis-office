@@ -1789,7 +1789,7 @@ impl SlideEditor {
         style.bold = preset.bold;
 
         let shadow = preset.shadow.map(|(dir, dist, blur)| Shadow {
-            color: Color { rgb: ibis_doc_model::Rgb(0), alpha: 102 },
+            color: Color { rgb: ibis_doc_model::Rgb(0), alpha: 102, theme: None },
             blur,
             distance: dist,
             direction: dir,

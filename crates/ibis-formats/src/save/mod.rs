@@ -653,16 +653,19 @@ impl Source {
         use ibis_doc_model::Command;
         let before = crate::read(&self.themed_bytes(&current.theme_colors, current.theme_fonts.as_ref(), current.theme_effects.as_deref())?)?;
         let after = crate::read(&self.themed_bytes(&colors, fonts.as_ref(), current.theme_effects.as_deref())?)?;
+        // The shapes the model has changed since it was read (and so the file cannot redraw) follow the theme as the command gives it.
+        let mut themed = current.clone();
+        let _ = themed.apply(Command::SetTheme { colors: colors.clone(), fonts: fonts.clone() });
         let mut commands = vec![Command::SetTheme { colors, fonts }];
         for slide in &current.slides {
             let (Some(was), Some(now)) = (before.slide(slide.id), after.slide(slide.id)) else { continue };
-            let mut new = slide.clone();
-            for shape in &mut new.shapes {
-                let (Some(old), Some(fresh)) = (was.shape(shape.id), now.shape(shape.id)) else { continue };
+            let mut new = themed.slide(slide.id).unwrap_or(slide).clone();
+            for (shape, kept) in new.shapes.iter_mut().zip(&slide.shapes) {
+                let (Some(old), Some(fresh)) = (was.shape(kept.id), now.shape(kept.id)) else { continue };
                 let mut same = old.clone();
-                same.frame = shape.frame;
-                if same == *shape {
-                    let frame = shape.frame;
+                same.frame = kept.frame;
+                if same == *kept {
+                    let frame = kept.frame;
                     *shape = fresh.clone();
                     shape.frame = frame;
                 }
@@ -1303,6 +1306,7 @@ fn renumbered(slide: &ibis_doc_model::Slide, id: ibis_doc_model::SlideId, ids: &
     out.text_chains = slide.text_chains.iter().map(|c| ibis_doc_model::TextChain { boxes: c.boxes.iter().map(|k| map(*k)).collect(), joined: c.joined.clone(), padding: c.padding.clone() }).collect();
     out.shape_placements = slide.shape_placements.iter().map(|(k, v)| (map(*k), *v)).collect();
     out.shape_prints = slide.shape_prints.iter().map(|(k, v)| (map(*k), *v)).collect();
+    out.shape_two_cell = slide.shape_two_cell.iter().map(|k| map(*k)).collect();
     out.shape_formulas = slide.shape_formulas.iter().map(|(k, v)| (map(*k), v.clone())).collect();
     out.attached = slide.attached.iter().map(|(k, v)| (map(*k), v.iter().map(|s| map(*s)).collect())).collect();
     out.groups = slide.groups.iter().map(|g| group(g, &map)).collect();

@@ -100,8 +100,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 /// A shape whose every attribute depends on `k`, so that two of them differ in all of them.
 fn shape(id: ShapeId, k: i64) -> Shape {
     let mut auto = AutoShape::new(Geometry::Rect, Fill::Solid(Color::BLACK), None);
-    auto.glow = Some((Color { rgb: Rgb(if k == 0 { 0x112233 } else { 0xAABBCC }), alpha: if k == 0 { 255 } else { 100 } }, 50_800 + k * 25_400));
-    let mut shadow = Shadow::simple(Color { rgb: Rgb(if k == 0 { 0x445566 } else { 0xDDEEFF }), alpha: if k == 0 { 200 } else { 60 } }, 63_501 + k * 12_700, 25_401 + k * 12_700, 300_001 + k as i32 * 600_000);
+    auto.glow = Some((Color { rgb: Rgb(if k == 0 { 0x112233 } else { 0xAABBCC }), alpha: if k == 0 { 255 } else { 100 }, theme: None }, 50_800 + k * 25_400));
+    let mut shadow = Shadow::simple(Color { rgb: Rgb(if k == 0 { 0x445566 } else { 0xDDEEFF }), alpha: if k == 0 { 200 } else { 60 }, theme: None }, 63_501 + k * 12_700, 25_401 + k * 12_700, 300_001 + k as i32 * 600_000);
     shadow.sx = 90_000;
     auto.shadow = Some(shadow);
     let mut text = TextBody::plain("Mixed", TextStyle::default());

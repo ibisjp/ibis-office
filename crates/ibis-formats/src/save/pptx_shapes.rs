@@ -1200,7 +1200,7 @@ fn write_picture_clear(doc: &mut XmlDocument, node: NodeId, clear: Option<ibis_d
     if let Some(color) = clear {
         let x = Prefixes::at(doc, blip);
         let from_xml = new::color_xml(&x, ibis_doc_model::Color::opaque(color));
-        let to_xml = new::color_xml(&x, ibis_doc_model::Color { rgb: color, alpha: 0 });
+        let to_xml = new::color_xml(&x, ibis_doc_model::Color { rgb: color, alpha: 0, theme: None });
         let change = x.import(doc, &format!("<{}clrChange><{}clrFrom>{from_xml}</{}clrFrom><{}clrTo>{to_xml}</{}clrTo></{}clrChange>", x.a, x.a, x.a, x.a, x.a, x.a))?;
         doc.insert(blip, 0, change);
     }
@@ -1647,6 +1647,11 @@ fn write_fill_colour(doc: &mut XmlDocument, container: NodeId, old: ibis_doc_mod
     let Some(&colour)=colours.first() else {
         let x=Prefixes::at(doc,container);let node=x.import(doc,&new::color_xml(&x,new))?;doc.insert(container,0,node);return Ok(());
     };
+    // A colour that follows (or followed) the theme is written whole: the reference with its transforms, or the RGB.
+    if old.theme.is_some() || new.theme.is_some() {
+        for &n in &colours {doc.detach(n);}
+        let x=Prefixes::at(doc,container);let node=x.import(doc,&new::color_xml(&x,new))?;doc.insert(container,0,node);return Ok(());
+    }
     let transforms=doc.elements(colour).filter(|&n|doc.namespace(n)==Some(new::NS_A)).collect::<Vec<_>>();
     if old.rgb!=new.rgb {
         if doc.local_name(colour)!="srgbClr" || transforms.iter().any(|&n|!["alpha","alphaMod","alphaOff"].contains(&doc.local_name(n))) {

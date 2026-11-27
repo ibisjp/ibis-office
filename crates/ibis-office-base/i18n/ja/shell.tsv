@@ -27,6 +27,17 @@ view.menus	メニューを非表示
 view.zoom-100	100%
 tools.dictionary	辞書
 tools.word-count	文字カウント…
+compare.law-command	新旧対照条文を作成…
+compare.pick-baseline	比較する現行法令を選択（法令XML・Lawtext・法令Markdown）
+compare.failed	文書を比較できません
+compare.different-laws	二つの文書の法令番号が一致しません。
+compare.current	現行
+compare.amended	改正後
+compare.open-result	文書として開く
+compare.swap	前後を入れ替え
+compare.law-preview	新旧対照条文を作成
+compare.law-result	新旧対照条文
+compare.no-law-body	作業中の文書に解析できる本則・附則・別表がありません
 tools.accessibility	ユーザー補助
 tools.settings	設定…
 help.search	メニューを検索
@@ -52,6 +63,7 @@ file.info	ファイルの情報
 file.language	言語
 file.page-setup	ページ設定…
 file.close	閉じる
+file.back	戻る
 file.quit	終了
 edit.undo	元に戻す
 edit.redo	やり直し
@@ -799,7 +811,7 @@ autocorrect.auto-borders	--- や === だけの段落を Enter で罫線にする
 _shell.hide-notes-pane	ノートを非表示
 _shell.show-notes-pane	ノートを表示
 shell.linux-desktop.ask	ibisOffice をアプリの一覧に登録しますか？
-shell.linux-desktop.ask.detail	アプリの一覧から起動できるようになり、Word・Excel・PowerPoint の文書の「別のアプリで開く」にも出ます。登録しないと、Dock（タスクバー）にアイコンが出ないことがあります。登録は自分のホーム フォルダーにだけ書き、あとでヘルプ メニューの「アプリの一覧に登録」からやり直せます。
+shell.linux-desktop.ask.detail	アプリの一覧から起動できるようになり、文書・ブック・プレゼンテーション（.docx・.xlsx・.pptx など）の「別のアプリで開く」にも出ます。登録しないと、Dock（タスクバー）にアイコンが出ないことがあります。登録は自分のホーム フォルダーにだけ書き、あとでヘルプ メニューの「アプリの一覧に登録」からやり直せます。
 shell.linux-desktop.yes	登録する
 shell.linux-desktop.no	登録しない
 _shell.comma-style	桁区切りスタイル
@@ -822,6 +834,8 @@ file.save-format.docx	Word 文書 (.docx)
 file.save-format.dotx	Word テンプレート (.dotx)
 file.save-format.odt	OpenDocument テキスト (.odt)
 file.save-format.md	Markdown 文書 (.md)
+file.save-format.lawtext	Lawtext 法令 (.lawtext)
+file.save-format.lawxml	法令標準 XML (.xml)
 file.save-format.xlsx	Excel ブック (.xlsx)
 file.save-format.xltx	Excel テンプレート (.xltx)
 file.save-format.xls	Excel 97-2003 ブック (.xls)
@@ -1003,6 +1017,7 @@ menu.group.protect-presentation	プレゼンテーションの保護
 menu.group.rows-columns	行と列
 menu.group.select	選択
 menu.group.sheets	シート
+menu.group.outline-settings	アウトラインの設定
 menu.group.show-detail	詳細データの表示／非表示
 menu.group.size	サイズ
 menu.group.slides	スライド
@@ -1076,6 +1091,7 @@ sidebar.notes-format	ノートの書式
 sidebar.master-doc	マスター文書
 sidebar.header-footer	ヘッダーとフッター
 sidebar.comments	コメント
+sidebar.form-fill	入力フォーム
 sidebar.find	検索と置換
 sidebar.selection	選択ウィンドウ
 sidebar.reading-order	読み上げ順序ウィンドウ
@@ -1197,6 +1213,7 @@ shell.font-setup.cancelled	取り消しました。
 shell.font-setup.done	インストールしました。書体の一覧から選べます。
 shell.panel-message.title	メッセージ
 shell.host.saving	保存中…
+shell.host.text-save-values-only	保存しました。CSV・TSV に保存されるのは、表示中のシートの値だけです（ほかのシート・書式は保存されません）。
 shell.host.exported	書き出しました
 shell.host.error-title	保存できませんでした
 shell.host.error-save-as	保存できませんでした。名前を付けて保存してください。
@@ -1271,10 +1288,20 @@ shell.signature.report.broken	電子署名の保存のしかたが不正です�
 shell.signature.report.head	署名 {n}（{part}）：{result}
 shell.signature.report.signer	　署名者（証明書に書かれた名前）：{name}
 shell.signature.report.value	　署名値：{state}
+shell.signature.report.trust	　証明書：{state}
+shell.signature.trust.checking	確認中…
+shell.signature.trust.trusted	信頼できます（OS の信頼のストアで確認。発行元の鎖・失効・有効期間に問題なし）
+shell.signature.trust.revocation-unknown	発行元の鎖は信頼できますが、失効を確認できませんでした
+shell.signature.trust.expired	有効期間外です（期限切れ、またはまだ有効になっていません）
+shell.signature.trust.partial-chain	発行元までたどれません（中間の証明書がありません）
+shell.signature.trust.untrusted-root	信頼されていません（発行元が OS の信頼するルートにありません）
+shell.signature.trust.revoked	失効しています
+shell.signature.trust.not-checked	この環境では信頼を確認できません
+shell.signature.trust.failed	確認に失敗しました
 shell.signature.report.digests	　対象部分のダイジェスト：{total} 件中 {matched} 件が一致
 shell.signature.report.detail	　・{what}：{state}
 shell.signature.report.more	　・ほか {count} 件
-shell.signature.report.notice	確認したのは、署名値と、署名が対象にする部分のダイジェストの一致だけです。証明書の信頼・失効、タイムスタンプ、署名が文書全体を対象にしているかは確認していないため、署名が有効であるという判定ではありません。編集後の状態は、保存したファイルを開き直して確認してください。
+shell.signature.report.notice	確認したのは、署名値と、署名が対象にする部分のダイジェストの一致と、署名した証明書の信頼（OS の信頼のストアによる鎖・失効・有効期間）です。タイムスタンプと、署名が文書全体を対象にしているかは確認していないため、署名が有効であるという判定ではありません。編集後の状態は、保存したファイルを開き直して確認してください。
 shell.signature.result.consistent	署名値とダイジェストは一致しています
 shell.signature.result.mismatch	一致しない部分があります（署名の後で変更された可能性があります）
 shell.signature.result.unsupported	未対応のアルゴリズムや変換があり、確認できない部分があります
@@ -1360,6 +1387,34 @@ toolbar.customize.all-scenes	すべての場面に追加
 settings.qat.customize	クイック アクセス ツール バーのカスタマイズ
 review.accessibility-check	アクセシビリティ チェック…
 review.compatibility-check	互換性チェック…
+review.pii-check	個人情報の消し忘れの検査…
+pii.clean	個人情報の消し忘れ（非表示のスライド・シート、ノート、コメント、マイナンバーや患者 ID に見える数字）は見つかりませんでした。
+pii.found	{count} 件の確認が要る所が見つかりました。
+pii.more	ほか {count} 件
+insert.medical-image	医療画像（DICOM）…
+dicom.insert.title	医療画像（DICOM）の匿名化と挿入
+dicom.insert.not-dicom	選んだファイルは DICOM のファイルではありません。
+dicom.insert.no-image	この DICOM から画像を取り出せませんでした。\n{reason}
+dicom.insert.read-failed	ファイルを読み込めませんでした: {error}
+dicom.insert.burned-in	この画像には、患者の名前・ID・日付などが画素そのものに焼き込まれている印（BurnedInAnnotation）があります。画像の中のその部分を、左の画像をドラッグして黒く塗りつぶしてから挿入してください。
+dicom.insert.hint	画像の上をドラッグすると、黒く塗る範囲を足せます。範囲の上をドラッグすると動かせます。
+dicom.insert.ranges	黒く塗る範囲
+dicom.insert.none	範囲はまだありません。
+dicom.insert.range-label	範囲 {no}　左 {x}　上 {y}　{width} × {height}
+dicom.insert.add	範囲を足す
+dicom.insert.delete	選んだ範囲を消す
+dicom.insert.x	左
+dicom.insert.y	上
+dicom.insert.width	幅
+dicom.insert.height	高さ
+dicom.insert.strip-dates	日付を取り除く（検査・シリーズ・撮影・内容の日付）
+dicom.insert.extra-tags	追加で取り除くタグ
+dicom.insert.extra-tags-hint	例: 0008,1040 0008,0070（空白か ; で区切ります。患者の名前・ID・生年月日・施設名などは、いつも取り除きます）
+dicom.insert.bad-tags	タグとして読めなかったもの（取り除きません）: {tags}
+dicom.insert.size	画像の大きさ: {width} × {height} 画素
+dicom.insert.note	学会発表・症例報告・研究資料のための挿入です。診断には使えません。黒く塗った所は画素ごと消え、元の画素は文書に残りません。
+dicom.insert.apply	挿入
+dicom.insert.inserted	医療画像を匿名化して挿入しました（黒く塗った範囲 {count} 件）。
 edit.go-to	ジャンプ…
 page.paper-a3	A3 (297 x 420 mm)
 page.paper-a4	A4 (210 x 297 mm)
@@ -1399,3 +1454,68 @@ window.minimize	しまう
 app.services	サービス
 app.hide	ibisOffice を隠す
 file.copy-download	コピーの保存（ダウンロード）
+shell.action.close	閉じる
+pii.remove	取り除く…
+pii.remove.what	取り除くもの：非表示のスライド {slides} 枚、非表示のシート {sheets} 枚、ノート {notes} 件、コメント {comments} 件。
+pii.remove.confirm	取り除きます。「元に戻す」で戻せます。よろしいですか？
+xdw.read-only	DocuWorks 文書は読み取り専用です。
+xdw.preview	DocuWorks プレビュー（読み取り専用）
+xdw.page-error	この DocuWorks のページは表示できません。
+settings.document.marks	編集記号
+settings.document.marks-note	文書画面に常に表示する編集記号を選びます。¶ ボタンはここで選ばなかった記号も含めてすべて表示します。
+settings.spreadsheet.sheet-list	シート一覧
+settings.spreadsheet.sheet-list-search-min	検索欄を表示するシート数
+settings.spreadsheet.sheet-list-search-min-unit	枚以上
+settings.spreadsheet.sheet-list-note	シート一覧に検索欄を出す条件です。この数以上のシートがあるときに表示します（1 にすると常に表示します）。全角と半角の英数字、大文字と小文字は区別せずに探します。
+settings.spreadsheet.grid	グリッド
+settings.spreadsheet.limited-grid	限られたグリッド表示
+settings.spreadsheet.limited-grid-note	使っている範囲とその外側の少しの行・列だけを表示します。選択が端に近づくと、グリッドが広がります。オフのときは、これまでどおり表全体を表示します。
+shell.back-to-start.label	スタート画面に戻る
+shell.keyboard-toolbar.hide	キーボードを閉じる
+shell.keyboard-toolbar.undo	元に戻す
+shell.keyboard-toolbar.caret-left	カーソルを左へ
+shell.keyboard-toolbar.caret-right	カーソルを右へ
+shell.keyboard-toolbar.bold	太字
+shell.keyboard-toolbar.bullets	箇条書き
+shell.keyboard-toolbar.previous-cell	前のセル
+shell.keyboard-toolbar.next-cell	次のセル
+shell.keyboard-toolbar.lower-level	レベルを下げる
+shell.keyboard-toolbar.raise-level	レベルを上げる
+shell.keyboard-toolbar.commit-down	確定して下へ
+shell.keyboard-toolbar.commit-right	確定して右へ
+shell.keyboard-toolbar.open-paren	左かっこ
+shell.keyboard-toolbar.close-paren	右かっこ
+shell.keyboard-toolbar.range-colon	範囲のコロン
+shell.keyboard-toolbar.insert-function	関数の挿入
+shell.keyboard-toolbar.toggle-reference	絶対参照と相対参照の切り替え
+shell.keyboard-toolbar.previous-field	前の入力欄
+shell.keyboard-toolbar.next-field	次の入力欄
+shell.keyboard-toolbar.find-previous	前を検索
+shell.keyboard-toolbar.find-next	次を検索
+view.jtd-read-only-notice	一太郎文書: 読み取り専用。一部の縦書き・ルビ・表に対応。表の罫線は近似で、書式や画像は再現されません。
+view.jtd-gallery-heading	検出した埋め込み画像の一部（元のページ・位置・大きさ・順序は再現していません。画像の表示も近似です）
+view.jtd-gallery-item	埋め込み項目 {index}
+view.jtd-gallery-count	検査した画像候補 {candidates} 件のうち {displayed} 件を表示しています。他の埋め込みは含まれない場合があります。
+view.jtd-gallery-notice	埋め込み画像の一部を配置未確定の一覧として表示しています。元の文書の再現ではありません。
+view.jtd-gallery-unavailable	表示できる本文または埋め込み画像がありません。
+file.jtd-gallery-export-disabled	この参考表示は元の文書ではないため、文書（DOCX）に変換できません。
+view.show-jtd-thumbnail	一太郎の保存済み縮小画像を表示
+view.hide-jtd-thumbnail	前のプレビューに戻る
+view.jtd-thumbnail-loading	保存済み縮小画像を読み込んでいます…
+view.jtd-thumbnail-unavailable	表示できる保存済み縮小画像がありません。現在の表示はそのままです。
+view.jtd-thumbnail-heading	保存済み縮小画像（古い可能性があり、現在の文書の再現ではありません）
+view.jtd-thumbnail-notice	保存済みの縮小画像です。古い、または文書の一部のみである可能性があります。
+view.show-jtd-images	一太郎の埋め込み画像を一覧表示
+view.show-jtd-body	一太郎の本文プレビューに戻る
+view.jtd-gallery-loading	埋め込み画像を読み込んでいます…
+view.jtd-no-embedded-images	表示できる埋め込み画像がありません。本文はそのままです。
+view.jtd-omitted-sheets	 追加シート{count}件は表示・変換されません。
+view.jtd-omitted-objects	 埋め込み関連の格納領域{count}件は表示・変換されません。
+file.jtd-read-only	一太郎文書は読み取り専用です
+file.edit-as-docx	文書（DOCX）に変換して編集
+file.edit-as-docx-done	文書（DOCX）に変換しました。未対応の書式・画像や一部の罫線は失われます。元の一太郎文書とは別に保存してください。
+file.jtd-source-protected	一太郎形式には保存できません。元のファイルとは別に保存してください。
+file.export.docx	文書（DOCX）（表示中の内容、途中の罫線を除く）
+file.docx-done	文書（DOCX）に変換しました。途中の罫線、未対応の書式や画像は含まれません。
+file.export.html	HTML（表示中の内容、途中の罫線を除く）
+file.html-done	HTMLに変換しました。途中の罫線、未対応の書式や画像は含まれません。

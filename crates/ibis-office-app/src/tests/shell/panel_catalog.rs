@@ -338,8 +338,24 @@ pub(crate) fn dump_all_right_panels() {
         x!("solver_panel", |e, w, cx| {e.open_solver_panel(w,cx);let p=e.wb_mut().panels.solver.as_mut().unwrap();p.constraints=vec![("B2".into(),ibis_doc_model::solver::Rel::Le,"100".into()),("B3".into(),ibis_doc_model::solver::Rel::Ge,"0".into()),("B4".into(),ibis_doc_model::solver::Rel::Int,"".into())];}, solver_panel);
         x!("solver_constraint_editor", |e,w,cx| {e.open_solver_panel(w,cx);e.open_solver_constraint(None,w,cx);}, solver_panel);
         x!("ink_panel", |e, w, cx| e.open_ink_panel(w, cx), ink_panel);
-        x!("slicer_insert_panel", |e, w, cx| e.open_slicer_insert_panel(w, cx), slicer_insert_panel);
-        x!("timeline_insert_panel", |e, w, cx| e.open_timeline_insert_panel(w, cx), timeline_insert_panel);
+        x!("slicer_insert_panel", |e, w, cx| {
+            // The panel needs a table to make slicers of; without one it shows a message box (#261).
+            let slide = e.current_slide;
+            let _ = e.make_table(ibis_doc_model::CellRange { first_column: 0, first_row: 1, last_column: 3, last_row: 5 }, true, cx);
+            let state = e.wb_mut();
+            state.cells.insert(slide, (0, 2));
+            state.cell_ends.insert(slide, (0, 2));
+            e.open_slicer_insert_panel(w, cx);
+        }, slicer_insert_panel);
+        x!("timeline_insert_panel", |e, w, cx| {
+            // The panel needs a table to make slicers of; without one it shows a message box (#261).
+            let slide = e.current_slide;
+            let _ = e.make_table(ibis_doc_model::CellRange { first_column: 0, first_row: 1, last_column: 3, last_row: 5 }, true, cx);
+            let state = e.wb_mut();
+            state.cells.insert(slide, (0, 2));
+            state.cell_ends.insert(slide, (0, 2));
+            e.open_timeline_insert_panel(w, cx);
+        }, timeline_insert_panel);
         x!("error_options_panel", |e, w, cx| e.open_error_options_panel(w, cx), error_options_panel);
         x!("autocorrect_panel", |e, w, cx| e.open_autocorrect_panel(w, cx), autocorrect_panel);
         x!("forecast_panel", |e, w, cx| e.open_forecast_panel(w, cx), forecast_panel);
@@ -702,10 +718,20 @@ pub(crate) fn dump_all_right_panels() {
             }};
         }
         xp!("slicer_insert_filled", |e, w, cx| {
+            let slide = e.current_slide;
+            let _ = e.make_table(ibis_doc_model::CellRange { first_column: 0, first_row: 1, last_column: 3, last_row: 5 }, true, cx);
+            let state = e.wb_mut();
+            state.cells.insert(slide, (0, 2));
+            state.cell_ends.insert(slide, (0, 2));
             e.open_slicer_insert_panel(w, cx);
             for (k, c) in e.wb_mut().panels.slicer_insert.as_mut().unwrap().checked.iter_mut().enumerate() {*c = k < 2;}
         }, slicer_insert_panel);
         xp!("timeline_insert_filled", |e, w, cx| {
+            let slide = e.current_slide;
+            let _ = e.make_table(ibis_doc_model::CellRange { first_column: 0, first_row: 1, last_column: 3, last_row: 5 }, true, cx);
+            let state = e.wb_mut();
+            state.cells.insert(slide, (0, 2));
+            state.cell_ends.insert(slide, (0, 2));
             e.open_timeline_insert_panel(w, cx);
             for (k, c) in e.wb_mut().panels.timeline_insert.as_mut().unwrap().checked.iter_mut().enumerate() {*c = k < 1;}
         }, timeline_insert_panel);

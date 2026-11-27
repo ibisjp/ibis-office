@@ -179,12 +179,12 @@ impl RenderOnce for NumberStepper {
                 }
             })
             .child(canvas(|_, _, _| (), {
-                #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+                #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
                 let key = format!("{}-edit", self.id);
                 move |bounds, _, _, _| {
-                    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+                    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
                     crate::scenario::button_probe::record_bounds(&key, bounds);
-                    #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+                    #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))))]
                     let _ = bounds;
                 }
             }).absolute().inset_0())

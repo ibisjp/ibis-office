@@ -75,6 +75,22 @@ impl RenderOnce for AnchoredDropdown {
         let scroll = self.scroll;
         let content = surface().relative().w(width).min_w(width).max_w(width).h(height)
             .border_1().border_color(rgb(BORDER)).rounded(px(6.)).shadow_md()
+            // The wheel over the list scrolls the list, never the sheet under it (GitHub issue #284). The list scrolls by itself while it can; this
+            // takes what it left (at its ends, or a list that does not take it) so that it does not reach the sheet.
+            .on_scroll_wheel({
+                let scroll = scroll.clone();
+                move |event: &ScrollWheelEvent, _, cx| {
+                    // A finger's scroll (touch_fingers not 0) is the list's own: it stretches at its end and coasts (K0065, K0078); only a wheel or a trackpad is taken here.
+                    if event.touch_fingers != 0 {
+                        return;
+                    }
+                    let mut offset = scroll.offset();
+                    let max = f32::from(scroll.max_offset().y);
+                    offset.y = (offset.y + event.delta.pixel_delta(px(20.)).y).clamp(px(-max), px(0.));
+                    scroll.set_offset(offset);
+                    cx.stop_propagation();
+                }
+            })
             .child(div().relative().flex_1().min_h_0().w_full()
                 .child(list("validation-choices-list", &scroll).children(self.rows))
                 .child(always_visible_scrollbar_overlay("validation-choices-scrollbar", scroll, None)))

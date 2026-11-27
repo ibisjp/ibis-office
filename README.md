@@ -28,32 +28,33 @@ Our aim is simple: a document made in Microsoft Office should look the same when
 <table>
   <tr>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Windows.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Windows.zip">
         <img src="asset/download-windows.svg" alt="Download for Windows" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Windows.zip"><code>ibisOffice-0.8.9-Windows.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Windows.zip"><code>ibisOffice-0.8.10-Windows.zip</code></a><br>
       <small>Windows 10 / 11 (64-bit)</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-macOS.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-macOS.zip">
         <img src="asset/download-mac.svg" alt="Download for Mac" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-macOS.zip"><code>ibisOffice-0.8.9-macOS.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-macOS.zip"><code>ibisOffice-0.8.10-macOS.zip</code></a><br>
       <small>macOS 11 or later (Apple silicon)</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Linux.AppImage">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Linux.AppImage">
         <img src="asset/download-linux.svg" alt="Download for Linux" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Linux.AppImage"><code>ibisOffice-0.8.9-Linux.AppImage</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Linux.AppImage"><code>ibisOffice-0.8.10-Linux.AppImage</code></a><br>
       <small>Linux x86_64</small>
     </td>
   </tr>
 </table>
 
-- **Windows**: download and unzip `ibisOffice-0.8.9-Windows.zip`, then run `ibisOffice.exe` in the `ibisOffice` folder.
-- **macOS**: download and unzip `ibisOffice-0.8.9-macOS.zip`, then move `ibisOffice.app` to your Applications folder.
-- **Linux**: download `ibisOffice-0.8.9-Linux.AppImage`, allow it to run as a program (`chmod +x`), and double-click. Runs on major desktop Linux distributions (glibc 2.31 or later: Ubuntu, Debian, Fedora, Arch Linux, etc.). No installation or FUSE is needed.
+- **Windows**: download and unzip `ibisOffice-0.8.10-Windows.zip`, then run `ibisOffice.exe` in the `ibisOffice` folder.
+- **macOS**: download and unzip `ibisOffice-0.8.10-macOS.zip`, then move `ibisOffice.app` to your Applications folder.
+- **Linux**: download `ibisOffice-0.8.10-Linux.AppImage`, allow it to run as a program (`chmod +x`), and double-click. Runs on major desktop Linux distributions (glibc 2.31 or later: Ubuntu, Debian, Fedora, Arch Linux, etc.). No installation or FUSE is needed.
+  On NixOS, see [ibisOffice on NixOS](docs/nixos.md).
 - **Try the web version**: open the [playground](https://ibisjp.github.io/ibis-office/) in your browser — no installation (a browser with WebGPU). Open the sample Word, Excel and PowerPoint documents and try it right away.
 - **Changelog**: see [CHANGELOG.md](CHANGELOG.md) for release notes and recent updates.
 - **Watch the video**: an introduction to ibisOffice (YouTube).
@@ -188,7 +189,7 @@ npm install @ibisjp/ibis-office
 
 The package [`@ibisjp/ibis-office`](https://www.npmjs.com/package/@ibisjp/ibis-office) carries the editor and the loader your page imports. `npx ibis-office-copy public/ibisoffice` copies the editor into the folder your server serves, and `npm update` takes the next release. Without npm, use the archive below.
 
-The browser version is a set of static files. Download [`ibisOffice-0.8.9-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip) (the browser version of [v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9)), check it with [its SHA-256](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip.sha256), and put it on your own web server. Your page loads it in an `iframe` and hands ibisOffice a few functions (list, open and save files); your system keeps the files, the sign-in and the permissions, and the editor runs in the visitor's browser.
+The browser version is a set of static files. Download [`ibisOffice-0.8.10-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.zip) (the browser version of [v0.8.10](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.10)), check it with [its SHA-256](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.zip.sha256), and put it on your own web server. Your page loads it in an `iframe` and hands ibisOffice a few functions (list, open and save files); your system keeps the files, the sign-in and the permissions, and the editor runs in the visitor's browser.
 
 [Embedding the browser version](docs/web-embedding.md) has the download and check, the minimal setup (where to put the files, the server settings, the smallest page that opens a document) and every option, function and event.
 

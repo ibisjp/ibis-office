@@ -87,6 +87,10 @@ pub struct Options {
     pub frame: bool,
     /// 配布資料 on a landscape page, with a header, date, footer and page number.
     pub handout_landscape: bool,
+    /// The paper the pages are printed on (`--print-paper`); `None`: the slide's own size (the notes page's, the handout's).
+    pub paper: Option<crate::export_print::Paper>,
+    /// With a paper: scale the page to it (`--no-print-fit-paper` puts it at 100 %).
+    pub fit_paper: bool,
     /// ノート ページ (`PdfImage`): each slide above its notes on a page.
     pub notes_pages: bool,
     /// アウトライン (`PdfImage`): the slides' titles and bodies as text.
@@ -655,8 +659,13 @@ pub(crate) fn windows_print_geometry(presentation: &mut Presentation) {
             // A picture or a chart keeps its own size (Excel prints it at the size it is, 411 pt wide
             // in a page of 419.7 pt of columns); it is put where its cell now is. The sheet itself is
             // all its cells.
+            // One the file anchors by two cells (`twoCellAnchor`, whatever its `editAs`) is printed from the printed cell of its
+            // top-left to that of its bottom-right (Excel 365's PDFs of a box of 6 rows of 15 pt: 82.8 pt tall where the rows
+            // print 13.8 pt, and 289.44 pt wide where its 6 columns print 48.24 pt; a `oneCellAnchor` or `absoluteAnchor` one
+            // keeps its 288 x 90 pt; pictures the same, #189). A chart keeps its size (not measured).
             let is_sheet = matches!(shape.kind, ibis_doc_model::ShapeKind::Sheet(_));
-            shape.frame = ibis_doc_model::EmuRect::new(mx(f.x), my(f.y), if is_sheet { mx(f.right()) - mx(f.x) } else { f.width }, if is_sheet { my(f.bottom()) - my(f.y) } else { f.height });
+            let by_cells = is_sheet || (slide.shape_two_cell.contains(&shape.id) && !matches!(shape.kind, ibis_doc_model::ShapeKind::Chart(_)));
+            shape.frame = ibis_doc_model::EmuRect::new(mx(f.x), my(f.y), if by_cells { mx(f.right()) - mx(f.x) } else { f.width }, if by_cells { my(f.bottom()) - my(f.y) } else { f.height });
             if let ibis_doc_model::ShapeKind::Sheet(sheet) = &mut shape.kind {
                 let sheet = std::sync::Arc::make_mut(sheet);
                 sheet.columns.iter_mut().for_each(|c| *c = if whole { printed_column(*c, cf) } else { by(*c, cf) });
@@ -992,21 +1001,73 @@ fn chart_frames(slide: &Slide, scale: f32, origin: (f32, f32)) -> Vec<(f32, f32,
         .collect()
 }
 
-/// The bars of a chart in the grey and the black and white print have a black line of 0.8 of the units of PowerPoint's print PDF (0.6 pt) when the series has no
-/// line of its own (Windows PowerPoint's `PrintOut` PDFs of bar charts, grey and pure black and white; none in colour: `2026-11-20-225-bw-hairline-result.md`).
-fn print_chart_edges(slide: &mut Slide) {
+/// What a chart's series look like in the pure black and white print (Windows PowerPoint's `PrintOut` PDFs, `tasks/doc/requests/2026-11-20-225-chart-print-result.md`):
+/// - a series that states no format at all (no `c:spPr`) is black, white, then the dots of the paper's grid by its number (a pie's slices by theirs), with the thin black edge below;
+///   a line's automatic line is black, its markers as the others;
+/// - a filled series (bar, area, pie, doughnut) whose fill is stated but has no outline element gets a thin black edge: 0.8 of the units of PowerPoint's print PDF
+///   (0.6 pt: 5 pixels of the printer's 600 dpi, the width any 0.6 pt line is drawn at there), and none when its outline is stated, `a:noFill` included.
+///
+/// - a marker has the thin black edge.
+///
+/// The grey print does neither (its automatic series are the grey of their colours). The colours of the fills and lines are the grey of the print
+/// (`pdf_vector`: `PaintKind`).
+/// The automatic fill of the `n`th series (or slice), counting from 0, in the pure black and white print: PowerPoint's patterns repeat with period 19 (series 20 is black
+/// again): 1 black, 2 white, 3 to 19 the tiles of `pdf_vector::DOT_TILES` (the cells are a grid of the slide).
+pub(crate) fn print_automatic_fill(n: usize) -> ibis_doc_model::Fill {
+    use ibis_doc_model::{Color, Fill};
+    match n % 19 {
+        0 => Fill::Solid(Color::BLACK),
+        1 => Fill::Solid(Color::WHITE),
+        p => Fill::Pattern { preset: format!("{}{}", crate::render::shape_view::PRINT_DOTS_PRESET_PREFIX, p + 1), foreground: Color::BLACK, background: Color::WHITE },
+    }
+}
+
+pub(crate) fn print_chart_series(slide: &mut Slide, color: crate::export_print::PrintColor) {
     use ibis_doc_model::{ChartType, Color, ShapeKind, Stroke};
+    if color != crate::export_print::PrintColor::BlackWhite {
+        return;
+    }
     // 0.8 units of 0.75 pt, in EMU.
     const EDGE_EMU: i64 = 7_620;
+    let automatic = print_automatic_fill;
     for shape in &mut slide.shapes {
         let ShapeKind::Chart(chart) = &mut shape.kind else { continue };
+        let mut number = 0;
         for group in &mut chart.groups {
-            if !matches!(group.kind, ChartType::Bar { .. }) {
-                continue;
-            }
+            let filled = matches!(group.kind, ChartType::Bar { .. } | ChartType::Area | ChartType::Pie { .. } | ChartType::Doughnut { .. });
+            let sliced = matches!(group.kind, ChartType::Pie { .. } | ChartType::Doughnut { .. });
             for series in &mut group.series {
-                if series.stroke.as_ref().is_none_or(|l| l.width <= 0 || l.color.alpha == 0) {
-                    series.stroke = Some(Stroke::solid(Color::BLACK, EDGE_EMU));
+                let n = number;
+                number += 1;
+                if filled {
+                    if !series.has_format {
+                        series.fill = automatic(n);
+                        if sliced {
+                            for i in 0..series.values.len() {
+                                let fill = automatic(i);
+                                match series.point_fills.iter_mut().find(|(idx, _)| *idx == i) {
+                                    Some(slot) => slot.1 = fill,
+                                    None => series.point_fills.push((i, fill)),
+                                }
+                            }
+                        }
+                    }
+                    if !series.has_outline {
+                        series.stroke = Some(Stroke::solid(Color::BLACK, EDGE_EMU));
+                    }
+                } else {
+                    if !series.has_format {
+                        if let Some(line) = &mut series.stroke {
+                            line.color = Color::BLACK;
+                        }
+                        if let Some(marker) = &mut series.marker {
+                            marker.fill = automatic(n);
+                        }
+                    }
+                    // A marker has the thin black edge too.
+                    if let Some(marker) = &mut series.marker {
+                        marker.edge = Some(Stroke::solid(Color::BLACK, EDGE_EMU));
+                    }
                 }
             }
         }
@@ -1472,7 +1533,14 @@ fn marks_with_numbers(options: &Options, presentation: &Presentation, numbers: &
     let mut marks = options.handout_marks.clone();
     marks.slide_numbers = slide_numbers(presentation.first_slide_number, numbers);
     marks.slide_size_pt = Some((presentation.slide_size.width as f32 / 12_700.0, presentation.slide_size.height as f32 / 12_700.0));
+    marks.on_paper = handout_paper(options);
     marks
+}
+
+/// The paper a handout's page is laid out on (#225): the page is the paper's size and its frames are put by fractions of it, which is not the page of the file
+/// scaled to the paper by one factor (see `HandoutMarks::on_paper`). `None`: no paper, a page not fitted to it, or notes pages and the outline (they are scaled by one factor).
+fn handout_paper(options: &Options) -> Option<crate::export_print::Paper> {
+    options.paper.filter(|_| options.fit_paper && options.handout.is_some() && !options.notes_pages && !options.outline_pages)
 }
 
 /// The numbers under the slides `numbers` (their places in the file, from 1) when the first slide's number is `first`: a hidden slide
@@ -1594,9 +1662,7 @@ pub(crate) fn render(mut presentation: Presentation, options: &Options) -> Resul
             .map(|&number| {
                 let mut slide = presentation.slides[number - 1].clone();
                 black_and_white(&mut slide);
-        if options.color != crate::export_print::PrintColor::Color {
-            print_chart_edges(&mut slide);
-        }
+        print_chart_series(&mut slide, options.color);
                 print_layout(&presentation, &mut slide);
                 let id = slide.id;
                 zoom_printed_rows_for(&presentation, &mut slide, &resources, sheet_text.get(&id).map(Vec::as_slice).unwrap_or(&[]));
@@ -1622,9 +1688,7 @@ pub(crate) fn render(mut presentation: Presentation, options: &Options) -> Resul
         }
         let mut slide = presentation.slides[number - 1].clone();
         black_and_white(&mut slide);
-        if options.color != crate::export_print::PrintColor::Color {
-            print_chart_edges(&mut slide);
-        }
+        print_chart_series(&mut slide, options.color);
                 print_layout(&presentation, &mut slide);
         let id = slide.id;
         zoom_printed_rows_for(&presentation, &mut slide, &resources, sheet_text.get(&id).map(Vec::as_slice).unwrap_or(&[]));
@@ -1660,7 +1724,7 @@ pub(crate) fn render(mut presentation: Presentation, options: &Options) -> Resul
         let window_size = gpui_kit::size(px((area.width as f32 * scale).round()), px((area.height as f32 * scale).round()));
         let origin = (area.x as f32 * scale, area.y as f32 * scale);
         let hairline = if options.color == crate::export_print::PrintColor::BlackWhite { hairline_frames(&slide, scale, origin) } else { Vec::new() };
-        let charts = if options.color == crate::export_print::PrintColor::BlackWhite { chart_frames(&slide, scale, origin) } else { Vec::new() };
+        let charts = chart_frames(&slide, scale, origin);
         if let Some(writer) = &mut vector {
             // One window for the pages of a size (making one takes a
             // renderer), the page changed in it, which draws it.
@@ -1718,7 +1782,9 @@ pub(crate) fn render(mut presentation: Presentation, options: &Options) -> Resul
             let mut records = records;
             if options.frame && !pages_asked {
                 // "Frame slides": a line of 0.96 pt round the slide (its outer edge at the slide's), as PowerPoint's PDF (`export_print::FRAME_PT`).
-                let line = crate::export_print::FRAME_PT * f32::from(window_size.width) / page_pt.0.max(1.0);
+                // (On a paper the page is scaled, and the line is not: `PdfWriter::fit_to_paper`.)
+                let on_paper = options.paper.map_or(1.0, |p| p.fit(page_pt, options.fit_paper).scale).max(1e-3);
+                let line = crate::export_print::FRAME_PT * f32::from(window_size.width) / page_pt.0.max(1.0) / on_paper;
                 let bounds = gpui_kit::Bounds::new(gpui_kit::point(gpui_kit::px(0.0), gpui_kit::px(0.0)), gpui_kit::size(gpui_kit::px(f32::from(window_size.width)), gpui_kit::px(f32::from(window_size.height))));
                 records.push(gpui_kit::PaintRecord::Quad {
                     bounds,
@@ -1834,6 +1900,9 @@ pub(crate) fn render(mut presentation: Presentation, options: &Options) -> Resul
                 writer.add_page_layers(size, page.layers);
             }
         }
+        if let Some(paper) = options.paper.filter(|_| !(pages_asked && handout_paper(options).is_some())) {
+            writer.fit_to_paper(paper, options.fit_paper);
+        }
         pdf_writer = Some(writer);
     }
     if options.format == Format::PdfImage {
@@ -1852,7 +1921,7 @@ pub(crate) fn render(mut presentation: Presentation, options: &Options) -> Resul
             let images: Vec<image::RgbaImage> = pages.into_iter().map(|(image, _)| image).collect();
             pages = crate::export_print::handouts(&images, per_page, options.frame, options.handout_landscape, &marks_with_numbers(options, &presentation, &numbers), &mut SlideTextLayer { cx: &mut cx, resources: resources.clone(), density, vector: false, last_baseline: None });
         }
-        write_pdf(&path, &pages)?;
+        write_pdf(&path, &pages, options.paper.filter(|_| handout_paper(options).is_none()).map(|p| (p, options.fit_paper)))?;
         println!("{}", path.display());
     }
     Ok(Rendered { writer: pdf_writer })
@@ -2350,7 +2419,7 @@ pub(crate) fn pixel_density(cx: &mut HeadlessAppContext) -> Result<f32, String> 
 
 /// A PDF with one full-page picture per page, each page's size (in points)
 /// given with its picture.
-fn write_pdf(path: &Path, pages: &[(image::RgbaImage, (f32, f32))]) -> Result<(), String> {
+fn write_pdf(path: &Path, pages: &[(image::RgbaImage, (f32, f32))], paper: Option<(crate::export_print::Paper, bool)>) -> Result<(), String> {
     let mut pdf: Vec<u8> = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n".to_vec();
     let mut offsets: Vec<usize> = Vec::new();
     // Objects: 1 catalog, 2 page tree, then per page: page, contents, image.
@@ -2369,15 +2438,23 @@ fn write_pdf(path: &Path, pages: &[(image::RgbaImage, (f32, f32))]) -> Result<()
     object(&mut pdf, 2, format!("<< /Type /Pages /Kids [{kids}] /Count {} >>", pages.len()).as_bytes());
     for ((page, (pw, ph)), id) in pages.iter().zip(&page_ids) {
         let (contents, picture) = (id + 1, id + 2);
+        // On a paper the page's picture is scaled and put in the middle (`Paper::fit`).
+        let (pw, ph, left, up, paper_w, paper_h) = match paper {
+            Some((paper, fit)) => {
+                let f = paper.fit((*pw, *ph), fit);
+                (pw * f.scale, ph * f.scale, f.shift.0, f.page_pt.1 - f.shift.1 - ph * f.scale, f.page_pt.0, f.page_pt.1)
+            }
+            None => (*pw, *ph, 0.0, 0.0, *pw, *ph),
+        };
         object(
             &mut pdf,
             *id,
             format!(
-                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pw:.2} {ph:.2}] /Resources << /XObject << /Im0 {picture} 0 R >> >> /Contents {contents} 0 R >>"
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {paper_w:.2} {paper_h:.2}] /Resources << /XObject << /Im0 {picture} 0 R >> >> /Contents {contents} 0 R >>"
             )
             .as_bytes(),
         );
-        let draw = format!("q {pw:.2} 0 0 {ph:.2} 0 0 cm /Im0 Do Q");
+        let draw = format!("q {pw:.2} 0 0 {ph:.2} {left:.2} {up:.2} cm /Im0 Do Q");
         object(&mut pdf, contents, format!("<< /Length {} >>\nstream\n{draw}\nendstream", draw.len()).as_bytes());
         let rgb: Vec<u8> = page.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
         let data = miniz_oxide::deflate::compress_to_vec_zlib(&rgb, 6);
@@ -2410,6 +2487,40 @@ mod pagination_tests;
 mod tests {
     // Not `super::*`: GPUI's `test` attribute would shadow the standard one.
     use super::{page_spans, parse_slides, slide_numbers};
+
+    /// GitHub #189: Excel 365 prints a shape anchored by two cells (`twoCellAnchor`) from its top-left cell to its bottom-right one
+    /// (its PDF of a box of 6 rows of 15 pt: 82.8 pt tall where the rows print 13.8 pt), one anchored by one cell or absolutely at
+    /// its own size.
+    #[test]
+    fn a_two_cell_shape_is_printed_over_its_printed_cells() {
+        if ibis_formats::EXCEL_METRICS != ibis_formats::ExcelMetrics::Windows {
+            return;
+        }
+        use ibis_doc_model::{EmuRect, Shape, ShapeId, ShapeKind};
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test/editing/xlsx-sales.xlsx");
+        let mut presentation = ibis_formats::read_xlsx(&std::fs::read(path).unwrap()).unwrap();
+        let screen_rows = |p: &ibis_doc_model::Presentation| p.slides[0].shapes.iter().find_map(|s| match &s.kind {
+            ShapeKind::Sheet(sheet) => Some((s.frame.y, sheet.row_offsets())),
+            _ => None,
+        }).unwrap();
+        let (top, offsets) = screen_rows(&presentation);
+        let frame = EmuRect::new(0, top + offsets[2], 1_000_000, offsets[8] - offsets[2]);
+        for (id, two_cell) in [(9001, true), (9002, false)] {
+            let slide = &mut presentation.slides[0];
+            slide.shapes.push(Shape::new(ShapeId(id), frame, ShapeKind::Line(ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0)), 12_700))));
+            if two_cell {
+                slide.shape_two_cell.insert(ShapeId(id));
+            }
+        }
+        super::windows_print_geometry(&mut presentation);
+        let (new_top, new_offsets) = screen_rows(&presentation);
+        let find = |id| presentation.slides[0].shapes.iter().find(|s| s.id == ShapeId(id)).unwrap().frame;
+        let printed = new_offsets[8] - new_offsets[2];
+        assert!(printed < frame.height, "the rows print shorter than on the screen");
+        assert_eq!(find(9001).height, printed, "a two-cell shape covers its printed rows");
+        assert_eq!(find(9002).height, frame.height, "a one-cell shape keeps its height");
+        assert_eq!(find(9001).y, new_top + new_offsets[2]);
+    }
 
     #[test]
     fn numbers_under_the_handout_slides() {

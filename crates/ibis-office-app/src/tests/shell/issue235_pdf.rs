@@ -79,9 +79,13 @@ fn menus() {
     eprintln!("enabled buttons: {working:?}");
     use crate::shell::format::FormatEditor;
     let info = ibis_office_pdf::editor::PdfDocument::INFO;
-    let (open_in, formats) = (info.office.open_key, info.save_formats.len());
-    assert!(open_in.starts_with("window.open-pdf-in-"), "the PDF's own words, not Word's: {open_in}");
-    assert_eq!(formats, 0, "a PDF is not saved as another kind");
+    // The "open in" button exists on macOS and Windows only (`OfficeApp::open_key`).
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let open_in = info.office.open_key;
+        assert!(open_in.starts_with("window.open-pdf-in-"), "the PDF's own words, not Word's: {open_in}");
+    }
+    assert_eq!(info.save_formats.len(), 0, "a PDF is not saved as another kind");
     s.screenshot("pdf-issue235-menus");
     // (One screen at a time.)
     drop(s);

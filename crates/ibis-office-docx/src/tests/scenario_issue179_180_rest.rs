@@ -12,6 +12,7 @@ use crate::shell::scenario::Scenario;
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("docx::issue179_ruby_default_size_and_raise", ruby_default_size_and_raise),
+        ("docx::issue179_a_line_with_ruby_is_higher_by_the_rubys_ascent_over_the_bases", a_line_with_ruby_is_higher_by_the_rubys_ascent_over_the_bases),
         ("docx::issue179_cjk_line_height_is_1_3_of_the_win_height", cjk_line_height_is_1_3_of_the_win_height),
         ("docx::issue179_line_grid_cells_by_the_natural_height", line_grid_cells_by_the_natural_height),
         ("docx::issue179_east_asian_latin_font_falls_to_ms_mincho", east_asian_latin_font_falls_to_ms_mincho),
@@ -99,6 +100,34 @@ fn ruby_of(name: &str, d_half: u32, base_half: u32, ruby_pr: &str, rt_rpr: &str)
     let ruby = t.iter().find(|i| i.3 == "か").unwrap_or_else(|| panic!("no ruby: {t:?}"));
     let base = t.iter().find(|i| i.3 == "漢").unwrap_or_else(|| panic!("no base: {t:?}"));
     (ruby.2, base.1 - ruby.1)
+}
+
+/// A line with ruby: its room above the baseline is the ruby's baseline raise and the ruby's line ascent (its size and half the room ＭＳ 明朝's line has above the
+/// baseline), against the base's (Word's PDF of `n2-line-height.docx`, GitHub issue #179, three lines of 10.5 pt text with the second's ruby: the baselines of the first and
+/// the third are 30.60 apart with the ruby of 5 pt raised 9.77, 33.12 with 7.5 pt over 9 pt, and 45.72 for 14 pt text with a ruby of 10.5 pt; the line without ruby 13.62).
+/// A ruby's base has no 傍点 in Word (the same page with `w:em w:val="dot"` on the base: 0 marks, the same 30.60).
+fn a_line_with_ruby_is_higher_by_the_rubys_ascent_over_the_bases() {
+    let three = |name: &str, run: &str, ruby_pr: &str, rt_rpr: &str, base_rpr: &str| {
+        let t = |text: &str| format!(r#"<w:r><w:rPr>{run}</w:rPr><w:t>{text}</w:t></w:r>"#);
+        let ruby = format!(r#"<w:r><w:ruby><w:rubyPr><w:rubyAlign w:val="center"/>{ruby_pr}<w:lid w:val="ja-JP"/></w:rubyPr><w:rt><w:r><w:rPr>{rt_rpr}</w:rPr><w:t>かな</w:t></w:r></w:rt><w:rubyBase><w:r><w:rPr>{run}{base_rpr}</w:rPr><w:t>漢字</w:t></w:r></w:rubyBase></w:ruby></w:r>"#);
+        let br = r#"<w:r><w:br/></w:r>"#;
+        let body = format!("<w:p>{}{br}{}{ruby}{}{br}{}</w:p>", t("アイウエオ"), t("アイウ"), t("エオ"), t("アイウエオ"));
+        let pg = pages_of(&make(name, &mincho(), 21, "", &body));
+        // The baselines of the lines of the base text (the ruby's smaller ones are not among them).
+        let mut ys: Vec<f32> = texts(&pg).iter().filter(|t| t.3.starts_with('ア')).map(|t| t.1).collect();
+        ys.sort_by(f32::total_cmp);
+        ys.dedup_by(|a, b| (*a - *b).abs() < 0.05);
+        (ys[2] - ys[0], texts(&pg).iter().filter(|t| t.3 == "．").count())
+    };
+    let (d, _) = three("ruby-line-a", "", "", "", "");
+    near(d, 30.60, 0.25, "ruby of the default size (H1a)");
+    let (d, _) = three("ruby-line-b", "", r#"<w:hps w:val="15"/><w:hpsRaise w:val="18"/><w:hpsBaseText w:val="21"/>"#, r#"<w:sz w:val="15"/>"#, "");
+    near(d, 33.12, 0.25, "ruby of 7.5 pt raised 9 pt (H1b)");
+    let (d, _) = three("ruby-line-e", r#"<w:sz w:val="28"/>"#, "", "", "");
+    near(d, 45.72, 0.25, "ruby over 14 pt text (H1e)");
+    let (d, dots) = three("ruby-line-dot", "", "", "", r#"<w:em w:val="dot"/>"#);
+    near(d, 30.60, 0.25, "ruby over dotted text (H2c)");
+    assert_eq!(dots, 0, "a ruby's base has no 傍点");
 }
 
 /// Without `w:hps` the ruby is the size of its own run (`w:rt`'s, else the paragraph's) when that is less than the base's (`w:hpsBaseText`, else the

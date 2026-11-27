@@ -78,8 +78,11 @@ pub(crate) fn menus(editor: &SlideEditor) -> Menus {
                     SEP,
                 ];
                 // The update's check and log (no update in the browser).
+                // No check on iOS and Android (K0087: the stores update the app); the log stays.
                 #[cfg(not(target_family = "wasm"))]
-                entries.push(item("help.check-update", "download").on(|_, _, cx| crate::update::check_now(cx)).into());
+                if !crate::mobile_os::is_mobile_os() {
+                    entries.push(item("help.check-update", "download").on(|_, _, cx| crate::update::check_now(cx)).into());
+                }
                 #[cfg(not(target_family = "wasm"))]
                 entries.push(item("help.update-log", "description").on(|_, _, cx| crate::update::reveal_log(cx)).into());
                 // Linux's AppImage: ask again about the list of apps (without its entry the dock shows no icon).
@@ -201,6 +204,13 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
                 item("file.export.gif", "animation").disabled(!crate::host::export_allowed("gif")).on(|this, window, cx| this.export_gif(window, cx)).into(),
                 item("file.export.svg", "draw").disabled(!crate::host::export_allowed("svg")).into(),
             ];
+            if editor.is_jtd_read_only() && !editor.jtd_gallery {
+                entries.push(item("file.export.docx", "description").on(|this, window, cx| this.export_jtd_docx(window, cx)).into());
+                entries.push(item("file.export.html", "code").on(|this, window, cx| this.export_jtd_html(window, cx)).into());
+                if !editor.read_only {
+                    entries.push(item("file.edit-as-docx", "edit").on(|this, window, cx| this.edit_jtd_as_docx(window, cx)).into());
+                }
+            }
             // The screen's own kinds of file (a presentation: OpenDocument).
             entries.extend(with_format!(editor, menu_items(editor, MenuPart::FileExport)));
             entries
@@ -212,14 +222,26 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
         item("file.language", "language").into(),
         item("file.page-setup", "crop_landscape").into(),
         SEP,
-        item("file.close", "close").shortcut("⌘W").on(|this, window, cx| this.close_file(&crate::actions::CloseFile, window, cx)).into(),
+        file_close_item(),
     ]);
     // ファイル ▸ 終了 (2026-11-11 user decision: the last line of the File menu on every OS; a Mac keeps ibisOffice > 終了 too). The same
     // way as the app menu's Quit and ⌘Q / Ctrl+Q: windows with edits not saved ask first (`quit_asking_to_save`). The browser has no app
     // to quit (closing the tab is the browser's).
     #[cfg(not(target_family = "wasm"))]
-    items.extend([SEP, item("file.quit", "logout").shortcut("⌘Q").on(|_, _, cx| crate::app::quit_asking_to_save(cx)).into()]);
+    if !crate::mobile_os::is_mobile_os() {
+        items.extend([SEP, item("file.quit", "logout").shortcut("⌘Q").on(|_, _, cx| crate::app::quit_asking_to_save(cx)).into()]);
+    }
     items
+}
+
+/// ファイル > 閉じる. On iOS and Android (K0076) the one window shows the start view and the file in turn, so the line reads 「戻る」 and goes
+/// back to the start view as the title row's ＜ does (K0067: asking to save first); closing the window would end the app. The id and the key stay.
+fn file_close_item() -> MenuEntry {
+    if crate::mobile_os::is_mobile_os() {
+        MenuItem::new("file.close", crate::i18n::text("file.back")).icon("chevron_left").shortcut("⌘W").on(|this, window, cx| this.back_to_start_on(true, window, cx)).into()
+    } else {
+        item("file.close", "close").shortcut("⌘W").on(|this, window, cx| this.close_file(&crate::actions::CloseFile, window, cx)).into()
+    }
 }
 
 fn edit_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
@@ -250,6 +272,19 @@ fn edit_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
 pub fn view_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     // The screen's own lines come first: its views and what it shows.
     let mut entries = with_format!(editor, menu_items(editor, MenuPart::ViewStart));
+    if editor.is_jtd_read_only() {
+        if editor.jtd_thumbnail {
+            entries.push(item("view.hide-jtd-thumbnail", "arrow_back").on(|this, window, cx| this.return_from_jtd_thumbnail(window, cx)).into());
+        } else {
+            entries.push(item("view.show-jtd-thumbnail", "image").on(|this, window, cx| this.show_jtd_thumbnail(window, cx)).into());
+            if !editor.jtd_gallery {
+                entries.push(item("view.show-jtd-images", "image").on(|this, window, cx| this.show_jtd_images(window, cx)).into());
+            } else if editor.jtd_gallery_body.is_some() {
+                entries.push(item("view.show-jtd-body", "description").on(|this, window, cx| this.show_jtd_body(window, cx)).into());
+            }
+        }
+        entries.push(SEP);
+    }
     entries.extend([
         MenuItem::tr("view.sidebar")
             .checked(editor.right_pane.shown)

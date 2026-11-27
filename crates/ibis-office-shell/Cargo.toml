@@ -7,12 +7,14 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+ibis-xdw.workspace = true
 ibis-calc.workspace = true
 ibis-office-base.workspace = true
 ibis-office-render.workspace = true
 ibis-doc-model.workspace = true
 ibis-formats.workspace = true
 ibis-odf.workspace = true
+ibis-jtd.workspace = true
 ibis-pdf = { path = "../ibis-pdf" }
 ibis-ofd.workspace = true
 ibis-xps.workspace = true
@@ -38,6 +40,7 @@ usvg = { version = "=0.46.0", default-features = false, features = ["text", "sys
 image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg", "tiff"] }
 # The random bytes of a password-protected save (the OS generator on every OS: /dev/urandom is not on Windows).
 getrandom = "0.3"
+same-file = "1"
 ibis-office-updater = { path = "../ibis-office-updater" }
 notify = "7"
 futures = { version = "0.3", default-features = false, features = ["std"] }
@@ -50,7 +53,7 @@ core-text = "21"
 core-graphics = "0.24"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61.3", features = ["Foundation", "Graphics_DirectX_Direct3D11", "Media_Core", "Media_Playback", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Com", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_UI_Shell"] }
+windows = { version = "0.61.3", features = ["Foundation", "Graphics_DirectX_Direct3D11", "Media_Core", "Media_Playback", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Com", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_UI_Shell", "Win32_Security_Cryptography"] }
 gpui-pre-windows = { version = "=0.3.6", features = ["test-support"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

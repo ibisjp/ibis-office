@@ -7,15 +7,29 @@
 //! calculation (`ibis-calc`) only.
 
 mod catalog;
+mod clock;
 mod a1;
 mod edit;
 mod error;
+mod git_read;
 mod paths;
+mod picture_file;
 mod service;
 mod tools_app;
 mod tools_docx;
+mod tools_docx_layout;
+mod tools_docx_more;
+mod tools_docx_objects;
+mod tools_docx_read;
+mod tools_docx_set;
+mod tools_docx_struct;
 mod tools_pptx;
+mod tools_pptx_b;
 mod tools_xlsx;
+mod tools_xlsx_read;
+mod tools_xlsx_set;
+mod tools_xlsx_struct;
+mod tools_xlsx_chart;
 
 pub use catalog::{Access, Tool, catalog};
 pub use error::ToolError;

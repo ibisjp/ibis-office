@@ -73,6 +73,12 @@ impl InputHandler for FormatInput {
         self.editor.update(cx, |e, cx| with_format!(e, bounds_for_range(e, range_utf16, bounds, window, cx)))
     }
 
+    /// The document area. The Web version asks for it when a touch tap ends, to decide whether the tap was on a text input and so
+    /// whether to bring up the soft keyboard (the default, `None`, never brings it up, #267).
+    fn element_bounds(&mut self, _: &mut Window, _: &mut App) -> Option<Bounds<Pixels>> {
+        Some(self.bounds)
+    }
+
     fn character_index_for_point(&mut self, point: Point<Pixels>, window: &mut Window, cx: &mut App) -> Option<usize> {
         self.editor.update(cx, |e, cx| with_format!(e, character_index_for_point(e, point, window, cx)))
     }
@@ -85,7 +91,11 @@ pub(crate) fn input_region(cx: &Context<SlideEditor>) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, cx| {
-            let (wants, focus) = editor.update(cx, |e, cx| (!e.dialog_is_modal() && with_format!(e, wants_text_input(e, window, cx)), e.focus_handle.clone()));
+            let (wants, focus) = editor.update(cx, |e, cx| {
+                // The soft keyboard took part of the body (or what is typed into moved): what is typed into is brought into the part that is left.
+                e.reveal_input_over_keyboard(window, cx);
+                (e.accepts_text_now(window, cx), e.focus_handle.clone())
+            });
             if wants {
                 window.handle_input(&focus, FormatInput::new(editor.clone(), bounds), cx);
             }
@@ -95,4 +105,13 @@ pub(crate) fn input_region(cx: &Context<SlideEditor>) -> impl IntoElement {
     .top_0()
     .left_0()
     .size_full()
+}
+
+impl SlideEditor {
+    /// Whether the window takes typed text now: what `input_region` registers the text input for, and so what the platform's check after a tap asks
+    /// (iOS `gpui-ios` `tick`, Android `platform.rs`: it shows the soft keyboard when this is true and hides it when not). For the scenarios of
+    /// `tasks/doc/test-design/K-kbd-close.md` too.
+    pub fn accepts_text_now(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        !self.keyboard_closed && !self.dialog_is_modal() && with_format!(self, wants_text_input(self, window, cx))
+    }
 }

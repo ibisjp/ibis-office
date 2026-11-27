@@ -556,7 +556,7 @@ fn video_effects_items(editor: &SlideEditor, enabled: bool) -> Vec<MenuEntry> {
             ("pptx.shadow.diagonal", Some((2_700_000, 0))),
             ("pptx.shadow.soft", Some((2_700_000, 50_800))),
         ].into_iter().map(|(id, value)| {
-            let shadow = value.map(|(direction, blur)| ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128 }, blur, 50_800, direction));
+            let shadow = value.map(|(direction, blur)| ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128, theme: None }, blur, 50_800, direction));
             MenuItem::tr(id).disabled(!enabled).on(move |e, _, cx| e.set_shape_shadow(shadow, cx)).into()
         }).collect()).into(),
         Submenu::tr("pptx.reflection", "flip", [
@@ -786,6 +786,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("review.accessibility-check", |this, window, cx| this.open_pptx_accessibility_panel(window, cx));
     // 互換性チェック（PPTX-FILE-007）
     menus.connect("review.compatibility-check", |this, window, cx| this.open_pptx_compatibility_panel(window, cx));
+    menus.connect("review.pii-check", |this, _, cx| this.pii_check(cx));
+    menus.connect("insert.medical-image", |this, window, cx| this.insert_medical_image(window, cx));
     // 最終版としてマーク & 読み取り専用を推奨（ファイルメニュー）.
     menus.connect("pptx.mark-as-final", |this, _, cx| this.toggle_pptx_mark_as_final(cx));
     menus.connect("pptx.read-only-recommended", |this, _, cx| this.toggle_pptx_read_only_recommended(cx));
@@ -838,6 +840,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
                 .into(),
         );
     }
+    menus.items_mut(MenuId::Tools).push(crate::shell::pii_check::pii_check_item().into());
+    menus.items_mut(MenuId::Tools).push(crate::shell::dicom_dialog::insert_medical_image_item().into());
     menus.items_mut(MenuId::Tools).push(
         MenuItem::tr("review.accessibility-check")
             .icon("accessibility")
@@ -1287,7 +1291,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.chart.style-menu", "palette", chart_style_items(editor)).into());
         menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.chart.palette-menu", "palette", chart_palette_items(editor)).into());
     }
-    menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.default-shape").disabled(!matches!(editor.selected_shapes().as_slice(), [s] if matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::Line(_)))).on(|e, _, cx| e.set_object_default(cx)).into());
+    menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.default-shape").disabled(!matches!(editor.selected_shapes().as_slice(), [s] if matches!(s.kind, ShapeKind::Auto(_) | ShapeKind::Line(_) | ShapeKind::TextBox(_)))).on(|e, _, cx| e.set_object_default(cx)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.frame.settings").disabled(editor.selected_shapes().is_empty()).on(|e, w, cx| e.open_frame_panel(w, cx)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.alt-text").disabled(editor.selected_shapes().is_empty()).on(|e, w, cx| e.open_alt_text_panel(w, cx)).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.math.copy-selection-latex").icon("functions").disabled(editor.selected_math().is_none()).on(|e, _, cx| e.copy_selected_math_as_latex(cx)).into());
@@ -1556,7 +1560,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         ("pptx.text.shadow.offset-diagonal-bottom-left", Some((8_100_000, 19_050, 25_400))),
     ].into_iter().map(|(id, value)| {
         let preset = value.map(|(dir, dist, blur)| ibis_doc_model::Shadow {
-            color: Color { rgb: Rgb(0), alpha: 102 },
+            color: Color { rgb: Rgb(0), alpha: 102, theme: None },
             blur,
             distance: dist,
             direction: dir,
@@ -1577,7 +1581,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         ("pptx.shadow.diagonal",Some((2_700_000,0))),
         ("pptx.shadow.soft",Some((2_700_000,50_800))),
     ].into_iter().map(|(id,value)| {
-        let shadow=value.map(|(direction,blur)| ibis_doc_model::Shadow::simple(Color {rgb:Rgb(0),alpha:128},blur,50_800,direction));
+        let shadow=value.map(|(direction,blur)| ibis_doc_model::Shadow::simple(Color {rgb:Rgb(0),alpha:128, theme: None },blur,50_800,direction));
         MenuItem::tr(id).disabled(!editor.selected_shapes().iter().any(|s|matches!(s.kind,ShapeKind::Auto(_) | ShapeKind::Picture(_)))).on(move |e,_,cx|e.set_shape_shadow(shadow,cx)).into()
     }).collect()).into());
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.fill.custom").disabled(editor.selected_shapes().is_empty() || editor.selected_shapes().iter().any(|s|!matches!(s.kind,ShapeKind::Auto(_)|ShapeKind::Table(_)))).on(|e,w,cx|e.open_gradient_panel(false,w,cx)).into());
@@ -1592,9 +1596,9 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.shadow.custom").disabled(editor.selected_shapes().is_empty() || editor.selected_shapes().iter().any(|s| !matches!(s.kind,ShapeKind::Auto(_)))).on(|e,w,cx|e.open_shadow_panel(w,cx)).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.glow", "format_color_fill",[
         ("pptx.glow.none",None),
-        ("pptx.glow.blue5",Some((Color { rgb:Rgb(0x4472C4),alpha:128 },63_500))),
-        ("pptx.glow.blue10",Some((Color { rgb:Rgb(0x4472C4),alpha:128 },127_000))),
-        ("pptx.glow.yellow10",Some((Color { rgb:Rgb(0xFFC000),alpha:160 },127_000))),
+        ("pptx.glow.blue5",Some((Color { rgb:Rgb(0x4472C4),alpha:128, theme: None },63_500))),
+        ("pptx.glow.blue10",Some((Color { rgb:Rgb(0x4472C4),alpha:128, theme: None },127_000))),
+        ("pptx.glow.yellow10",Some((Color { rgb:Rgb(0xFFC000),alpha:160, theme: None },127_000))),
     ].into_iter().map(|(id,value)| MenuItem::tr(id).disabled(!editor.selected_shapes().iter().any(|s| matches!(s.kind,ShapeKind::Auto(_)))).on(move |e,_,cx| e.set_shape_glow(value,cx)).into()).collect()).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.reflection", "flip", [
         ("pptx.reflection.none", None),
@@ -1663,7 +1667,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.picture.reset-colors")
         .disabled(!editor.selected_shapes().iter().any(|s| matches!(&s.kind, ShapeKind::Picture(p) if p.duotone.is_some() || p.clear.is_some() || p.luminance.is_some() || p.artistic_effect.is_some())))
         .on(|e, _, cx| e.reset_picture_color_effects(cx)).into());
-    #[cfg(all(target_os = "macos", feature = "export"))]
+    #[cfg(all(any(target_os = "macos", windows), feature = "export"))]
     menus.items_mut(MenuId::Format).push(MenuItem::tr("pptx.picture.compress").icon("image").on(|e, w, cx| e.open_compress_panel(w, cx)).into());
     menus.items_mut(MenuId::Format).push(Submenu::tr("pptx.media.compress", "video_settings", vec![
         MenuItem::tr("pptx.media.compress-1080p").on(|e, _, cx| { e.compress_presentation_media(super::MediaQuality::FullHd, cx); }).into(),
@@ -1941,7 +1945,11 @@ fn fill_presets(background: bool) -> Vec<MenuEntry> {
 
 pub(crate) fn shape_fill_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let mut fill_items = color_menu(editor, "pptx.fill", Some(crate::shell::i18n::text("_shell.no-fill")), |this, rgb, _, cx| {
-        this.fill_selected(rgb.map_or(Fill::None, |rgb| Fill::Solid(Color::opaque(rgb))), cx)
+        let fill = match rgb {
+            Some(rgb) => Fill::Solid(this.picked_color(rgb)),
+            None => Fill::None,
+        };
+        this.fill_selected(fill, cx)
     });
     fill_items.push(MenuEntry::Separator);
     fill_items.extend(fill_presets(false));
@@ -1953,7 +1961,8 @@ pub(crate) fn shape_fill_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 pub(crate) fn background_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     let mut items = color_menu(editor, "pptx.background", None, |this, rgb, _, cx| {
         if let Some(rgb) = rgb {
-            this.set_background(Fill::Solid(Color::opaque(rgb)), cx);
+            let color = this.picked_color(rgb);
+            this.set_background(Fill::Solid(color), cx);
         }
     });
     items.push(MenuEntry::Separator);
@@ -2365,7 +2374,8 @@ fn selected_stroke(editor: &SlideEditor) -> Option<Stroke> {
 pub(crate) fn shape_stroke_color_items(editor: &SlideEditor, line: bool) -> Vec<MenuEntry> {
     let base = |s: Option<Stroke>| s.unwrap_or_else(|| Stroke::solid(Color::BLACK, Stroke::DEFAULT_WIDTH));
     color_menu(editor, "pptx.stroke-color", (!line).then(|| crate::shell::i18n::text("pptx.chrome.no-border")), move |this, rgb, _, cx| {
-        this.stroke_selected(move |s| rgb.map(|rgb| Stroke { color: Color::opaque(rgb), ..base(s) }), cx)
+        let color = rgb.map(|rgb| this.picked_color(rgb));
+        this.stroke_selected(move |s| color.map(|color| Stroke { color, ..base(s) }), cx)
     })
 }
 
@@ -2768,7 +2778,8 @@ fn text_buttons(editor: &SlideEditor) -> Vec<ToolItem> {
             // The colour at first: red, as Office's (the colours of the buttons at first are our own picks).
             .palette(editor, "text-color", 0xff0000, color_menu(editor, "pptx.text-color", None, |this, rgb, window, cx| {
                 if let Some(rgb) = rgb {
-                    this.format_characters(window, cx, CharacterFormat { color: Some(rgb), ..Default::default() });
+                    let color_theme = this.picked_theme(rgb);
+                    this.format_characters(window, cx, CharacterFormat { color: Some(rgb), color_theme, ..Default::default() });
                 }
             }))
             .into(),
@@ -4011,7 +4022,8 @@ pub(crate) fn underline_kind_items(now: Option<ibis_doc_model::Underline>) -> Ve
 pub(crate) fn text_color_menu_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     color_menu(editor, "pptx.text-color", None, |this, rgb, window, cx| {
         if let Some(rgb) = rgb {
-            this.format_characters(window, cx, CharacterFormat { color: Some(rgb), ..Default::default() });
+            let color_theme = this.picked_theme(rgb);
+            this.format_characters(window, cx, CharacterFormat { color: Some(rgb), color_theme, ..Default::default() });
         }
     })
 }

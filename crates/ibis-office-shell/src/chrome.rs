@@ -682,6 +682,23 @@ impl ToolButton {
         self
     }
 
+    /// A button whose ▼ menu is a plain list of commands, not a value to choose, a search, a palette or the fonts (those keep their own lists): it is a split button with the
+    /// left half doing the last choice.
+    pub(crate) fn wants_remembered_choice(&self) -> bool {
+        let Some(menu) = &self.menu else { return false };
+        !self.hidden
+            && self.quick.is_none()
+            && !self.searchable
+            && !self.single_select
+            // The ▼ that ends a set of aligned buttons (left, centre, right, ▼) is that set's menu, not a button of its own.
+            && self.segment == SegmentRounding::All
+            && !menu.is_empty()
+            && self.id != "menu-search"
+            && self.id != "toggle-menus"
+            && !menu.iter().any(|e| matches!(e, MenuEntry::Palette(_)))
+            && !flatten_menu_entries(menu).iter().any(|i| dropdown::is_font_item_id(i.id) || i.checked)
+    }
+
     /// What the left half does: the last choice of a split button.
     pub fn left_action(&self) -> Option<&Handler> {
         self.menu.as_ref().and(self.quick.as_ref())
@@ -765,9 +782,9 @@ pub struct SidebarPanel {
 }
 
 // The opt-in gallery renders each real panel independently, without stale panel precedence.
-#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
 pub type CapturedPanel = (fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>, &'static str, super::dialog::DialogMode);
-#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
 thread_local! {
     pub static FORCED_SIDEBAR: std::cell::Cell<Option<CapturedPanel>> = const { std::cell::Cell::new(None) };
     pub static LAST_SIDEBAR_TITLE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
@@ -937,7 +954,7 @@ pub fn close_mode_button(id: &'static str, label: &'static str, editor: &WeakEnt
         .child(icon("close", 18.0, rgb(CLOSE_RED).into()))
         .child(crate::i18n::text(label))
         .on_click(listener(editor, close));
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     let button = super::scenario::button_probe::observe_control(button, id.into());
     button.into_any_element()
 }
@@ -948,7 +965,7 @@ pub fn close_mode_button(id: &'static str, label: &'static str, editor: &WeakEnt
 /// scenarios count the presses that arrive here (and can leave the command undone, for the buttons whose commands open a dialog or
 /// the system's), so a button that is drawn where a press cannot reach it, or reaches another way, is found.
 pub(crate) fn dispatch(handler: &Handler, this: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) {
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     if super::scenario::button_probe::dispatched() {
         return;
     }
@@ -1090,6 +1107,17 @@ pub(crate) fn format_shortcut_for_platform(shortcut: &str) -> String {
     format_shortcut_for_target(shortcut, cfg!(target_os = "macos"))
 }
 
+/// The shortcut of a menu line as the line shows it: `None` where no shortcut is shown (K0076: iOS and Android show none; the key itself
+/// still works, since the keys are found in the menus' `shortcut`s, `SlideEditor::run_menu_shortcut`). Every place that draws or measures
+/// a menu line's shortcut goes through this (`tests/shell/k0076_mobile_menu.rs` checks the source). iOS and Android show none.
+pub fn shown_shortcut(shortcut: &str) -> Option<String> {
+    if crate::mobile_os::is_mobile_os() {
+        None
+    } else {
+        Some(format_shortcut_for_platform(shortcut))
+    }
+}
+
 /// The navigation buttons of the find panel (the document, spreadsheet and presentation screens share them): 前へ, 次へ and (spreadsheet) 全て.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FindNav {
@@ -1165,7 +1193,7 @@ fn menu_item_row_for_width(item:&MenuItem,editor:&WeakEntity<SlideEditor>,width:
                 }
 
                 let full_label=menu_item_display_label(item);
-                let shortcut_width=item.shortcut.map_or(0.,|key|text_width(&format_shortcut_for_platform(key),13.)+24.);
+                let shortcut_width=item.shortcut.and_then(shown_shortcut).map_or(0.,|key|text_width(&key,13.)+24.);
                 let note_width=item.note.as_ref().map_or(0.,|n|text_width(n,14.)+24.)+item.hint.as_ref().map_or(0.,|n|text_width(n,12.)+24.);
                 let label=fit_menu_label(&full_label,(width-72.-shortcut_width-note_width-if item.swatch.is_some()||item.format_mark.is_some(){24.}else{0.}-if item.lead.is_empty(){0.}else{lead_marks::width(&item.lead)+6.}).max(0.));
                 let label_underline = item.access.as_ref().and_then(|a| a.underline.clone()).filter(|_| label == full_label);
@@ -1175,7 +1203,7 @@ fn menu_item_row_for_width(item:&MenuItem,editor:&WeakEntity<SlideEditor>,width:
                 let valid_icon = item.icon.filter(|i| !i.is_empty() && !item.checked && crate::icons::icon_svg_bytes(i).is_some());
                 let raw_font_name = item.label.to_string();
                 let display_label = label.clone();
-                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
                 let probe_id = item.id;
 
                 let preview=item.dropdown_content.clone();
@@ -1205,10 +1233,10 @@ fn menu_item_row_for_width(item:&MenuItem,editor:&WeakEntity<SlideEditor>,width:
                         .gap(px(16.))
                         .items_center()
                         .child(div().flex_1().min_w_0().overflow_hidden().child(content))
-                        .when_some(shortcut, |d, key| d.child(div().text_color(if enabled { cx.theme().muted_foreground } else { disabled_color() }).child(format_shortcut_for_platform(key))))
+                        .when_some(shortcut.and_then(shown_shortcut), |d, key| d.child(div().text_color(if enabled { cx.theme().muted_foreground } else { disabled_color() }).child(key)))
                         .when_some(note.clone(), |d, note| d.child(div().text_color(if enabled { cx.theme().muted_foreground } else { disabled_color() }).child(note)))
                         .when_some(hint.clone(), |d, hint| d.child(div().text_size(px(12.)).italic().text_color(cx.theme().muted_foreground).child(hint)));
-                    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
                     let row = {
                         let id = SharedString::from(format!("menu-item-{probe_id}"));
                         super::scenario::button_probe::observe_control(row.id(id.clone()), id.into())
@@ -1277,7 +1305,7 @@ pub fn menu_width_for_entries(entries: &[MenuEntry]) -> f32 {
                     max_w=max_w.max(colors.len() as f32*16.+colors.len().saturating_sub(1) as f32*3.+48.);continue;
                 }
                 let label = menu_item_display_label(item);
-                let shortcut_w = item.shortcut.map_or(0.0, |s| text_width(&format_shortcut_for_platform(s), 13.0) + 24.0);
+                let shortcut_w = item.shortcut.and_then(shown_shortcut).map_or(0.0, |s| text_width(&s, 13.0) + 24.0);
                 let swatch_w = if item.swatch.is_some() || item.format_mark.is_some() { 24.0 } else { 0.0 };
                 let note_w = item.note.as_ref().map_or(0.0, |n| text_width(n, 14.0) + 24.0) + item.hint.as_ref().map_or(0.0, |n| text_width(n, 12.0) + 24.0);
                 let lead_w = if item.lead.is_empty() { 0.0 } else { lead_marks::width(&item.lead) + 6.0 };
@@ -1337,7 +1365,7 @@ pub(crate) fn hover_row_actions(index: usize, entries: Vec<MenuEntry>, editor: &
     let button=Button::new(id.clone()).ghost().small()
         .icon(Icon::new(Material("more_vert")).transform(Transformation::rotate(Radians(std::f32::consts::FRAC_PI_2)))).w(px(30.)).h(px(26.)).rounded(px(5.))
         .bg(rgb(0xf0f0f0)).tooltip(crate::i18n::text("shell.row.actions"));
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     let button=super::scenario::button_probe::observe(button,id);
     div().id(("row-actions-wrap",index))
         .on_mouse_down(MouseButton::Left,|_,_,cx|cx.stop_propagation())
@@ -1350,7 +1378,7 @@ pub(crate) fn brand_logo(id:&'static str,height:f32,full_width:bool)->Stateful<D
     let root=div().id(id).relative().flex_none();
     let root=if full_width{root.w_full().aspect_ratio(LOGO_ASPECT)}else{root.w(px(height*LOGO_ASPECT)).h(px(height))};
     let root=root.child(img(app_logo_for_height(height)).absolute().inset_0().size_full().object_fit(ObjectFit::Contain));
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     let root=super::scenario::button_probe::observe_control(root,id.into());
     root
 }
@@ -1749,7 +1777,18 @@ impl SlideEditor {
             items.push(ToolItem::Separator);
             items.extend(right);
         }
+        // #241 (the user, 2026-11-16, d-241-menubutton): every button with a ▼ is a split button on the three screens: the left half does what was last chosen from
+        // the menu (the menu itself until something has been), the ▼ opens the menu. The buttons that give their own left half (`quick`) keep it.
         items
+            .into_iter()
+            .map(|item| match item {
+                ToolItem::Button(b) if b.wants_remembered_choice() => {
+                    let id = b.id;
+                    ToolItem::Button(b.last_used(self, id, |i| i.handler.is_some(), |_| false, false))
+                }
+                other => other,
+            })
+            .collect()
     }
 
     /// The title row: the app's icon for the system menu (Windows), the
@@ -1842,16 +1881,22 @@ impl SlideEditor {
             d
         };
         // In the slide master view the slide show's button gives its place to the one that closes the view.
-        let slideshow = with_format!(self, title_mode_button(self, &editor, false));
+        let slideshow = with_format!(self, title_mode_button(self, &editor, self.slideshow_round(window)));
         #[cfg(target_os = "windows")]
         let row = row.child(system_menu_icon());
+        // Where the file can be left for the start window (K0067): a ＜ and the format's icon, both of them the button; else the icon is a mark.
+        let with_icon = !self.no_format_icon_beside_back(f32::from(window.viewport_size().width));
         #[cfg(not(target_arch = "wasm32"))]
-        let row = row.child(self.start_window_button(&editor));
+        let row = if self.shows_back_to_start() { row.children(self.back_to_start_buttons(&editor, with_icon)) } else { row.child(self.start_window_button(&editor)) };
         #[cfg(target_arch = "wasm32")]
-        let row = {
+        let row = if self.shows_back_to_start() {
+            row.children(self.back_to_start_buttons(&editor, with_icon))
+        } else {
             let (app_icon, app_color) = (self.format_info().icon, self.format_info().color);
             row.child(div().w(px(28.)).h(px(28.)).flex().items_center().justify_center().child(fill_icon(app_icon, 24.0, rgb(app_color).into())))
         };
+        // iOS and Android (K0088): the file name is the button of the file's menu, when the file has one (a file with a path, or a host's).
+        let mobile_name = if crate::mobile_os::is_mobile_os() { self.file_name_menu_button(&editor, Some(name.clone())) } else { None };
         row.child(
             h_flex()
                 .child(title_button("undo", "undo", "_shell.undo-z", can_undo.then(|| -> Handler { Rc::new(|this: &mut SlideEditor, window, cx| this.undo(&crate::actions::Undo, window, cx)) }), &editor))
@@ -1868,11 +1913,20 @@ impl SlideEditor {
                     .h_full()
                     .items_center()
                     .child(apply_title_drag(div().flex_1().h_full(), window))
-                    .child(
-                        apply_title_drag(h_flex().min_w_0().h_full().items_center(), window)
-                            .child(div().text_size(px(15.)).px(px(6.)).truncate().child(name))
-                            .when(self.is_dirty(), |d| d.child(div().id("title-dirty-mark").text_size(px(12.)).ml(px(-2.)).text_color(rgb(ICON)).child("●"))),
-                    )
+                    .child(match mobile_name {
+                        // The file name is the button of the file's menu (K0088): outside the drag area, where a press is the button's.
+                        Some(button) => h_flex().min_w_0().h_full().items_center().child(button).when(self.is_dirty(), |d| d.child(div().id("title-dirty-mark").text_size(px(12.)).ml(px(-2.)).text_color(rgb(ICON)).child("●"))).into_any_element(),
+                        None => apply_title_drag(h_flex().min_w_0().h_full().items_center(), window)
+                            .child({
+                                let name = div().id("title-file-name").text_size(px(15.)).px(px(6.)).truncate().child(name);
+                                // The scenario tests (K0088) tap the name by where it is drawn.
+                                #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+                                let name = crate::scenario::button_probe::observe_control(name, "title-file-name".into());
+                                name
+                            })
+                            .when(self.is_dirty(), |d| d.child(div().id("title-dirty-mark").text_size(px(12.)).ml(px(-2.)).text_color(rgb(ICON)).child("●")))
+                            .into_any_element(),
+                    })
                     .children(self.file_name_menu(&editor))
                     .child(apply_title_drag(div().flex_1().h_full(), window)),
             )
@@ -1887,15 +1941,80 @@ impl SlideEditor {
     /// button (both are reachable from 「サイドバー ▸」, the command search and the Draw menu's commands). The room is the sum of the
     /// buttons the row has on this screen, each `TITLE_BUTTON_WIDTH`, so it follows what the row shows.
     pub(crate) fn title_buttons_hidden(&self, viewport: f32) -> (bool, bool) {
-        let slides = self.pages_are_slides();
-        let left = 1 /* the start window */ + 2 /* undo and redo */ + self.quick_access_count() + usize::from(slides) /* the slide show */;
+        let left = usize::from(!self.no_format_icon_beside_back(viewport)) /* the format's icon */ + usize::from(self.shows_back_to_start()) /* the ＜ */ + 2 /* undo and redo */ + self.quick_access_count();
         let optional_right = with_format!(self, title_buttons(self)).len() /* the format's own */ + usize::from(cfg!(any(target_os = "macos", target_os = "windows")));
         let fixed_right = 1 /* the sidebar's toggle */ + optional_right;
         let controls = if cfg!(any(target_os = "windows", target_os = "linux")) { 3. * WINDOW_CONTROL_WIDTH } else { 0. };
-        let needed = |buttons: usize| TITLE_ROW_PADDING_LEFT + (left + fixed_right + buttons) as f32 * TITLE_BUTTON_WIDTH + controls + TITLE_NAME_MIN_WIDTH;
+        // The slide show's button (a presentation): the pill, or the round one when the row is short (K0082).
+        let slideshow = if self.pages_are_slides() {
+            let pill = self.slideshow_pill();
+            let room = self.title_row_room(viewport);
+            crate::narrow_layout::SLIDESHOW_GAP + if crate::narrow_layout::slideshow_is_round(room, pill, None, TITLE_NAME_MIN_WIDTH) { crate::narrow_layout::SLIDESHOW_ROUND_WIDTH } else { pill }
+        } else {
+            0.0
+        };
+        let needed = |buttons: usize| TITLE_ROW_PADDING_LEFT + (left + fixed_right + buttons) as f32 * TITLE_BUTTON_WIDTH + slideshow + controls + TITLE_NAME_MIN_WIDTH;
         let hide_draw = viewport < needed(2);
         let hide_comments = viewport < needed(1);
         (hide_draw, hide_comments && hide_draw)
+    }
+
+    /// K0081: in a narrow window on a touch device (`narrow_layout::bars_at_bottom`) the title row has the ＜ but not the format's icon beside it.
+    /// Where the ＜ is not shown the icon is a mark of the row as ever.
+    fn no_format_icon_beside_back(&self, viewport: f32) -> bool {
+        self.shows_back_to_start() && viewport < crate::narrow_layout::NARROW_LAYOUT_WIDTH && self.is_touch_device()
+    }
+
+    /// What the title row has for the slide show's button and the file name: the width less the row's other buttons (the start window, ＜, undo and
+    /// redo, the quick access ones, the sidebar's toggle, the format's own and the window's).
+    fn title_row_room(&self, viewport: f32) -> f32 {
+        let left = usize::from(!self.no_format_icon_beside_back(viewport)) + usize::from(self.shows_back_to_start()) + 2 + self.quick_access_count();
+        // The Draw and コメントを表示 buttons count too: the pill gives way before either of them is left out (`title_buttons_hidden`), so the buttons
+        // never come back as the window narrows.
+        let right = 1 + with_format!(self, title_buttons(self)).len() + usize::from(cfg!(any(target_os = "macos", target_os = "windows"))) + 2;
+        let controls = if cfg!(any(target_os = "windows", target_os = "linux")) { 3. * WINDOW_CONTROL_WIDTH } else { 0. };
+        viewport - (TITLE_ROW_PADDING_LEFT + (left + right) as f32 * TITLE_BUTTON_WIDTH + controls)
+    }
+
+    /// The width the slide show's pill has (the one it was drawn with; a first guess before that).
+    fn slideshow_pill(&self) -> f32 {
+        match self.slideshow_pill_width.get() {
+            w if w > 0.0 => w,
+            _ => crate::narrow_layout::SLIDESHOW_PILL_FIRST_WIDTH,
+        }
+    }
+
+    /// Whether the slide show's button is the round one (K0082, `narrow_layout::slideshow_is_round`): decided every frame from the width.
+    pub fn slideshow_round(&self, window: &Window) -> bool {
+        if !self.pages_are_slides() {
+            return false;
+        }
+        let paddings = gpui_kit::component::window_paddings(window);
+        let viewport = f32::from(window.viewport_size().width - paddings.left - paddings.right);
+        let pill = self.slideshow_pill();
+        let at_bottom = crate::narrow_layout::bars_at_bottom(self, window);
+        let in_title_row = self.chrome_compact && !at_bottom && should_render_window_controls(window);
+        if in_title_row {
+            // The toolbar is in this row: the pill goes while the toolbar's buttons do not all fit with it.
+            let mut items = self.toolbar_items();
+            items.retain(|item| !matches!(item, ToolItem::Button(b) if b.hidden));
+            let natural: f32 = items.iter().map(|item| item.width() + 1.0).sum();
+            let room = self.toolbar_room(window, true, 0.0);
+            return crate::narrow_layout::slideshow_is_round(room, pill, Some(natural), TITLE_NAME_MIN_WIDTH);
+        }
+        crate::narrow_layout::slideshow_is_round(self.title_row_room(viewport), pill, None, TITLE_NAME_MIN_WIDTH)
+    }
+
+    /// What the toolbar's buttons have of the row's width: the window less 8 px each side, 6 px padding each side, ︙ and ^ on the right, and (in
+    /// the title row) the icons, the slide show's button (`slideshow_width`, with its gap) and the three window buttons; less the traffic lights' room on a Mac.
+    pub(crate) fn toolbar_room(&self, window: &Window, in_title_row: bool, slideshow_width: f32) -> f32 {
+        let system_menu_icon_width = if cfg!(target_os = "windows") { 28.0 + 8.0 } else { 0.0 };
+        let at_bottom = crate::narrow_layout::bars_at_bottom(self, window);
+        let mac_inset = if at_bottom { 8.0 } else { toolbar_left_inset(self.chrome_compact, window.is_fullscreen()) };
+        let title_parts = if in_title_row { TITLE_ROW_PADDING_LEFT + system_menu_icon_width + 28.0 + slideshow_width + 3.0 * 46.0 } else { 0.0 };
+        // Linux (CSD) draws the window's shadow inside the viewport, at its sides.
+        let paddings = gpui_kit::component::window_paddings(window);
+        f32::from(window.viewport_size().width - paddings.left - paddings.right) - 16.0 - 12.0 - 2.0 * 29.0 - title_parts - (mac_inset - 8.0).max(0.0)
     }
 
     fn quick_access_count(&self) -> usize {
@@ -1904,7 +2023,11 @@ impl SlideEditor {
 
     /// The ▾ of the file name's menu (the browser has it when a host gave `renameFile` or `getFileLocation`).
     fn file_name_menu(&self, editor: &WeakEntity<SlideEditor>) -> Option<AnyElement> {
-        self.file_name_menu_button(editor)
+        // iOS and Android (K0088): no ▾; the file name opens the menu (`title_row`).
+        if crate::mobile_os::is_mobile_os() {
+            return None;
+        }
+        self.file_name_menu_button(editor, None)
     }
 
     /// The browser version has no password dialog (`shell/password_window.rs`).
@@ -1918,7 +2041,7 @@ impl SlideEditor {
         #[cfg(target_arch = "wasm32")]
         {
             let mut buttons = Vec::new();
-            if crate::embed::show_download() {
+            if crate::embed::show_download() && !self.is_xdw() {
                 let handler: Handler = Rc::new(|this: &mut SlideEditor, window, cx| this.embed_download(window, cx));
                 buttons.push(title_button("embed-download", "download", "shell.embed.download", Some(handler), editor));
             }
@@ -1935,10 +2058,40 @@ impl SlideEditor {
         }
     }
 
+    /// The title row has the ＜ that goes back to the start window (K0067): on the devices whose one window shows the start view and the file in
+    /// turn (iOS, Android, the browser), and on a computer once a finger has touched the window. Not in a host (ibisWorks), which closes
+    /// its own way.
+    pub(crate) fn shows_back_to_start(&self) -> bool {
+        if crate::host::is_connected() {
+            return false;
+        }
+        cfg!(any(target_os = "ios", target_os = "android", target_family = "wasm")) || self.touch_seen
+    }
+
+    /// The ＜ and the format's icon, one button each, with the same effect (`SlideEditor::back_to_start`).
+    fn back_to_start_buttons(&self, editor: &WeakEntity<SlideEditor>, with_icon: bool) -> Vec<AnyElement> {
+        let handler: Handler = Rc::new(|this: &mut SlideEditor, window, cx| this.back_to_start(window, cx));
+        let (app_icon, app_color) = (self.format_info().icon, self.format_info().color);
+        let arrow = title_button_face("back-to-start", icon("chevron_left", 24.0, rgb(ICON).into()).into_any_element(), "shell.back-to-start.label", Some(handler.clone()), editor);
+        if !with_icon {
+            return vec![arrow];
+        }
+        vec![
+            arrow,
+            title_button_face(
+                "back-to-start-icon",
+                Icon::new(Material::fill(app_icon)).size(px(24.)).text_color(rgb(app_color)).into_any_element(),
+                "shell.back-to-start.label",
+                Some(handler),
+                editor,
+            ),
+        ]
+    }
+
     /// The format's icon in the title bar (blue document, green workbook, orange presentation). Only a mark, not a button:
-    /// the start window opens from the menu bar's logo and ファイル > スタートウィンドウ.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn start_window_button(&self, _editor: &WeakEntity<SlideEditor>) -> AnyElement {
+    /// the start window opens from the menu bar's logo and ファイル > スタートウィンドウ. On the Web too: the toolbar customize
+    /// dialog's クイック アクセス ツール バー preview draws it (#241).
+    pub(crate) fn start_window_button(&self, _editor: &WeakEntity<SlideEditor>) -> AnyElement {
         let (app_icon, app_color) = (self.format_info().icon, self.format_info().color);
         div().w(px(32.)).h(px(32.)).flex_none().flex().items_center().justify_center()
             .child(Icon::new(Material::fill(app_icon)).size(px(24.)).text_color(rgb(app_color)))
@@ -1980,20 +2133,22 @@ impl SlideEditor {
         // (CSD), with the menus hidden, the toolbar is the title row: between
         // the system menu's icon (Windows) and the start window's button and
         // the window's buttons.
-        let in_title_row = self.chrome_compact && should_render_window_controls(window);
-        // What fits: the bar is the window less 8 px each side, 6 px padding
-        // each side, and ︙ and ^ on the right (and in the title row, the
-        // icons and the three window buttons).
-        let system_menu_icon_width = if cfg!(target_os = "windows") { 28.0 + 8.0 } else { 0.0 };
+        // A narrow window (under 720 px) of a touch device has the toolbar at its bottom (K0061, K0077, `narrow_layout.rs`): it is not in the title row, has no ^, and on a
+        // touch device scrolls sideways (the pill and its rounded ends with its buttons) in place of folding into the ︙.
+        let at_bottom = crate::narrow_layout::bars_at_bottom(self, window);
+        let scrolls = self.bars_scroll(window);
+        let in_title_row = self.chrome_compact && !at_bottom && should_render_window_controls(window);
         // The slide show's button, its icon and ▾ (a presentation).
-        let slideshow_width = if self.pages_are_slides() { 8.0 + 64.0 } else { 0.0 };
+        let slideshow_width = if self.pages_are_slides() {
+            crate::narrow_layout::SLIDESHOW_GAP + if self.slideshow_round(window) { crate::narrow_layout::SLIDESHOW_ROUND_WIDTH } else { self.slideshow_pill() }
+        } else {
+            0.0
+        };
         // On a Mac, with the title row and the menus hidden the toolbar is at the window's top, where the window's three buttons are
         // (the traffic lights): the bar starts right of them (not with the window full screen, which hides them).
-        let mac_inset = toolbar_left_inset(self.chrome_compact, window.is_fullscreen());
-        let title_parts = if in_title_row { TITLE_ROW_PADDING_LEFT + system_menu_icon_width + 28.0 + slideshow_width + 3.0 * 46.0 } else { 0.0 };
-        // Linux (CSD) draws the window's shadow inside the viewport, at its sides.
-        let paddings = gpui_kit::component::window_paddings(window);
-        let available = f32::from(window.viewport_size().width - paddings.left - paddings.right) - 16.0 - 12.0 - 2.0 * 29.0 - title_parts - (mac_inset - 8.0).max(0.0);
+        let mac_inset = if at_bottom { 8.0 } else { toolbar_left_inset(self.chrome_compact, window.is_fullscreen()) };
+        // What fits: see `toolbar_room`.
+        let available = if scrolls { f32::INFINITY } else { self.toolbar_room(window, in_title_row, slideshow_width) };
         let mut used = 0.0;
         let mut shown = Vec::new();
         let mut folded = Vec::new();
@@ -2019,7 +2174,7 @@ impl SlideEditor {
             let folded = Rc::new(folded);
             let editor = editor.clone();
             Popover::new("toolbar-more")
-                .anchor(Anchor::TopRight)
+                .anchor(if at_bottom { Anchor::BottomRight } else { Anchor::TopRight })
                 .trigger(probed(Button::new("toolbar-more-button"), "toolbar-more-button".into()).ghost().xsmall().icon(Icon::new(Material("more_vert"))).tooltip(crate::i18n::text("_shell.more")).h(px(28.)).w(px(28.)).rounded(px(4.)))
                 .content(move |_, _, _| {
                     // The rest of the toolbar in one row, as the mock's ︙, as wide as its buttons need and no wider than the window leaves
@@ -2049,7 +2204,8 @@ impl SlideEditor {
             .children(shown.iter().enumerate().map(|(i, item)| tool_item(item, i, &editor)))
             .child(gap)
             .children(more)
-            .child(tool_item(
+            // (Not under 720 px: the bars are at the bottom and stay.)
+            .when(!at_bottom, |bar| bar.child(tool_item(
                 &ToolButton::new("toggle-menus", if compact { "keyboard_arrow_down" } else { "keyboard_arrow_up" }, if compact { "_shell.show-menus-f" } else { "_shell.hide-menus-f" })
                     .click(|this, _, cx| {
                         if !this.show_menu_bar {
@@ -2063,7 +2219,23 @@ impl SlideEditor {
                     .into(),
                 9999,
                 &editor,
-            ));
+            )));
+        if scrolls {
+            let scroll = self.toolbar_scroll.clone();
+            let shadows = div().absolute().top(px(2.)).bottom(px(6.)).left_0().right_0().child(crate::narrow_layout::edge_shadows(&scroll));
+            return div()
+                .relative()
+                .w_full()
+                .flex_shrink_0()
+                .overflow_hidden()
+                .pt(px(2.))
+                .pb(px(6.))
+                .bg(rgb(APP_BG))
+                // The swipe stretches past an end and springs back, as `UIScrollView` does (K0065, `gpui-base`'s `ScrollBounce`).
+                .child(gpui_kit::base::ScrollBounce::new("toolbar-bounce", &scroll, div().id("toolbar-scroll").flex().w_full().overflow_x_scroll().no_bounce().track_scroll(&scroll).child(div().flex().flex_none().min_w_full().px(px(8.)).child(bar.flex_none()))).axis(Axis::Horizontal).enabled(true).touch_only())
+                .child(shadows)
+                .into_any_element();
+        }
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd", feature = "scenarios"))]
         if in_title_row {
             let icons = h_flex().flex_none().gap(px(8.)).pl(px(TITLE_ROW_PADDING_LEFT)).pt(px(8.));
@@ -2074,7 +2246,7 @@ impl SlideEditor {
                 .flex_shrink_0()
                 .items_start()
                 .bg(rgb(APP_BG))
-                .child(icons.child(self.start_window_button(&editor)).children(with_format!(self, title_mode_button(self, &editor, true))))
+                .child(icons.child(self.start_window_button(&editor)).children(with_format!(self, title_mode_button(self, &editor, self.slideshow_round(window)))))
                 .child(div().flex_1().min_w_0().px(px(8.)).py(px(4.)).child(bar))
                 .children(render_window_controls(window, &editor))
                 .into_any_element();
@@ -2118,15 +2290,15 @@ impl SlideEditor {
         let on_request = with_format!(self, sidebar_on_request()) || !tabs_of.is_empty();
         // Closed, a format with nothing to show on request is asked whether a panel is open (the toggle can show
         // only that); one that always has something is not asked (its panel would be made for nothing).
-        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
         super::scenario::button_probe::input_scope(true);
         // A workbook's fields pane follows the current cell into a pivot table and back out, closed or not (xlsx/pivot_pane.rs).
         with_format!(self, sidebar_sync(self, window, cx));
         let panel = if self.sidebar_open || !on_request {
             SIDEBAR_FOOTER.with(|cell| *cell.borrow_mut() = None);
-            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
             let forced = FORCED_SIDEBAR.with(|slot| slot.get());
-            #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+            #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))))]
             let forced: Option<(fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>, &'static str, super::dialog::DialogMode)> = None;
             if let Some((render, key, mode)) = forced {
                 render(self, window, cx).map(|p| match mode {
@@ -2151,6 +2323,8 @@ impl SlideEditor {
                 Some(panel.modal_named("host_file_dialog"))
             } else if let Some(panel) = self.rename_file_panel_if_open(cx) {
                 Some(panel.modal_named("rename_file_panel"))
+            } else if let Some(panel) = self.dicom_dialog_panel(cx) {
+                Some(panel.modal_named("dicom_dialog"))
             } else if let Some(panel) = self.zoom_panel_if_open(cx) {
                 Some(panel.modal_named("zoom_dialog"))
             } else if let Some(panel) = self.password_panel_if_open(cx) {
@@ -2163,7 +2337,7 @@ impl SlideEditor {
         } else {
             None
         };
-        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
         super::scenario::button_probe::input_scope(false);
         let has_content = panel.is_some() || !tabs_of.is_empty();
         self.right_pane = RightPane { available: on_request || panel.is_some(), shown: self.sidebar_open && has_content };
@@ -2176,7 +2350,7 @@ impl SlideEditor {
             // Nothing open: the tabs alone, for a format that has them.
             None => SidebarPanel { title: "".into(), body: div().into_any_element() },
         };
-        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
         LAST_SIDEBAR_TITLE.with(|title| *title.borrow_mut() = panel::panel_title(&panel.title).to_string());
         let mut footer = SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take());
         let mut header = take_panel_header();
@@ -2287,7 +2461,7 @@ impl SlideEditor {
                 .children(tabs)
                 .children(header.map(panel::panel_header_host))
                 .child(panel::panel_contents(panel.body,pinned,footer,sidebar_scroll,self.sidebar_layout.clone(),editor.clone(),PANEL_FILL.with(|f| f.replace(false))))
-                .child(sidebar_width_handle(drag_editor, cx))
+                .child(sidebar_width_handle(drag_editor, self.splitter_mark(), cx))
                 .when(pane_blocked, |d| d.child(div().absolute().inset_0().occlude()
                     .on_mouse_down(MouseButton::Left, |_,_,cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Right, |_,_,cx| cx.stop_propagation())
@@ -2303,9 +2477,9 @@ pub(crate) const SIDEBAR_MAX_WIDTH: f32 = 720.0;
 
 /// The right pane's left edge, which the pointer drags to change the pane's width (every panel's, in every format).
 /// The pane stays at least [`SIDEBAR_WIDTH`] and at most [`SIDEBAR_MAX_WIDTH`] (and a part of the window).
-fn sidebar_width_handle(editor: WeakEntity<SlideEditor>, cx: &mut Context<SlideEditor>) -> impl IntoElement {
+fn sidebar_width_handle(editor: WeakEntity<SlideEditor>, mark: impl IntoElement, cx: &mut Context<SlideEditor>) -> impl IntoElement {
     let tracker = editor.clone();
-    div()
+    let handle = div()
         .id("sidebar-width-handle")
         .absolute()
         .left(px(-3.))
@@ -2317,6 +2491,8 @@ fn sidebar_width_handle(editor: WeakEntity<SlideEditor>, cx: &mut Context<SlideE
             this.sidebar_drag = Some((f32::from(event.position.x), this.sidebar_width.max(SIDEBAR_WIDTH)));
             cx.stop_propagation();
         }))
+        // (A finger within reach of it takes hold of it too: K0084.)
+        .child(mark)
         .child(
             canvas(
                 |_, _, _| (),
@@ -2348,7 +2524,11 @@ fn sidebar_width_handle(editor: WeakEntity<SlideEditor>, cx: &mut Context<SlideE
             )
             .absolute()
             .size_0(),
-        )
+        );
+    // The scenario tests (K0084) read where the handle is drawn.
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+    let handle = handle.child(canvas(|_, _, _| (), |bounds, _, _, _| super::scenario::button_probe::record_bounds("sidebar-width-handle", bounds)).absolute().inset_0());
+    handle
 }
 
 /// Shared height for labeled command buttons across all document formats.
@@ -2375,7 +2555,7 @@ pub const SELECTED_ROW_BG: u32 = 0xe8f0fe;
 pub(crate) fn styled_action_button(id: impl Into<ElementId>, style: ActionButtonStyle, cx: Option<&App>) -> Button {
     let id=id.into();
     let button=style.apply(Button::new(id.clone()).h(px(BUTTON_HEIGHT)).min_h(px(BUTTON_HEIGHT)).max_h(px(BUTTON_HEIGHT)).flex_none(),cx);
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     let button=super::scenario::button_probe::observe(button,id);
     button
 }
@@ -2470,7 +2650,7 @@ fn title_button_face(id: &'static str, face: AnyElement, tooltip: &'static str, 
             d.on_click(listener(editor, &guarded))
         })
         .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::i18n::text(&tooltip)).build(window, cx));
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     let button = super::scenario::button_probe::observe_control(button, id.into());
     button.into_any_element()
 }
@@ -2585,11 +2765,11 @@ pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<Slide
 }
 
 /// A toolbar button the scenarios can find by its id (measured where it is drawn, never reached by its handler).
-#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
 fn probed(button: Button, id: SharedString) -> Button {
     super::scenario::button_probe::observe(button, ElementId::Name(id))
 }
-#[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+#[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))))]
 fn probed(button: Button, _id: SharedString) -> Button {
     button
 }
@@ -2623,7 +2803,8 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
         .when(b.menu.is_some() && b.id != "menu-search", |d| d.child(div().ml(px(-2.)).child(icon("arrow_drop_down", 16.0, color))));
     // A split button: the icon (what was last used is done at once) and the ▼ (the menu) are two buttons side by side,
     // each with its own hover and click.
-    if let (Some(menu), Some(quick), true) = (&b.menu, b.left_action(), enabled) {
+    if let (Some(menu), true) = (&b.menu, enabled && (b.left_action().is_some() || b.wants_remembered_choice())) {
+        let quick = b.left_action().cloned();
         let left = probed(Button::new(SharedString::from(format!("{}-{index}", b.id))), SharedString::from(format!("{}-{index}", b.id)))
             .ghost()
             .xsmall()
@@ -2644,7 +2825,15 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
                     })
                     .when_some(b.text.clone(), |d, text| d.child(div().px(px(3.)).text_size(px(14.)).text_color(rgb(TEXT)).child(crate::i18n::text(&text)))),
             )
-            .on_click(listener(editor, quick));
+            ;
+        // The left half does the last choice; before one has been made it opens the same menu as the ▼.
+        let left = match &quick {
+            Some(quick) => left.on_click(listener(editor, quick)).into_any_element(),
+            None => {
+                let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
+                left.dropdown_menu(move |m, w, cx| fill_menu(m.min_w(px(220.)), &menu, &editor, w, cx)).into_any_element()
+            }
+        };
         let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
         let right = probed(action_button(SharedString::from(format!("{}-{index}-menu", b.id))), SharedString::from(format!("{}-{index}-menu", b.id)))
             .ghost()
@@ -2740,13 +2929,27 @@ pub fn collect_searchable_menu_items(menus: &Menus) -> Vec<MenuItem> {
     items
 }
 
-/// Filter `items` by `query` (case-insensitive substring match on the display label) (#98, #103, #127).
+/// `s` as a search compares it: full-width ASCII (U+FF01 to U+FF5E) and the ideographic space as the half-width ones, and lower case.
+pub fn fold_width_and_case(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            '\u{3000}' => ' ',
+            _ => c,
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Filter `items` by `query` (substring match, full-width and half-width letters and digits and upper and lower case alike on the display label) (#98, #103, #127).
 pub fn filter_menu_items(items: &[MenuItem], query: &str) -> Vec<MenuItem> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         return items.to_vec();
     }
-    let q = trimmed.to_lowercase();
+    // The width of letters and digits and their case do not tell lists apart (a full-width "Ｓｈｅｅｔ１" finds "Sheet1": GitHub issue #262; Excel's
+    // Find leaves both unchecked too).
+    let q = fold_width_and_case(trimmed);
     items
         .iter()
         .filter(|item| {
@@ -2754,7 +2957,7 @@ pub fn filter_menu_items(items: &[MenuItem], query: &str) -> Vec<MenuItem> {
                 return false;
             }
             let label = menu_item_display_label(item);
-            label.to_lowercase().contains(&q) || item.label.to_lowercase().contains(&q) || item.search_alt.as_ref().is_some_and(|alt| alt.to_lowercase().contains(&q))
+            fold_width_and_case(&label).contains(&q) || fold_width_and_case(&item.label).contains(&q) || item.search_alt.as_ref().is_some_and(|alt| fold_width_and_case(alt).contains(&q))
         })
         .cloned()
         .collect()
@@ -2820,7 +3023,7 @@ pub fn text_field(input: &Entity<gpui_kit::component::input::InputState>) -> Tex
 /// [`text_field`] for an input that a shared part owns and that is not a value of the document (the number typed over a slider's
 /// value: it is a draft until Enter): it need not be declared with `SyncedFields::add`.
 pub(crate) fn transient_text_field(input: &Entity<gpui_kit::component::input::InputState>) -> TextField {
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     super::scenario::button_probe::record_input(input);
     TextField { input: input.clone(), clear: true, width: Some(FIELD_WIDTH), disabled: false, spinner: None, compact_spinner: false, unit: None, picker: None, trailing: None, select_on_focus: false }
 }
@@ -2977,7 +3180,7 @@ impl RenderOnce for TextField {
         let numeric = self.spinner.is_some();
         let mut field = gpui_kit::component::input::Input::new(&self.input).small().cleanable(clear_button_shown(self.clear, numeric)).disabled(self.disabled);
         let press_state = (numeric || self.select_on_focus).then(|| select_all_on_focus(&self.input, _window, _cx));
-        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
         let probe_id = self.trailing.as_ref().map(|t| format!("{}-field", t.id));
         // The unit ("pt", "%", "°") is drawn inside the field's box, after the text, so the field keeps its width
         // and the unit never wraps away from it. Its width is the room reserved for it (the same across a screen).
@@ -3030,7 +3233,7 @@ impl RenderOnce for TextField {
                 None => element,
             };
             // Scenario measurement of the box's outer edge (compare with a dropdown's right edge).
-            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
             if let Some(key) = probe_id {
                 let wrapper = div().relative().when_some(self.width, |d, w| d.w(w)).when(self.width.is_none(), |d| d.w_full());
                 return wrapper.child(element).child(canvas(|_, _, _| (), move |b, _, _, _| super::scenario::button_probe::record_bounds(&key, b)).absolute().inset_0()).into_any_element();
@@ -3128,7 +3331,7 @@ pub fn font_dropdown(
     FontDropdown::new(id,current,entries,index,editor).into_any_element()
 }
 
-#[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+#[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
 thread_local! {pub static DROPDOWN_LAYOUT: std::cell::RefCell<std::collections::HashMap<&'static str,(f32,bool)>> = Default::default();}
 thread_local! {
     /// The row height of each dropdown list last drawn ([`dropdown::Options::row_height`]), for the keyboard's scroll-to-row.
@@ -3139,6 +3342,8 @@ pub(crate) fn dropdown_row_height(id: &str) -> f32 {
 }
 thread_local! {
     static DROPDOWN_BUTTON_WIDTHS: std::cell::RefCell<std::collections::HashMap<&'static str,f32>> = Default::default();
+    /// The bottom edge of each dropdown button last drawn: the list hangs below it and is cut to what is left of the window (K0086).
+    static DROPDOWN_BUTTON_BOTTOMS: std::cell::RefCell<std::collections::HashMap<(gpui::WindowId,&'static str),f32>> = Default::default();
 }
 /// Render a dropdown button whose popup menu has a `✕`-clearable search TextField at the top,
 /// keeps a fixed width and height (`x, y, w, h` unchanged when filtering), shows `"みつかりません"`
@@ -3233,18 +3438,21 @@ fn render_dropdown(
                         Some(dropdown::ItemContent::Font(family))=>crate::font_preview::get_or_render_preview(family,&label).map(|p|p.width).unwrap_or_else(||dropdown_list::label_width(window,&label,13.)),
                         _=>dropdown_list::label_width(window,&label,13.),
                     };
-                    text_width+68.+item.shortcut.map_or(0.,|sc|dropdown_list::label_width(window,&format_shortcut_for_platform(sc),12.)+20.)
+                    text_width+68.+item.shortcut.and_then(shown_shortcut).map_or(0.,|sc|dropdown_list::label_width(window,&sc,12.)+20.)
                 },button_width),
             };
             let row_h = options.row_height;
             DROPDOWN_ROW_HEIGHTS.with(|h| {h.borrow_mut().insert(id,row_h);});
-            let avail_list_h = (f32::from(window.viewport_size().height) - 214.0).max(224.0);
+            let mut avail_list_h = (f32::from(window.viewport_size().height) - 214.0).max(224.0);
+            // A button low in the window (a panel's field): the list is cut to the room below the button, so that the window does not push it up over the button.
+            let below_button = DROPDOWN_BUTTON_BOTTOMS.with(|b| b.borrow().get(&(window.window_handle().window_id(),id)).copied()).map(|bottom| f32::from(window.viewport_size().height) - bottom - 66.0);
+            if let Some(below) = below_button && id != "sheet-list" { avail_list_h = avail_list_h.min(below.max(4.0 * options.row_height)); }
             let spec = ed.read(cx).searchable_list_spec(id);
             let max_rows = spec.rows.unwrap_or_else(|| ((avail_list_h / row_h).floor() as usize).max(8));
             let visible_rows = all_items.len().clamp(1, max_rows);
             let fixed_list_height = (visible_rows as f32) * row_h;
-            let show_search = options.search && (all_items.len() > 20 || spec.always_search);
-            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+            let show_search = options.search && (crate::settings_dialog::list_has_search(id, all_items.len()) || spec.always_search);
+            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
             DROPDOWN_LAYOUT.with(|m|{m.borrow_mut().insert(id,(fixed_width,show_search));});
             let query = if show_search {input.read(cx).value().to_string()} else {String::new()};
             let has_query = !query.trim().is_empty();
@@ -3392,16 +3600,16 @@ fn render_dropdown(
                                                     .child(canvas(|_,_,_|(),move|b,_,_,_|written.set(b)).absolute().inset_0())
                                                     .child(h_flex().w_full().min_w_0().items_center().gap(px(6.)).when(has_left,|d|d.child(left_slot)).child(label_el))
                                                     .on_mouse_down_stop().on_click(activate);
-                                                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                                                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
                                                 let row=super::scenario::button_probe::observe_control(row,row_id);
                                                 row.into_any_element()
                                             } else {
                                                 let row=dropdown_list::option(row_id.clone(),selected_row_bg,is_highlighted,enabled)
                                                     .when(has_left,|d|d.child(left_slot)).child(label_el)
-                                                    .when_some(item.shortcut,|d,sc|d.child(div().text_size(px(12.)).text_color(rgb(TEXT_SECONDARY)).child(format_shortcut_for_platform(sc))))
+                                                    .when_some(item.shortcut.and_then(shown_shortcut),|d,sc|d.child(div().text_size(px(12.)).text_color(rgb(TEXT_SECONDARY)).child(sc)))
                                                     .when_some(item.note.clone(),|d,note|d.child(div().flex_none().ml(px(8.)).text_size(px(12.)).text_color(rgb(TEXT_SECONDARY)).child(note)))
                                                     .on_mouse_down_stop().on_click(activate);
-                                                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                                                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
                                                 let row=super::scenario::button_probe::observe_control(row,row_id);
                                                 row.into_any_element()
                                             }
@@ -3418,8 +3626,9 @@ fn render_dropdown(
                 .into_any_element()
         })
         .into_any_element();
-    div().relative().child(popup).child(canvas(|_,_,_|(),move |bounds,_,_,_| {
+    div().relative().child(popup).child(canvas(|_,_,_|(),move |bounds,_,window,_| {
         DROPDOWN_BUTTON_WIDTHS.with(|widths| {widths.borrow_mut().insert(id,f32::from(bounds.size.width));});
+        DROPDOWN_BUTTON_BOTTOMS.with(|b| {b.borrow_mut().insert((window.window_handle().window_id(),id),f32::from(bounds.bottom()));});
     }).absolute().inset_0()).into_any_element()
 }
 
@@ -3501,7 +3710,7 @@ fn radio_button_state(
         .child(radio_dot_state(state))
         .child(div().text_sm().child(label));
     // The scenario tests press it by its rendered bounds.
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     let control = super::scenario::button_probe::observe_control(control, id);
     control
 }
@@ -3647,7 +3856,7 @@ pub fn checkbox_button(
 ) -> Stateful<Div> {
     let label = label.into();
     let id=id.into();
-    #[cfg_attr(not(all(feature="scenarios",any(target_os="macos",target_os="linux"))),allow(unused_variables))]
+    #[cfg_attr(not(all(feature="scenarios",any(target_os="macos",target_os="linux",windows))),allow(unused_variables))]
     let probe_id=id.clone();
     let control=h_flex()
         .id(id).role(gpui_kit::Role::CheckBox).aria_label(label.clone())
@@ -3665,7 +3874,7 @@ pub fn checkbox_button(
         .when(disabled, |d| d.opacity(0.5))
         .child(checkbox_box(checked))
         .child(div().text_sm().text_color(rgb(TEXT)).child(label));
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     let control=super::scenario::button_probe::observe_control(control,probe_id);
     control
 }
@@ -3808,7 +4017,7 @@ pub(crate) fn panel_font_dropdown_applying(id: &'static str, input: &Entity<gpui
 pub(crate) fn panel_document_font_dropdown(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, used: &[String], include_all: bool,
     cx: &Context<SlideEditor>, picked: impl Fn(&mut SlideEditor, &str, &mut Window, &mut Context<SlideEditor>) + Clone + 'static) -> AnyElement {
     synced_field::require_registered(input);
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     super::scenario::button_probe::record_input(input);
     let current=input.read(cx).value().to_string(); let field=input.clone();
     let entries=crate::font_list::build_grouped_font_menu_entries(id,used,include_all,Some(&current),move |name,e,w,cx| {
@@ -3820,7 +4029,7 @@ pub(crate) fn panel_document_font_dropdown(id: &'static str, input: &Entity<gpui
 fn font_dropdown_in_pane(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, cx: &Context<SlideEditor>,
     picked: impl Fn(&mut SlideEditor, &str, &mut Window, &mut Context<SlideEditor>) + Clone + 'static, fill: bool) -> AnyElement {
     synced_field::require_registered(input);
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     super::scenario::button_probe::record_input(input);
     let current=input.read(cx).value().to_string(); let field=input.clone();
     let entries=crate::font_list::build_font_menu_entries(id,Vec::new(),Some(&current),move |name,e,w,cx| {
@@ -3833,7 +4042,7 @@ fn font_dropdown_in_pane(id: &'static str, input: &Entity<gpui_kit::component::i
 }
 pub fn panel_color_field(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, cx: &Context<SlideEditor>) -> AnyElement {
     synced_field::require_registered(input);
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     super::scenario::button_probe::record_input(input);
     let current=u32::from_str_radix(input.read(cx).value().trim_start_matches('#'),16).ok().map(ibis_doc_model::Rgb);
     let field=input.clone();
@@ -3862,7 +4071,7 @@ pub fn color_radio_button(id:impl Into<ElementId>, selected:bool,color:u32,label
 pub(crate) fn take_sidebar_footer()->Option<ActionBar>{SIDEBAR_FOOTER.with(|c|c.borrow_mut().take())}
 pub fn input_dropdown(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, choices:Vec<String>, cx:&Context<SlideEditor>) -> AnyElement {
     synced_field::require_registered(input);
-    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
     super::scenario::button_probe::record_input(input);
     let current=input.read(cx).value().to_string();
     let entries=choices.into_iter().map(|name| {let field=input.clone();let value=name.clone(); MenuItem::new("docx.style.doc.choice",name).on(move |_,w,cx|{field.update(cx,|i,cx|i.set_value(value.clone(),w,cx));cx.notify();}).into()}).collect();

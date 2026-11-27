@@ -7,6 +7,7 @@
 //! reordering by drag-and-drop, and overview of the presentation structure.
 
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -73,7 +74,36 @@ impl SlideEditor {
     }
 
     /// Render the slide sorter grid view filling the workspace.
-    pub(crate) fn render_slide_grid_view(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_slide_grid_view(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let grid_scroll = window
+            .use_keyed_state("pptx-grid-scroll", cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
+        let grid_container_size = window
+            .use_keyed_state("pptx-grid-container-size", cx, |_, _| std::rc::Rc::new(std::cell::Cell::new((0.0f32, 0.0f32))))
+            .read(cx)
+            .clone();
+        let viewport = window.viewport_size();
+        let scroll_top = (-f32::from(grid_scroll.offset().y)).max(0.0);
+        let (measured_w, measured_h) = grid_container_size.get();
+        let raw_w = if measured_w > 0.0 { measured_w } else { f32::from(viewport.width) };
+        let raw_h = if measured_h > 0.0 { measured_h } else { f32::from(viewport.height) };
+        let view_h = raw_h.max(600.0);
+        let view_w = (raw_w - 48.0).max(GRID_CARD_WIDTH);
+        let cols_per_row = ((view_w + 24.0) / (GRID_CARD_WIDTH + 24.0)).floor().max(1.0) as usize;
+        let sample_h = self
+            .presentation()
+            .slides
+            .first()
+            .map(|s| {
+                let sz = self.presentation().size_of(s);
+                sz.height as f32 * (GRID_CARD_WIDTH / sz.width.max(1) as f32)
+            })
+            .unwrap_or(124.0);
+        let row_pitch = sample_h + 48.0;
+        let vis_top = scroll_top - row_pitch * 2.0;
+        let vis_bottom = scroll_top + view_h + row_pitch * 2.0;
+        DRAWN_CARDS.with(|d| d.borrow_mut().clear());
         let theme_bg = cx.theme().background;
         let theme_muted = cx.theme().muted;
         let theme_border = cx.theme().border;
@@ -128,14 +158,22 @@ impl SlideEditor {
 
         let grid_body = if has_sections {
             let mut sec_sections = Vec::new();
+            let mut cursor_y = 0.0f32;
             for sec in sections {
+                cursor_y += 44.0;
                 let sec_name = sec.name.clone();
                 let mut sec_cards = Vec::new();
+                let mut local_idx = 0usize;
                 for (idx, slide) in pres.slides.iter().enumerate() {
                     if sec.slides.contains(&slide.id) {
-                        sec_cards.push(self.build_card(idx, slide, current_id, cx));
+                        let card_y = cursor_y + (local_idx / cols_per_row) as f32 * row_pitch;
+                        let in_view = card_y + row_pitch >= vis_top && card_y <= vis_bottom;
+                        sec_cards.push(self.build_card(idx, slide, current_id, in_view, cx));
+                        local_idx += 1;
                     }
                 }
+                let rows = local_idx.div_ceil(cols_per_row);
+                cursor_y += rows as f32 * row_pitch + 56.0;
 
                 let sec_id = sec.id.clone();
                 let click_sec_id = sec.id.clone();
@@ -191,7 +229,9 @@ impl SlideEditor {
         } else {
             let mut cards = Vec::new();
             for (idx, slide) in pres.slides.iter().enumerate() {
-                cards.push(self.build_card(idx, slide, current_id, cx));
+                let card_y = (idx / cols_per_row) as f32 * row_pitch;
+                let in_view = card_y + row_pitch >= vis_top && card_y <= vis_bottom;
+                cards.push(self.build_card(idx, slide, current_id, in_view, cx));
             }
             let cards_flex = h_flex().flex_wrap().gap_6().children(cards);
             v_flex().w_full().child(cards_flex)
@@ -245,6 +285,13 @@ impl SlideEditor {
                     .id("slide-grid-scroll")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(&grid_scroll)
+                    .on_prepaint({
+                        let grid_container_size = grid_container_size.clone();
+                        move |bounds, _, _| {
+                            grid_container_size.set((f32::from(bounds.size.width), f32::from(bounds.size.height)));
+                        }
+                    })
                     .p_6()
                     .on_mouse_down(
                         MouseButton::Right,
@@ -263,6 +310,7 @@ impl SlideEditor {
         index: usize,
         slide: &ibis_doc_model::Slide,
         current_id: ibis_doc_model::SlideId,
+        in_view: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme_border = cx.theme().border;
@@ -277,13 +325,18 @@ impl SlideEditor {
         let scale = GRID_CARD_WIDTH / size.width.max(1) as f32;
         let card_h = size.height as f32 * scale;
 
-        let ready = self.resources.preload.slide_ready(slide);
-        self.resources.set_wrap(slide);
-        let shapes: Vec<_> = slide
-            .shown_shapes()
-            .filter(|_| ready)
-            .map(|shape| shape_element(shape, shape.frame, scale, &self.resources, None))
-            .collect();
+        let shapes: Vec<_> = if in_view || is_current {
+            DRAWN_CARDS.with(|d| d.borrow_mut().push(index));
+            let ready = self.resources.preload.slide_ready(slide);
+            self.resources.set_wrap(slide);
+            slide
+                .shown_shapes()
+                .filter(|_| ready)
+                .map(|shape| shape_element(shape, shape.frame, scale, &self.resources, None))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         v_flex()
             .id(SharedString::from(format!("slide-grid-card-{}", index + 1)))
@@ -363,4 +416,9 @@ impl SlideEditor {
             }))
             .into_any_element()
     }
+}
+
+thread_local! {
+    /// The cards (by index) whose shapes the last drawing of the grid built: the ones in view (and the current one). For the scenarios (#300).
+    pub(crate) static DRAWN_CARDS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
 }

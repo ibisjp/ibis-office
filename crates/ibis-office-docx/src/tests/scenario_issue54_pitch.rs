@@ -48,17 +48,17 @@ fn clusters(vertical: bool) -> Vec<f32> {
         })
         .collect();
     at.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let mut groups: Vec<(f32, usize)> = Vec::new();
+    // A column is where most of its glyphs stand (the median): the few symbols drawn at other offsets of the column (upright ones, from a
+    // fallback typeface) are inside the 4 pt a group takes in, and a mean would move the column by them (a pair of them 3.95 pt off made
+    // 游明朝's columns 23.75 apart where the glyphs' own lines are 24.00 apart).
+    let mut groups: Vec<Vec<f32>> = Vec::new();
     for v in at {
         match groups.last_mut() {
-            Some((m, n)) if (v - *m).abs() < 4.0 => {
-                *m = (*m * *n as f32 + v) / (*n + 1) as f32;
-                *n += 1;
-            }
-            _ => groups.push((v, 1)),
+            Some(g) if (v - g[0]).abs() < 4.0 => g.push(v),
+            _ => groups.push(vec![v]),
         }
     }
-    let mut out: Vec<f32> = groups.into_iter().filter(|g| g.1 >= if vertical { 8 } else { 1 }).map(|g| g.0).collect();
+    let mut out: Vec<f32> = groups.into_iter().filter(|g| g.len() >= if vertical { 8 } else { 1 }).map(|g| g[g.len() / 2]).collect();
     if vertical {
         out.reverse(); // the first column is on the right
     }

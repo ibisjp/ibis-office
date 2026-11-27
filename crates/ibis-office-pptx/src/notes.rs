@@ -34,6 +34,8 @@ const PANE_MIN_HEIGHT: f32 = 44.0;
 /// The least height of the slide pane, pixels: the slide is still seen as a slide (a 16:9 slide of this height is about 213 pixels wide).
 /// ibisOffice's own rule; PowerPoint's limit depends on its window (tasks/doc/m117-pptx-notes-pane-limits.md) and is not copied.
 pub(crate) const SLIDE_PANE_MIN_HEIGHT: f32 = 120.0;
+/// The divider between the slide list and the slide is this wide.
+pub(crate) const PANE_DIVIDER_WIDTH: f32 = 4.0;
 const LIST_MIN_WIDTH: f32 = 120.0;
 const LIST_MAX_WIDTH: f32 = 480.0;
 /// The tallest the notes pane can be of the two panes together `total`: the slide pane keeps its least height.
@@ -116,6 +118,13 @@ impl SlideEditor {
         self.pptx().and_then(|s| s.pane_width).unwrap_or(super::thumbnails::PANE_WIDTH)
     }
 
+    /// Whether the slide list is on screen (K0083): not when the content beside it would be narrower than twice the list (`narrow_layout::slide_list_fits`).
+    /// The list is laid out again from the window's width every frame, so it comes back when the window is widened. The master view keeps it
+    /// (it is where the masters are chosen), and so does a body that has not been laid out yet.
+    pub fn slide_list_shown(&self) -> bool {
+        self.is_master_view() || self.body_width <= 0.0 || crate::shell::narrow_layout::slide_list_fits(self.body_width, self.pane_width_now(), PANE_DIVIDER_WIDTH)
+    }
+
     /// A thumbnail's width: it fills the list less its margins.
     pub(crate) fn thumbnail_width(&self) -> f32 {
         (self.pane_width_now() - 48.0).clamp(72.0, 420.0)
@@ -124,9 +133,10 @@ impl SlideEditor {
     /// The divider between the slide list and the slide (#39).
     pub(crate) fn render_pane_divider(&self, cx: &mut Context<Self>) -> AnyElement {
         let w0 = self.pane_width_now();
-        div()
+        let divider = div()
             .id("pane-divider")
-            .w(px(4.))
+            .relative()
+            .w(px(PANE_DIVIDER_WIDTH))
             .h_full()
             .flex_shrink_0()
             .cursor_col_resize()
@@ -138,7 +148,12 @@ impl SlideEditor {
                     state.pane_drag = Some(PaneDrag::List { x0, w0 });
                 }
             }))
-            .into_any_element()
+            // (A finger within reach of it takes hold of it too: K0084.)
+            .child(self.splitter_mark());
+        // The scenario tests (K-splitter-touch) read where it is drawn.
+        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+        let divider = crate::shell::scenario::button_probe::observe_control(divider, "pane-divider".into());
+        divider.into_any_element()
     }
 
     /// The divider between the slide and the notes pane (#39); none while the pane is hidden.
@@ -150,8 +165,10 @@ impl SlideEditor {
         let total = self.workspace_bounds.map_or(f32::MAX, |b| f32::from(b.size.height)) + h0;
         let max = notes_pane_most(total);
         Some(
-            div()
+            {
+            let divider = div()
                 .id("notes-divider")
+                .relative()
                 .h(px(4.))
                 .w_full()
                 .flex_shrink_0()
@@ -170,7 +187,11 @@ impl SlideEditor {
                         state.pane_drag = Some(PaneDrag::Notes { y0, h0, max, touched0 });
                     }
                 }))
-                .into_any_element(),
+                .child(self.splitter_mark());
+            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+            let divider = crate::shell::scenario::button_probe::observe_control(divider, "notes-divider".into());
+            divider.into_any_element()
+            },
         )
     }
 

@@ -160,6 +160,14 @@ impl SlideEditor {
         }
     }
 
+    /// 適用: the link chosen in the panel; without one, a message box says what is missing.
+    pub(crate) fn slide_apply_chosen_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.slide_chosen_link(cx) {
+            Some(link) => self.slide_apply_link(Some(link), window, cx),
+            None => self.show_alert(crate::shell::i18n::text("pptx.links.hyperlink"), crate::shell::i18n::text("pptx.links.enter-address"), cx),
+        }
+    }
+
     /// 適用 (`link`: the panel's choice) or リンクの削除 (`None`).
     pub(crate) fn slide_apply_link(&mut self, link: Option<SlideLink>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(p) = self.pptx().and_then(|s| s.link_panel.as_ref()) else { return };
@@ -444,9 +452,7 @@ impl SlideEditor {
             MenuItem::tr("_shell.apply")
                 .icon("check")
                 .on(|this, w, cx| {
-                    if let Some(link) = this.slide_chosen_link(cx) {
-                        this.slide_apply_link(Some(link), w, cx);
-                    }
+                    this.slide_apply_chosen_link(w, cx);
                 })
                 .into(),
             MenuItem::tr("_shell.view")
@@ -571,9 +577,7 @@ impl SlideEditor {
         body = body.child(div().text_sm().child(t("pptx.links.screentip"))).child(crate::shell::chrome::text_field(&p.tooltip).full_width());
         let panel_actions = crate::shell::chrome::action_bar()
                 .action(crate::shell::chrome::ActionDefinition::new("link-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| {
-                    if let Some(link) = e.slide_chosen_link(cx) {
-                        e.slide_apply_link(Some(link), w, cx);
-                    }
+                    e.slide_apply_chosen_link(w, cx);
                 })))
                 .action(crate::shell::chrome::ActionDefinition::new("link-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.slide_close_link_panel(w, cx))))
                 .when(match &p.target {LinkTarget::Shape(id)=>link_of_shape(self.slide(),*id).is_some(),LinkTarget::Text{shape,start,..}=>self.slide().shape(*shape).and_then(|s|s.text_body()).and_then(|b|text_link_span(b,*start)).is_some(),LinkTarget::CellText{shape,row,col,start,..}=>self.slide().shape(*shape).and_then(|s|if let ShapeKind::Table(t)=&s.kind{t.rows.get(*row)?.cells.get(*col).and_then(|c|text_link_span(&c.text,*start))}else{None}).is_some()},|bar|bar.action(crate::shell::chrome::ActionDefinition::new("link-remove", t("pptx.links.remove-link"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(|e, _, w, cx| e.slide_apply_link(None, w, cx)))));

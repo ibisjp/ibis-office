@@ -28,7 +28,7 @@ const COMMON: &[&str] = &["SUM", "AVERAGE", "IF", "COUNT", "MAX", "MIN", "VLOOKU
 
 /// The functions with a line of what they do (`xlsx.fndesc.<name in lower case>`).
 pub(crate) const DESCRIBED: &[&str] = &[
-    "SUM", "AVERAGE", "COUNT", "COUNTA", "MAX", "MIN", "IF", "IFERROR", "IFS", "AND", "OR", "NOT", "VLOOKUP", "XLOOKUP", "HLOOKUP", "INDEX", "MATCH", "COUNTIF", "SUMIF", "AVERAGEIF", "COUNTIFS", "SUMIFS", "ROUND", "ROUNDUP", "ROUNDDOWN", "INT", "ABS", "MOD", "POWER", "SQRT", "CONCAT", "TEXTJOIN", "LEFT", "RIGHT", "MID", "LEN", "TRIM", "UPPER", "LOWER", "TEXT", "VALUE", "TODAY", "NOW", "DATE", "YEAR", "MONTH", "DAY", "FILTER", "SORT", "UNIQUE",
+    "SUM", "AVERAGE", "COUNT", "COUNTA", "MAX", "MIN", "IF", "IFERROR", "IFS", "AND", "OR", "NOT", "VLOOKUP", "XLOOKUP", "HLOOKUP", "INDEX", "MATCH", "COUNTIF", "SUMIF", "AVERAGEIF", "COUNTIFS", "SUMIFS", "ROUND", "ROUNDUP", "ROUNDDOWN", "INT", "ABS", "MOD", "POWER", "SQRT", "CONCAT", "TEXTJOIN", "LEFT", "RIGHT", "MID", "LEN", "TRIM", "UPPER", "LOWER", "TEXT", "VALUE", "TODAY", "NOW", "DATE", "YEAR", "MONTH", "DAY", "FILTER", "SORT", "UNIQUE", "IBIS.FIELDMATCH", "IBIS.RECORDMATCH",
 ];
 
 pub(crate) struct FunctionPanel {

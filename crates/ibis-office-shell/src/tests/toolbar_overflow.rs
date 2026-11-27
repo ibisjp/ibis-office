@@ -6,7 +6,7 @@
 use super::{Scenario, button_probe as probe};
 
 pub fn all() -> Vec<(&'static str, fn())> {
-    vec![("shell::toolbar_overflow_split_button_menu_works", split_button_menu), ("shell::toolbar_overflow_every_button_works", every_button_works), ("shell::button_probe_dry_run_ends_with_its_probe", dry_run_ends_with_its_probe)]
+    vec![("shell::toolbar_every_menu_button_is_split", every_menu_button_is_split), ("shell::toolbar_split_left_half_repeats_the_last_choice", split_left_half_repeats_the_last_choice), ("shell::toolbar_overflow_split_button_menu_works", split_button_menu), ("shell::toolbar_overflow_every_button_works", every_button_works), ("shell::button_probe_dry_run_ends_with_its_probe", dry_run_ends_with_its_probe)]
 }
 
 /// A dry run belongs to the probe that asked for it: the next probe presses for real (the menu grid scenarios that followed `toolbar_overflow_every_button_works` in the full run pressed Enter
@@ -157,6 +157,9 @@ fn every_button_works() {
                 // Only the rows of choices that are available can be pressed to run something.
                 let available: Vec<&str> = crate::chrome::flatten_menu_entries(&menu).iter().filter(|i| i.enabled()).map(|i| i.id).collect::<Vec<_>>().into_iter().map(|id| &*Box::leak(id.to_string().into_boxed_str())).collect();
                 rows.retain(|k| !k.starts_with("menu-item-") || available.contains(&&k["menu-item-".len()..]));
+                // A row below the bottom of the window (a long menu in a short window) cannot be pressed: nothing to press there (the window of a PC is shorter than the one of the Mac this was written on).
+                let window_height = s.update(|_, w, _| f32::from(w.viewport_size().height));
+                rows.retain(|k| probe::bounds(k).is_none_or(|b| f32::from(b.origin.y + b.size.height) <= window_height));
                 rows.sort_by_key(|k| (k.as_str() != format!("menu-item-{first}"), k.len(), k.clone()));
                 if rows.is_empty() {
                     // Nothing in it is available (or only below the fold of a long menu): nothing to press.
@@ -187,4 +190,79 @@ fn every_button_works() {
     }
     assert!(pressed > 50, "the buttons were pressed: {pressed}");
     assert!(failures.is_empty(), "{} of {pressed} presses failed:\n{}", failures.len(), failures.join("\n"));
+}
+
+const SCENES: [(&str, Option<usize>); 6] = [
+    ("test/editing/xlsx-sales.xlsx", None),
+    ("test/editing/docx-report.docx", None),
+    ("test/editing/88-review-order.pptx", None),
+    ("test/editing/88-review-order.pptx", Some(0)),
+    ("test/editing/88-review-order.pptx", Some(1)),
+    ("test/editing/88-review-order.pptx", Some(2)),
+];
+
+/// #241 (the user, d-241-menubutton): every button of the main toolbar with a ▼ on the three screens is a split button (the left half does the last choice, the ▼ opens the menu), except
+/// the lists of a value to choose (a checked choice), the searches, the palettes, the fonts and the ▼ that ends a set of aligned buttons. The exceptions are listed here so that a button added with a ▼ that is none of those fails.
+fn every_menu_button_is_split() {
+    use crate::chrome::{MenuEntry, ToolItem};
+    let mut loose = Vec::new();
+    for (path, pick) in SCENES {
+        let mut s = Scenario::open_sized(path, 3200.);
+        s.settle();
+        if let Some(i) = pick {
+            if s.with(|e, _| e.slide().shapes.len()) <= i {
+                continue;
+            }
+            s.select_shape(i);
+            s.settle();
+        }
+        for item in s.update(|e, _, _| e.toolbar_items()) {
+            let ToolItem::Button(b) = item else { continue };
+            let Some(menu) = &b.menu else { continue };
+            if b.hidden || !b.enabled() || b.id == "menu-search" || b.id == "toggle-menus" {
+                continue;
+            }
+            let split = b.left_action().is_some() || b.wants_remembered_choice();
+            let list = b.searchable || b.single_select || b.segment != crate::chrome::SegmentRounding::All || menu.iter().any(|e| matches!(e, MenuEntry::Palette(_))) || crate::chrome::flatten_menu_entries(menu).iter().any(|i| i.checked || crate::chrome::dropdown::is_font_item_id(i.id));
+            if !split && !list {
+                loose.push(format!("{path} pick {pick:?}: {}", b.id));
+            }
+        }
+    }
+    assert!(loose.is_empty(), "buttons with a ▼ that are not split buttons: {loose:?}");
+}
+
+/// A button with a ▼ that gave no left half of its own: before any choice its left half is the menu's (the button is still drawn as a split button); once a command of the
+/// menu has been chosen the left half is that command (`ToolButton::last_used`, what `toolbar_items` does to such a button).
+fn split_left_half_repeats_the_last_choice() {
+    use crate::chrome::{MenuEntry, MenuItem, ToolButton};
+    use std::cell::Cell;
+    thread_local! {
+        static DONE: Cell<u32> = const { Cell::new(0) };
+        static OTHER: Cell<u32> = const { Cell::new(0) };
+    }
+    let mut s = Scenario::open_sized("test/editing/docx-report.docx", 1400.);
+    s.settle();
+    let build = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let mut first = MenuItem::tr("edit.copy");
+            first.handler = Some(std::rc::Rc::new(|_, _, _| DONE.with(|d| d.set(d.get() + 1))));
+            let mut second = MenuItem::tr("edit.cut");
+            second.handler = Some(std::rc::Rc::new(|_, _, _| OTHER.with(|d| d.set(d.get() + 1))));
+            let button = ToolButton::new("test-split", "content_copy", "test").menu(vec![MenuEntry::Item(first), MenuEntry::Item(second)]);
+            assert!(button.wants_remembered_choice(), "a plain list of commands is a button that remembers its choice");
+            button.last_used(e, "test-split", |i| i.handler.is_some(), |_| false, false)
+        })
+    };
+    let before = build(&mut s);
+    assert!(before.left_action().is_none(), "nothing chosen yet: the left half opens the menu");
+    // Choose the second command from the menu.
+    let Some(MenuEntry::Item(second)) = before.menu.as_ref().and_then(|m| m.get(1)).cloned() else { panic!("the second item") };
+    let handler = second.handler.expect("a handler");
+    s.update(move |e, w, cx| handler(e, w, cx));
+    assert_eq!(OTHER.with(Cell::get), 1);
+    let after = build(&mut s);
+    let quick = after.left_action().cloned().expect("the left half is the last choice");
+    s.update(move |e, w, cx| quick(e, w, cx));
+    assert_eq!((OTHER.with(Cell::get), DONE.with(Cell::get)), (2, 0), "the left half did the second command again, not the first");
 }

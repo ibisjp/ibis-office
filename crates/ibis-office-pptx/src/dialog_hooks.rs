@@ -42,6 +42,7 @@ impl SlideEditor {
             "show_panel" => { state.show_panel = None; }
             "crop_panel" => { self.shape_edit.crop_panel = None; }
             "cell_size_panel" => { state.cell_size_panel = None; }
+            "grid_guides_panel" => { state.grid_guides_panel = None; }
             "header_footer_panel" => { self.shape_edit.header_footer = None; }
             "slide_zoom_dialog" => { state.slide_zoom_dialog = None; }
             "section_zoom_dialog" => { state.section_zoom_dialog = None; }

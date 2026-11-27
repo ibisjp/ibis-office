@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Bounded horizontal cell merge and split, preserving paragraph identities.
 use gpui_kit::*;
-use ibis_doc_model::{Block,FlowTable,FlowCommand,FlowParagraph,VerticalMerge};
+use ibis_doc_model::{Block,FlowTable,FlowCommand,VerticalMerge};
 use ibis_doc_model::flow_command;
 use crate::shell::editor::SlideEditor;
 use crate::ext::*;
@@ -100,27 +100,16 @@ impl SlideEditor {
     }
     pub(crate) fn merge_right_cell(&mut self,cx:&mut Context<Self>) {
         if !self.can_merge_right_cell() {return;}
-        let Some((t,row,cell))=self.structure_table() else{return};let mut table=t.clone();
-        let right=table.rows[row].cells.remove(cell+1);
-        let left=&mut table.rows[row].cells[cell];
-        left.span=left.span.max(1)+right.span.max(1);
-        left.own_borders[1]=right.own_borders[1];left.blocks.extend(right.blocks);
-        table.resolve_borders();self.replace_structure_table(table,cx);
+        let Some((t,row,cell))=self.structure_table() else{return};
+        let Ok(table)=flow_command::merge_cells_right(t,row,cell) else{return};
+        self.replace_structure_table(table,cx);
     }
     pub(crate) fn split_cell_grid(&mut self,cx:&mut Context<Self>) {
         if !self.can_split_cell_grid() {return;}
-        let Some((t,row,cell))=self.structure_table() else{return};let mut table=t.clone();
-        let template=table.rows[row].cells[cell].clone();
-        let Some(Block::Paragraph(p))=template.blocks.first() else{return};
-        let mut next=self.flow().unwrap().new_id();
-        let count=template.span.max(1) as usize;table.rows[row].cells[cell].span=1;
-        let mut cells=Vec::new();
-        for _ in 1..count {
-            let mut c=template.clone();c.id=next;next+=1;c.span=1;
-            let mut blank=FlowParagraph {id:next,style:p.style.clone(),table_style:p.table_style.clone(),direct:p.direct.clone(),mark_format:p.mark_format.clone(),..Default::default()};
-            next+=1;blank.resolve(&self.flow().unwrap().styles);c.blocks=vec![Block::Paragraph(blank)];cells.push(c);
-        }
-        table.rows[row].cells.splice(cell+1..cell+1,cells);table.resolve_borders();self.replace_structure_table(table,cx);
+        let Some((t,row,cell))=self.structure_table() else{return};
+        let Some(doc)=self.flow() else{return};
+        let Ok(table)=flow_command::split_cell(doc,t,row,cell) else{return};
+        self.replace_structure_table(table,cx);
     }
     fn replace_structure_table(&mut self,table:FlowTable,cx:&mut Context<Self>) {
         let Some((container,index))=self.flow().and_then(|d|flow_command::locate(d,table.id)) else{return};

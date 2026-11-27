@@ -15,7 +15,8 @@ use std::fmt::Write as _;
 use std::io::Cursor;
 
 use base64::Engine as _;
-use dicom_object::{Tag, from_reader};
+use dicom_object::from_reader;
+pub use dicom_object::Tag;
 
 use crate::Error;
 
@@ -104,10 +105,45 @@ impl DicomAnonymizationProfile {
 
 fn parse_hex_tag(s: &str) -> Option<Tag> {
     let cleaned = s.trim().trim_start_matches('(').trim_end_matches(')');
-    let (g, e) = cleaned.split_once(',')?;
-    let group = u16::from_str_radix(g.trim().trim_start_matches("0x"), 16).ok()?;
-    let elem = u16::from_str_radix(e.trim().trim_start_matches("0x"), 16).ok()?;
-    Some(Tag(group, elem))
+    if let Some((g, e)) = cleaned.split_once(',') {
+        let group = u16::from_str_radix(g.trim().trim_start_matches("0x"), 16).ok()?;
+        let elem = u16::from_str_radix(e.trim().trim_start_matches("0x"), 16).ok()?;
+        return Some(Tag(group, elem));
+    }
+    // Eight hex digits in one run (`00081040`).
+    if cleaned.len() == 8 && cleaned.chars().all(|c| c.is_ascii_hexdigit()) {
+        let group = u16::from_str_radix(&cleaned[..4], 16).ok()?;
+        let elem = u16::from_str_radix(&cleaned[4..], 16).ok()?;
+        return Some(Tag(group, elem));
+    }
+    None
+}
+
+/// The tags written in `text` (`0008,1040`, `(0008,1040)` or `00081040`, separated by spaces, semicolons or new lines): the tags
+/// read, and the pieces that are not a tag (the screen tells the user about those and strips only the ones read).
+pub fn parse_tag_list(text: &str) -> (Vec<Tag>, Vec<String>) {
+    let mut tags = Vec::new();
+    let mut unreadable = Vec::new();
+    for piece in text.split(|c: char| c.is_whitespace() || c == ';') {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            continue;
+        }
+        match parse_hex_tag(piece) {
+            Some(tag) if !tags.contains(&tag) => tags.push(tag),
+            Some(_) => {}
+            None => unreadable.push(piece.to_string()),
+        }
+    }
+    (tags, unreadable)
+}
+
+/// The width and height in the header of the PNG in `png`.
+pub fn png_size(png: &[u8]) -> Option<(u32, u32)> {
+    if png.len() < 24 || &png[..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    Some((u32::from_be_bytes(png[16..20].try_into().ok()?), u32::from_be_bytes(png[20..24].try_into().ok()?)))
 }
 
 /// Extracted non-diagnostic DICOM asset ready for Office document embedding.
@@ -123,6 +159,9 @@ pub struct DicomNonDiagnosticAsset {
     pub png_bytes: Option<Vec<u8>>,
     /// Non-fatal warnings (e.g. compressed transfer syntax fallback notice).
     pub warnings: Vec<String>,
+    /// `BurnedInAnnotation (0028,0301)` says `YES`: patient information may be written into the picture's own pixels, which
+    /// only a blacked-out rectangle removes (the screen asks the user to draw them).
+    pub burned_in: bool,
 }
 
 /// Returns `true` if `data` has a DICOM Part 10 preamble (`"DICM"` at byte 128..132).
@@ -191,10 +230,12 @@ pub fn anonymize_and_extract(
     metadata_rows.push(("TransferSyntaxUID".to_string(), ts_uid.clone()));
 
     let mut warnings = Vec::new();
+    let mut burned_in = false;
     if let Ok(elem) = obj.element(Tag(0x0028, 0x0301))
         && let Ok(val) = elem.to_str()
         && val.trim().eq_ignore_ascii_case("YES")
     {
+        burned_in = true;
         warnings.push(crate::words::text("medical.dicom.warning.burned-in"));
     }
     let png_bytes = extract_uncompressed_png(&obj, &ts_uid, &profile.roi_masks, &mut warnings);
@@ -209,6 +250,7 @@ pub fn anonymize_and_extract(
         metadata_rows,
         png_bytes,
         warnings,
+        burned_in,
     })
 }
 

@@ -5,7 +5,7 @@
 //! (with the number format Excel gives it: `1,234` → `#,##0`, `50%` →
 //! `0%`, `2026/9/30` → `yyyy/m/d`…), a logical value, an error, or text.
 
-use crate::eval::convert::{parse_date_time, parse_number_text};
+use crate::eval::convert::parse_number_text;
 use crate::value::{CellError, CellValue};
 
 /// Typed text read.
@@ -78,6 +78,17 @@ pub fn parse_imported(text: &str, date1904: bool) -> Typed {
     parse_input_from(text, date1904, InputSource::Imported)
 }
 
+/// Read a string a program gives a cell (the MCP tools, an assistant): a formula exactly when typing it into a cell would enter a
+/// formula (`=1+2`, `＝１＋２`; a lone `=` is text; a sign-led word such as `-x` or `+81-90-1234` is text, as in a file or a paste), otherwise the text as it is: `"1,234"` or `"2026/9/30"` stay text, and the program
+/// states numbers, logical values and empty cells with the JSON types. The formula rule is `parse_input`'s, so that it cannot differ
+/// between typing, pasting and a program.
+pub fn parse_program_text(text: &str) -> Typed {
+    match parse_input_from(text, false, InputSource::Imported) {
+        Typed::Formula(f) => Typed::Formula(f),
+        Typed::Value(..) => Typed::Value(CellValue::Text(text.to_string()), None),
+    }
+}
+
 /// Read `text` as Excel does for an entrance of kind `source`.
 pub fn parse_input_from(text: &str, date1904: bool, source: InputSource) -> Typed {
     // Full-width digits, signs, `％`, `．`, `，`, `＝`…typed (not read from a file): Excel takes what they spell as a number, a
@@ -142,10 +153,15 @@ pub fn parse_input_from(text: &str, date1904: bool, source: InputSource) -> Type
     // Dates and times. `12:30PM` with no space before the AM/PM is text, as in Excel (Windows, Japanese; GitHub issue #240).
     let upper = t.to_ascii_uppercase();
     let glued_meridiem = (upper.ends_with("AM") || upper.ends_with("PM")) && upper.contains(':') && upper.chars().rev().nth(2).is_some_and(|c| c.is_ascii_digit());
-    if !glued_meridiem && let Some(n) = parse_date_time(t, date1904) {
+    if !glued_meridiem && let Some(n) = crate::eval::convert::parse_date_time_typed(t, date1904) {
         let has_time = t.contains(':') || t.to_ascii_uppercase().ends_with('M');
         let has_date = n.abs() >= 1.0 || t.contains(['/', '年', '月']);
         let parts = t.split(['/', '-']).filter(|p| !p.is_empty()).count();
+        // Two parts that are this year's month and day (`9/30`), not a month and a year.
+        let this_year_day = {
+            let (y, _, d) = crate::eval::convert::date_from_serial(n as i64, date1904);
+            y == crate::eval::convert::current_year() && t.split(['/', '-']).filter(|p| !p.is_empty()).nth(1).and_then(|p| p.trim().parse::<u32>().ok()) == Some(d)
+        };
         let format = match (has_date, has_time) {
             (true, true) => "yyyy/m/d h:mm",
             (false, true) if t.to_ascii_uppercase().contains("AM") || t.to_ascii_uppercase().contains("PM") => {
@@ -164,8 +180,9 @@ pub fn parse_input_from(text: &str, date1904: bool, source: InputSource) -> Type
             _ if t.contains('年') => "yyyy\"年\"m\"月\"",
             _ if t.contains('月') => "m\"月\"d\"日\"",
             // 9/30: this year's; the year is not shown.
-            _ if parts == 2 && t.split(['/', '-']).next().is_some_and(|p| p.len() <= 2) => "m\"月\"d\"日\"",
-            _ if parts == 2 => "yyyy/m",
+            _ if parts == 2 && this_year_day => "m\"月\"d\"日\"",
+            // Sep/32, 2/29 (February 2029): Excel shows month and year as `Sep-32`.
+            _ if parts == 2 => "mmm-yy",
             _ => "yyyy/m/d",
         };
         return Typed::Value(CellValue::Number(n), Some(format));
@@ -306,6 +323,18 @@ pub fn parse_date_in_order(text: &str, order: DateOrder, date1904: bool) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_program_gives_formulas_as_typing_does_and_the_rest_as_text() {
+        let text = |t: &str| Typed::Value(CellValue::Text(t.to_string()), None);
+        for t in ["=1+2", "＝１＋２", "=  1+2  "] {
+            assert!(matches!(parse_program_text(t), Typed::Formula(_)), "{t}");
+            assert_eq!(parse_program_text(t), parse_input_from(t, false, InputSource::Imported), "the formula rule is the importing one: {t}");
+        }
+        for t in ["=", "1,234", "2026/9/30", "50%", "TRUE", "'x", "-x", "plain"] {
+            assert_eq!(parse_program_text(t), text(t), "{t}");
+        }
+    }
 
     fn value(t: &str) -> (CellValue, Option<&'static str>) {
         match parse_input(t, false) {

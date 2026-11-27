@@ -15,7 +15,6 @@ use crate::shell::chrome::Checkbox;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use ibis_doc_model::PageVAlign;
 
 use crate::shell::chrome::{SidebarPanel, radio_button, radio_group, RadioGroupLayout};
 use crate::shell::editor::SlideEditor;
@@ -24,7 +23,7 @@ use crate::ext::*;
 
 #[derive(Default)]
 pub struct HelpPanels {
-    pub page_setup: Option<PageSetupPanel>,
+    pub page_setup: Option<super::page_setup::PageSetupPanel>,
     pub(crate) notes: Option<NotesPanel>,
     pub(crate) bookmarks: Option<BookmarkPanel>,
     pub(crate) watermark: Option<WatermarkPanel>,
@@ -203,438 +202,6 @@ pub(crate) struct NotesPanel {
 
 const FORMAT_NAMES: [&str; 8] = ["1, 2, 3, …", "I, II, III, …", "i, ii, iii, …", "A, B, C, …", "a, b, c, …", "*, †, ‡, §, …", "①, ②, ③, …", "１, ２, ３, …"]; // i18n-ok（番号書式の見本（全角数字の見本）。迷った：英語の画面でも同じ見本のまま。訳さない）
 
-/// The fields, in millimetres: top, bottom, left, right, gutter, header,
-/// footer, width, height.
-pub(crate) const FIELDS: [&str; 9] = ["_shell.top", "_shell.bottom", "fix.help-panels.left-inside", "fix.help-panels.right-outside", "fix.help-panels.gutter", "_shell.header", "_shell.footer", "_shell.width", "_shell.height"];
-
-pub struct PageSetupPanel {
-    pub fields: [Entity<InputState>; 9],
-    pub(crate) gutter_at_top: bool,
-    pub(crate) mirror: bool,
-    pub(crate) multiple_pages: ibis_doc_model::MultiplePages,
-    pub(crate) book_fold_sheets: Entity<InputState>,
-    pub(crate) v_align: PageVAlign,
-    /// 文字列の方向: across, or 縦書き (`TbRl`).
-    pub vertical: bool,
-    /// The page number the section starts at (blank: it goes on from the
-    /// section before).
-    pub(crate) start: Entity<InputState>,
-    /// 文字数と行数（原稿設定）
-    pub(crate) grid_type: ibis_doc_model::DocGridType,
-    pub(crate) lines: Entity<InputState>,
-    pub(crate) line_pitch: Entity<InputState>,
-    pub(crate) chars: Entity<InputState>,
-    pub(crate) char_space: Entity<InputState>,
-    pub(crate) message: String,
-    pub ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
-}
-
-const EMU_PER_MM: f64 = 36_000.0;
-
-fn mm(emu: i64) -> String {
-    let v = (emu as f64 / EMU_PER_MM * 10.0).round() / 10.0;
-    if v.fract() == 0.0 { format!("{v:.0}") } else { format!("{v:.1}") }
-}
-
-fn pt_str(emu: i64) -> String {
-    let v = (emu as f64 / ibis_doc_model::EMU_PER_POINT as f64 * 10.0).round() / 10.0;
-    if v.fract() == 0.0 { format!("{v:.0}") } else { format!("{v:.1}") }
-}
-
-#[ibis_office_macros::editor_ext(HelpPanelsExt)]
-impl SlideEditor {
-    pub fn open_page_setup_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
-        let Some(page) = self.caret_page() else { return };
-        let values = [page.top, page.bottom, page.left, page.right, page.gutter, page.header, page.footer, page.size.width, page.size.height].map(mm);
-        let fields = values.map(|v| {
-            let state = cx.new(|cx| InputState::new(window, cx));
-            state.update(cx, |i, cx| i.set_value(v, window, cx));
-            state
-        });
-        let start = cx.new(|cx| InputState::new(window, cx));
-        let restart = self.flow().and_then(|d| ibis_doc_model::flow_command::section_setup(d, self.caret_section())).is_some_and(|s| s.restart_numbering);
-        if restart || self.caret_section() == 0 && page.first_page != 1 {
-            start.update(cx, |i, cx| i.set_value(page.first_page.to_string(), window, cx));
-        }
-
-        let is_vert = page.direction == ibis_doc_model::CellDirection::TbRl;
-        let text_h = if is_vert {
-            page.size.width - page.left - page.right - if !page.gutter_at_top { page.gutter } else { 0 }
-        } else {
-            page.size.height - page.top - page.bottom - if page.gutter_at_top { page.gutter } else { 0 }
-        }.max(1);
-        let text_w = if is_vert {
-            page.size.height - page.top - page.bottom - if page.gutter_at_top { page.gutter } else { 0 }
-        } else {
-            page.size.width - page.left - page.right - if !page.gutter_at_top { page.gutter } else { 0 }
-        }.max(1);
-
-        let default_pitch = ibis_doc_model::EMU_PER_POINT * 18;
-        let pitch = page.line_pitch.unwrap_or(default_pitch);
-        let lines_val = (text_h / pitch.max(1)).max(1);
-
-        let lines = cx.new(|cx| InputState::new(window, cx));
-        lines.update(cx, |i, cx| i.set_value(lines_val.to_string(), window, cx));
-
-        let line_pitch = cx.new(|cx| InputState::new(window, cx));
-        line_pitch.update(cx, |i, cx| i.set_value(pt_str(pitch), window, cx));
-
-        let default_char_pitch = (ibis_doc_model::EMU_PER_POINT as f64 * 10.5).round() as i64;
-        let char_pitch = page.char_space.map(|s| default_char_pitch + s).unwrap_or(default_char_pitch);
-        let chars_val = (text_w / char_pitch.max(1)).max(1);
-
-        let chars = cx.new(|cx| InputState::new(window, cx));
-        chars.update(cx, |i, cx| i.set_value(chars_val.to_string(), window, cx));
-
-        let char_space = cx.new(|cx| InputState::new(window, cx));
-        char_space.update(cx, |i, cx| i.set_value(pt_str(page.char_space.unwrap_or(0)), window, cx));
-
-        let grid_type = if page.doc_grid_type == ibis_doc_model::DocGridType::Default && page.line_pitch.is_some() {
-            ibis_doc_model::DocGridType::Lines
-        } else {
-            page.doc_grid_type
-        };
-
-        let panel = PageSetupPanel {
-            fields,
-            gutter_at_top: page.gutter_at_top,
-            mirror: page.is_mirrored(),
-            multiple_pages: page.multiple_pages,
-            book_fold_sheets: {
-                let state = cx.new(|cx| InputState::new(window, cx));
-                if let Some(s) = page.book_fold_sheets {
-                    state.update(cx, |i, cx| i.set_value(s.to_string(), window, cx));
-                }
-                state
-            },
-            v_align: page.v_align,
-            vertical: page.direction == ibis_doc_model::CellDirection::TbRl,
-            start,
-            grid_type,
-            lines,
-            line_pitch,
-            chars,
-            char_space,
-            message: String::new(),
-            ui: Default::default(),
-        };
-        if let Some(s) = self.doc_state_mut() {
-            s.find = None;
-            s.link = None;
-            s.style_edit = None;
-            s.font_edit = None;
-            s.color_edit = None;
-            s.paragraph_edit = None;
-            s.picture_edit = None;
-            s.table_size = None;
-            s.comments = None;
-            s.ruby = None;
-            s.text_box = None;
-            s.merge = None;
-            s.helper = HelpPanels::default();
-            s.helper.page_setup = Some(panel);
-        }
-        self.sidebar_open = true;
-        cx.notify();
-    }
-
-    fn page_setup_message(&mut self, message: SharedString, cx: &mut Context<Self>) {
-        if let Some(p) = self.doc_state_mut().and_then(|s| s.helper.page_setup.as_mut()) {
-            p.message = message.to_string();
-        }
-        cx.notify();
-    }
-
-    pub(crate) fn apply_page_setup_panel(&mut self, cx: &mut Context<Self>) {
-        let Some(p) = self.doc_state().and_then(|s| s.helper.page_setup.as_ref()) else { return };
-        let mut v = [0i64; 9];
-        for (i, f) in p.fields.iter().enumerate() {
-            match f.read(cx).value().trim().parse::<f64>() {
-                Ok(x) if x >= 0.0 && x.is_finite() => v[i] = (x * EMU_PER_MM).round() as i64,
-                _ => return self.page_setup_message(crate::shell::i18n::format("page-setup.bad", &[("field", &text(FIELDS[i]))]).into(), cx),
-            }
-        }
-        let [top, bottom, left, right, gutter, header, footer, width, height] = v;
-        // The text area must keep some room (Word refuses margins that meet).
-        let across = if p.gutter_at_top { left + right } else { left + right + gutter };
-        let down = if p.gutter_at_top { top + bottom + gutter } else { top + bottom };
-        if width <= 0 || height <= 0 || across >= width - 36_000 * 10 || down >= height - 36_000 * 10 {
-            return self.page_setup_message(text("fix.help-panels.margins-too-large-paper"), cx);
-        }
-        let (gutter_at_top, mirror, multiple_pages, v_align, vertical) = (p.gutter_at_top, p.mirror, p.multiple_pages, p.v_align, p.vertical);
-        let book_fold_sheets_str = p.book_fold_sheets.read(cx).value().trim().to_string();
-        let book_fold_sheets = if book_fold_sheets_str.is_empty() || book_fold_sheets_str == "0" {
-            None
-        } else {
-            match book_fold_sheets_str.parse::<u32>() {
-                Ok(n) if n >= 1 => Some(n),
-                _ => return self.page_setup_message(text("docx.help-panels.enter-whole-number-1-more"), cx),
-            }
-        };
-        // The first page number: a number, or blank for going on.
-        let start = p.start.read(cx).value().trim().to_string();
-        let start = if start.is_empty() {
-            None
-        } else {
-            match start.parse::<u32>() {
-                Ok(n) if n >= 1 => Some(n),
-                _ => return self.page_setup_message(text("docx.help-panels.enter-whole-number-1-more"), cx),
-            }
-        };
-
-        let grid_type = p.grid_type;
-        let (line_pitch, char_space) = match grid_type {
-            ibis_doc_model::DocGridType::Default => (None, None),
-            ibis_doc_model::DocGridType::Lines => {
-                let pitch_str = p.line_pitch.read(cx).value().trim().to_string();
-                let pitch = match pitch_str.parse::<f64>() {
-                    Ok(pt) if pt > 0.0 && pt.is_finite() => (pt * ibis_doc_model::EMU_PER_POINT as f64).round() as i64,
-                    _ => {
-                        let lines_str = p.lines.read(cx).value().trim().to_string();
-                        match lines_str.parse::<u32>() {
-                            Ok(n) if n >= 1 => {
-                                let is_vert = vertical;
-                                let text_h = if is_vert {
-                                    width - left - right - if !gutter_at_top { gutter } else { 0 }
-                                } else {
-                                    height - top - bottom - if gutter_at_top { gutter } else { 0 }
-                                }.max(1);
-                                (text_h / n as i64).max(ibis_doc_model::EMU_PER_POINT)
-                            }
-                            _ => return self.page_setup_message(text("docx.help-panels.please-enter-positive-number-line"), cx),
-                        }
-                    }
-                };
-                (Some(pitch), None)
-            }
-            ibis_doc_model::DocGridType::LinesAndChars => {
-                let pitch_str = p.line_pitch.read(cx).value().trim().to_string();
-                let pitch = match pitch_str.parse::<f64>() {
-                    Ok(pt) if pt > 0.0 && pt.is_finite() => (pt * ibis_doc_model::EMU_PER_POINT as f64).round() as i64,
-                    _ => {
-                        let lines_str = p.lines.read(cx).value().trim().to_string();
-                        match lines_str.parse::<u32>() {
-                            Ok(n) if n >= 1 => {
-                                let is_vert = vertical;
-                                let text_h = if is_vert {
-                                    width - left - right - if !gutter_at_top { gutter } else { 0 }
-                                } else {
-                                    height - top - bottom - if gutter_at_top { gutter } else { 0 }
-                                }.max(1);
-                                (text_h / n as i64).max(ibis_doc_model::EMU_PER_POINT)
-                            }
-                            _ => return self.page_setup_message(text("docx.help-panels.please-enter-positive-number-line"), cx),
-                        }
-                    }
-                };
-                let space_str = p.char_space.read(cx).value().trim().to_string();
-                let space = match space_str.parse::<f64>() {
-                    Ok(pt) if pt >= 0.0 && pt.is_finite() => (pt * ibis_doc_model::EMU_PER_POINT as f64).round() as i64,
-                    _ => 0,
-                };
-                (Some(pitch), Some(space))
-            }
-            ibis_doc_model::DocGridType::SnapToChars => (None, None),
-        };
-
-        self.set_page(
-            |page| {
-                page.top = top;
-                page.bottom = bottom;
-                page.left = left;
-                page.right = right;
-                page.gutter = gutter;
-                page.header = header;
-                page.footer = footer;
-                page.size = ibis_doc_model::EmuSize::new(width, height);
-                page.gutter_at_top = gutter_at_top;
-                page.multiple_pages = multiple_pages;
-                page.book_fold_sheets = book_fold_sheets;
-                page.mirror_margins = mirror || multiple_pages.is_mirrored();
-                page.v_align = v_align;
-                page.doc_grid_type = grid_type;
-                page.line_pitch = line_pitch;
-                page.char_space = char_space;
-                // A direction the panel does not offer is kept.
-                if vertical != (page.direction == ibis_doc_model::CellDirection::TbRl) {
-                    page.direction = if vertical { ibis_doc_model::CellDirection::TbRl } else { ibis_doc_model::CellDirection::LrTb };
-                }
-            },
-            cx,
-        );
-        let current_restart = self.flow().and_then(|d| ibis_doc_model::flow_command::section_setup(d, self.caret_section())).is_some_and(|s| s.restart_numbering);
-        let current_start = self.caret_page().map(|p| p.first_page).unwrap_or(1);
-        let need_section_change = match start {
-            Some(n) => !current_restart || current_start != n,
-            None => current_restart,
-        };
-        if need_section_change {
-            self.set_section(
-                move |s| match start {
-                    Some(n) => {
-                        s.restart_numbering = true;
-                        s.page.first_page = n;
-                    }
-                    None => {
-                        if s.restart_numbering {
-                            s.restart_numbering = false;
-                            s.page.first_page = 1;
-                        }
-                    }
-                },
-                cx,
-            );
-        }
-        self.page_setup_message(text("fix.help-panels.page-setup-changed"), cx);
-    }
-
-    pub fn doc_page_setup_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let p = self.doc_state()?.helper.page_setup.as_ref()?;
-        let mark = |id: &str, child: AnyElement| {
-            let ui = p.ui.clone();
-            let id = id.to_string();
-            div()
-                .relative()
-                .child(child)
-                .child(canvas(|_, _, _| {}, move |bounds, _, _, _| {
-                    ui.borrow_mut().insert(id.clone(), bounds);
-                }).absolute().top_0().left_0().size_full())
-                .into_any_element()
-        };
-        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
-            let ui = p.ui.clone();
-            let id = id.to_string();
-            action.on_bounds(move |bounds, _, _| {
-                    ui.borrow_mut().insert(id.clone(), bounds);
-                })
-        };
-        type Set = fn(&mut PageSetupPanel);
-        let choice = |id: &'static str, on: bool, label: &str, set: Set| {
-            mark(
-                id,
-                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.page_setup.as_mut()) {
-                            set(p);
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )
-        };
-        // Every field here is a number; the panel applies them with its button, so ▲▼ only change the number.
-        use crate::shell::chrome::SpinnerSpec;
-        let field_cx = &*cx;
-        let aligned_row = |mark_id: &str, label_text: SharedString, input: &Entity<InputState>, unit_text: SharedString, spec: SpinnerSpec| {
-            h_flex()
-                .w_full()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .child(div().text_sm().child(label_text))
-                .child(mark(mark_id,crate::shell::chrome::text_field(input).spinner(format!("page-setup-{mark_id}"),spec,field_cx,|_,_,_,_|{}).unit(unit_text,px(72.)).into_any_element()))
-        };
-        let field = |i: usize| aligned_row(&format!("field-{i}"), text(FIELDS[i]), &p.fields[i], "mm".into(), SpinnerSpec::new(1.0).range(if i >= 7 { 1.0 } else { 0.0 }, 558.0));
-        let mut body = v_flex()
-            .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .p_0().children((!p.message.is_empty()).then(||div().text_sm().child(SharedString::from(p.message.clone()))))
-            .child(div().text_sm().child(text("_shell.margins")));
-        for i in 0..5 {
-            body = body.child(field(i));
-        }
-        body = body
-            .child(v_flex().gap_1().child(div().text_sm().child(text("fix.help-panels.gutter-position"))).child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow).child(choice("gutter-left", !p.gutter_at_top, "_shell.left", |p| p.gutter_at_top = false)).child(choice("gutter-top", p.gutter_at_top, "_shell.top", |p| p.gutter_at_top = true))))
-            .child(div().text_sm().child(text("docx.page.multiple-pages")))
-            .child(
-                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
-                    .child(choice("page-normal", p.multiple_pages == ibis_doc_model::MultiplePages::Normal, "docx.page.multiple-pages.normal", |p| {
-                        p.multiple_pages = ibis_doc_model::MultiplePages::Normal;
-                        p.mirror = false;
-                    }))
-                    .child(choice("page-mirror", p.multiple_pages == ibis_doc_model::MultiplePages::MirrorMargins, "docx.page.multiple-pages.mirror-margins", |p| {
-                        p.multiple_pages = ibis_doc_model::MultiplePages::MirrorMargins;
-                        p.mirror = true;
-                    }))
-                    .child(choice("page-book-fold", p.multiple_pages == ibis_doc_model::MultiplePages::BookFold, "docx.page.multiple-pages.book-fold", |p| {
-                        p.multiple_pages = ibis_doc_model::MultiplePages::BookFold;
-                        p.mirror = true;
-                    }))
-                    .child(choice("page-reverse-book-fold", p.multiple_pages == ibis_doc_model::MultiplePages::ReverseBookFold, "docx.page.multiple-pages.reverse-book-fold", |p| {
-                        p.multiple_pages = ibis_doc_model::MultiplePages::ReverseBookFold;
-                        p.mirror = true;
-                    }))
-                    .child(choice("page-two-on-one", p.multiple_pages == ibis_doc_model::MultiplePages::TwoOnOne, "docx.page.multiple-pages.two-on-one", |p| {
-                        p.multiple_pages = ibis_doc_model::MultiplePages::TwoOnOne;
-                        p.mirror = false;
-                    })),
-            );
-        if p.multiple_pages.is_book_fold() {
-            body = body.child(aligned_row(
-                "book-fold-sheets",
-                text("docx.page.book-fold-sheets"),
-                &p.book_fold_sheets,
-                text("docx.help-panels.book-fold-sheets-hint"),
-                SpinnerSpec::new(4.0).range(0.0, 1024.0).integer_only(),
-            ));
-        }
-        body = body
-            .child(div().text_sm().child(text("docx.help-panels.document-grid")))
-            .child(
-                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
-                    .child(choice("grid-default", p.grid_type == ibis_doc_model::DocGridType::Default, "docx.help-panels.no-grid", |p| p.grid_type = ibis_doc_model::DocGridType::Default))
-                    .child(choice("grid-lines", p.grid_type == ibis_doc_model::DocGridType::Lines, "docx.help-panels.lines-only", |p| p.grid_type = ibis_doc_model::DocGridType::Lines))
-                    .child(choice("grid-lines-chars", p.grid_type == ibis_doc_model::DocGridType::LinesAndChars, "docx.help-panels.document-grid", |p| p.grid_type = ibis_doc_model::DocGridType::LinesAndChars)),
-            )
-            .child(aligned_row("grid-lines-input", text("docx.help-panels.lines"), &p.lines, text("_xlsx.row"), SpinnerSpec::new(1.0).range(1.0, 999.0).integer_only()))
-            .child(aligned_row("grid-line-pitch", text("docx.help-panels.line-pitch"), &p.line_pitch, "pt".into(), SpinnerSpec::new(0.5).range(0.0, 1584.0)))
-            .child(aligned_row("grid-chars", text("docx.help-panels.characters"), &p.chars, text("docx.paragraph-panel.characters"), SpinnerSpec::new(1.0).range(1.0, 999.0).integer_only()))
-            .child(aligned_row("grid-char-space", text("docx.help-panels.character-pitch"), &p.char_space, "pt".into(), SpinnerSpec::new(0.5).range(0.0, 1584.0)));
-        body = body.child(div().text_sm().child(text("_shell.vertical-alignment"))).child(
-            h_flex()
-                .gap_1()
-                .flex_wrap()
-                .child(choice("valign-top", p.v_align == PageVAlign::Top, "fix.help-panels.top", |p| p.v_align = PageVAlign::Top))
-                .child(choice("valign-center", p.v_align == PageVAlign::Center, "fix.help-panels.center", |p| p.v_align = PageVAlign::Center))
-                .child(choice("valign-bottom", p.v_align == PageVAlign::Bottom, "fix.help-panels.bottom", |p| p.v_align = PageVAlign::Bottom))
-                .child(choice("valign-both", p.v_align == PageVAlign::Both, "_shell.justify", |p| p.v_align = PageVAlign::Both)),
-        );
-        body = body
-            .child(div().text_sm().child(text("docx.chrome.text-direction")))
-            .child(
-                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
-                    .child(choice("direction-across", !p.vertical, "_shell.horizontal", |p| p.vertical = false))
-                    .child(choice("direction-vertical", p.vertical, "_shell.vertical", |p| p.vertical = true)),
-            )
-            .child(div().text_sm().child(text("_xlsx.page-number")))
-            .child(aligned_row("start", text("fix.help-panels.start"), &p.start, text("docx.help-panels.blank-continue"), SpinnerSpec::new(1.0).range(1.0, 32767.0).integer_only()));
-        body = body.child(div().text_sm().child(text("_shell.paper-size")));
-        for i in 7..9 {
-            body = body.child(field(i));
-        }
-        body = body.child(div().text_sm().child(text("fix.help-panels.header-footer-edge")));
-        for i in 5..7 {
-            body = body.child(field(i));
-        }
-        let footer = crate::shell::chrome::action_bar()
-            .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("page-setup-apply", text("OK"), crate::shell::chrome::ActionButtonKind::Primary)
-                    .on_click(cx.listener(|this, _, _, cx| this.apply_page_setup_panel(cx)))))
-            .action(mark_action("close", crate::shell::chrome::ActionDefinition::new("page-setup-close-target", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(s) = this.doc_state_mut() {
-                            s.helper.page_setup = None;
-                        }
-                        this.sidebar_open = false;
-                        cx.notify();
-                    }))));
-        Some(SidebarPanel::with_footer(
-            crate::shell::i18n::text("_shell.page-setup"),
-            body.into_any_element(),
-            footer,
-        ))
-    }
-}
 
 #[ibis_office_macros::editor_ext(HelpPanelsExt2)]
 impl SlideEditor {
@@ -993,6 +560,9 @@ impl SlideEditor {
     /// 適用: the panel's watermark on the document (a header made for it if
     /// the document has none).
     pub(crate) fn apply_watermark(&mut self, cx: &mut Context<Self>) {
+        if self.alert_edit_blocked("docx.watermark", cx) {
+            return;
+        }
         let Some(p) = self.doc_state().and_then(|s| s.helper.watermark.as_ref()) else { return };
         let words = p.text.read(cx).value().trim().to_string();
         if words.is_empty() {
@@ -1102,17 +672,97 @@ pub struct DocStatistics {
     pub pages: usize,
     pub words: usize,
     pub characters_no_spaces: usize,
-    pub characters_with_spaces: usize,
+    /// Negative when section breaks outnumber the characters (Word's dialog shows -1 for a document of two section breaks alone).
+    pub characters_with_spaces: i64,
     pub paragraphs: usize,
     pub lines: usize,
+    /// 半角英数の単語数 (Word's 文字カウント; not counted yet: always 0, GitHub issue 295).
+    pub half_width_words: usize,
+    /// 全角文字 + 半角カタカナの数 (Word's 文字カウント; not counted yet: always 0, GitHub issue 295).
+    pub full_width_chars: usize,
 }
 
 // The counting is shared with the workbook (`shell/word_count.rs`).
 pub use crate::shell::word_count::count_words_and_chars;
+use crate::shell::word_count::{count_paragraph, ParagraphCounts};
+
+/// 文字数 (スペースを含めない) of the whole document as the 文字カウント panel gives it with its box checked: the body, the text boxes, the footnotes and the endnotes
+/// (Word's status bar counts them too: measured on Windows, `tasks/doc/requests/2026-11-25-295-word-count-w7w8-result.md`).
+pub(crate) fn characters_no_spaces(doc: &ibis_doc_model::FlowDocument) -> usize {
+    let mut total = ParagraphCounts::default();
+    let mut add = |text: &str| total.add(count_paragraph(text));
+    let mut walk = WordCountWalk::default();
+    walk_word_count_blocks(&doc.body, true, &mut add, &mut walk);
+    for note in doc.footnotes.iter().chain(&doc.endnotes) {
+        walk_word_count_blocks(&note.blocks, true, &mut add, &mut walk);
+    }
+    total.no_spaces
+}
+
+/// What `walk_word_count_blocks` gathers besides the counts.
+#[derive(Default)]
+struct WordCountWalk {
+    /// How many paragraphs end a section (a section break).
+    section_breaks: usize,
+    /// The ids of the paragraphs walked, in order.
+    para_ids: Vec<u32>,
+    /// The text of the last paragraph walked.
+    last_text: String,
+    /// The lines the text boxes' paragraphs take: one each and one for each line break in them.
+    text_box_lines: usize,
+}
+
+/// Hand each paragraph of `blocks` (the cells' too; the text boxes' when `include_text_boxes`) to `add` as Word counts its text, and gather the rest in `walk`.
+/// A text box's paragraph that `line_break` marks is the line after a line break of the one before: it is that one's text after a line break (U+000B).
+fn walk_word_count_blocks(blocks: &[ibis_doc_model::Block], include_text_boxes: bool, add: &mut dyn FnMut(&str), walk: &mut WordCountWalk) {
+    for b in blocks {
+        match b {
+            ibis_doc_model::Block::Paragraph(p) => {
+                walk.para_ids.push(p.id);
+                if p.section_break != ibis_doc_model::SectionBreak::None {
+                    walk.section_breaks += 1;
+                }
+                walk.last_text = p.text();
+                add(&p.text_with_note_marks(true));
+                if include_text_boxes {
+                    for run in &p.runs {
+                        if let ibis_doc_model::FlowRunKind::Shape(shape) = &run.kind {
+                            if let Some(body) = shape.text_body() {
+                                let mut joined: Vec<String> = Vec::new();
+                                for tp in &body.paragraphs {
+                                    match joined.last_mut() {
+                                        Some(prev) if tp.line_break => {
+                                            prev.push('\u{b}');
+                                            prev.push_str(&tp.text());
+                                        }
+                                        _ => joined.push(tp.text()),
+                                    }
+                                }
+                                for t in &joined {
+                                    walk.text_box_lines += 1 + t.matches('\u{b}').count();
+                                    add(t);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ibis_doc_model::Block::Table(t) => {
+                for r in &t.rows {
+                    for c in &r.cells {
+                        walk_word_count_blocks(&c.blocks, include_text_boxes, add, walk);
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// サイドバーの「文字カウント」パネル (Word's 文字カウント dialog).
 pub struct WordCountPanel {
     pub stats: DocStatistics,
+    /// 「テキスト ボックス、脚注、文末脚注を含める」 (Word's box; checked at first, as Word's is).
+    pub include_notes: bool,
     pub(crate) ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
 }
 
@@ -1120,10 +770,15 @@ pub struct WordCountPanel {
 impl SlideEditor {
     /// Calculate document or selection statistics (pages, words, characters, paragraphs, lines).
     pub fn document_statistics(&self) -> DocStatistics {
+        self.document_statistics_with(true)
+    }
+
+    /// [`Self::document_statistics`]; `include_notes`: the text boxes', footnotes' and endnotes' text counts (Word's 「テキスト ボックス、脚注、文末脚注を含める」).
+    pub fn document_statistics_with(&self, include_notes: bool) -> DocStatistics {
         if self.has_selection() {
             let text = self.selected_text();
             let (words, characters_no_spaces, characters_with_spaces) = count_words_and_chars(&text);
-            let lines_geom = self.flow_lines();
+            let lines_geom = self.flow_lines_arc();
             let mut paras = 0;
             let mut lines_count = 0;
             let mut pages_set = std::collections::BTreeSet::new();
@@ -1137,7 +792,7 @@ impl SlideEditor {
                         paras = 1;
                     }
                 }
-                for l in &lines_geom {
+                for l in lines_geom.iter() {
                     if l.para >= start.para.min(end.para) && l.para <= start.para.max(end.para) {
                         lines_count += 1;
                         pages_set.insert(l.page);
@@ -1157,53 +812,55 @@ impl SlideEditor {
                 pages,
                 words,
                 characters_no_spaces,
-                characters_with_spaces,
+                characters_with_spaces: characters_with_spaces as i64,
                 paragraphs: paras,
                 lines: lines_count,
+                ..Default::default()
             }
         } else {
             let Some(doc) = self.flow() else { return DocStatistics::default() };
-            let mut all_text = String::new();
-            let mut paras = 0;
-            for b in &doc.body {
-                match b {
-                    ibis_doc_model::Block::Paragraph(p) => {
-                        paras += 1;
-                        if !all_text.is_empty() {
-                            all_text.push('\n');
-                        }
-                        all_text.push_str(&p.text());
-                    }
-                    ibis_doc_model::Block::Table(t) => {
-                        for r in &t.rows {
-                            for c in &r.cells {
-                                for cb in &c.blocks {
-                                    if let ibis_doc_model::Block::Paragraph(p) = cb {
-                                        paras += 1;
-                                        if !all_text.is_empty() {
-                                            all_text.push('\n');
-                                        }
-                                        all_text.push_str(&p.text());
-                                    }
-                                }
-                            }
-                        }
-                    }
+            let mut total = ParagraphCounts::default();
+            let mut paras: usize = 0;
+            let mut add = |text: &str| {
+                let c = count_paragraph(text);
+                if c.counts_as_paragraph() {
+                    paras += 1;
+                }
+                total.add(c);
+            };
+            let mut body = WordCountWalk::default();
+            walk_word_count_blocks(&doc.body, include_notes, &mut add, &mut body);
+            let mut notes = WordCountWalk::default();
+            if include_notes {
+                for note in doc.footnotes.iter().chain(&doc.endnotes) {
+                    walk_word_count_blocks(&note.blocks, include_notes, &mut add, &mut notes);
                 }
             }
-
-            let (words, characters_no_spaces, characters_with_spaces) = count_words_and_chars(&all_text);
             let pages = self.presentation().slides.len().max(1);
-            let lines = self.flow_lines().len().max(paras);
+            // The lines of the body (not the headers' and footers', which are on every page) and, with the notes, of the notes and the text boxes. The line a document
+            // ends with is not counted when it is empty: the last paragraph's last line, after its last line break.
+            // Word does not count the last paragraph of the document as a paragraph when it ends with a line break ("test", a line break: 0 paragraphs; the
+            // same text followed by another paragraph: counted). Measured: `tasks/doc/requests/2026-11-26-295-mechanism-result.md`.
+            if body.last_text.ends_with('\u{b}') && count_paragraph(&body.last_text).counts_as_paragraph() {
+                paras = paras.saturating_sub(1);
+            }
+            let wanted = |para: u32| body.para_ids.contains(&para) || notes.para_ids.contains(&para);
+            let laid_out = self.flow_lines_arc().iter().filter(|l| wanted(l.para)).count();
+            let last_line_empty = body.last_text.rsplit('\u{b}').next().is_some_and(str::is_empty);
+            let lines = (laid_out + body.text_box_lines).saturating_sub(usize::from(last_line_empty));
 
             DocStatistics {
                 is_selection: false,
                 pages,
-                words,
-                characters_no_spaces,
-                characters_with_spaces,
+                words: total.words,
+                characters_no_spaces: total.no_spaces,
+                // Word takes one off the number with spaces for each section break (measured on 29 documents: a break after text, alone, continuous, with spaces,
+                // with line breaks and page breaks; a page break takes none off).
+                characters_with_spaces: total.with_spaces as i64 - (body.section_breaks + notes.section_breaks) as i64,
                 paragraphs: paras,
                 lines,
+                half_width_words: total.words - total.far_east,
+                full_width_chars: total.far_east,
             }
         }
     }
@@ -1214,6 +871,7 @@ impl SlideEditor {
         let stats = self.document_statistics();
         let panel = WordCountPanel {
             stats,
+            include_notes: true,
             ui: Default::default(),
         };
         if let Some(s) = self.doc_state_mut() {
@@ -1247,7 +905,8 @@ impl SlideEditor {
     /// Render the Word Count sidebar panel.
     pub fn word_count_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         self.doc_state()?.helper.word_count.as_ref()?;
-        let live_stats=self.document_statistics();
+        let include_notes = self.doc_state()?.helper.word_count.as_ref()?.include_notes;
+        let live_stats=self.document_statistics_with(include_notes);
         let p = self.doc_state()?.helper.word_count.as_ref()?;
         let stats = &live_stats;
         let theme = cx.theme();
@@ -1264,7 +923,7 @@ impl SlideEditor {
                 .into_any_element()
         };
 
-        let stat_row = |id: &'static str, label: &'static str, value: usize| {
+        let stat_row = |id: &'static str, label: &'static str, value: i64| {
             mark(
                 id,
                 h_flex()
@@ -1274,7 +933,7 @@ impl SlideEditor {
                     .border_b_1()
                     .border_color(theme.title_bar_border)
                     .child(div().text_sm().text_color(theme.foreground).child(text(label)))
-                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
+                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(format!("{}{}", if value < 0 { "-" } else { "" }, crate::shell::ribbon::thousands(value.unsigned_abs() as usize))))
                     .into_any_element(),
             )
         };
@@ -1298,12 +957,26 @@ impl SlideEditor {
 ,
             )
             .child(div().h(px(4.)))
-            .child(stat_row("stat-pages", "docx.help-panels.pages", stats.pages))
-            .child(stat_row("stat-words", "docx.help-panels.words", stats.words))
-            .child(stat_row("stat-chars-no-spaces", "docx.help-panels.characters-no-spaces", stats.characters_no_spaces))
-            .child(stat_row("stat-chars-with-spaces", "docx.help-panels.characters-spaces", stats.characters_with_spaces))
-            .child(stat_row("stat-paragraphs", "docx.help-panels.paragraphs", stats.paragraphs))
-            .child(stat_row("stat-lines", "docx.help-panels.lines", stats.lines));
+            .child(stat_row("stat-pages", "docx.help-panels.pages", stats.pages as i64))
+            .child(stat_row("stat-words", "docx.help-panels.words", stats.words as i64))
+            .child(stat_row("stat-chars-no-spaces", "docx.help-panels.characters-no-spaces", stats.characters_no_spaces as i64))
+            .child(stat_row("stat-chars-with-spaces", "docx.help-panels.characters-spaces", stats.characters_with_spaces as i64))
+            .child(stat_row("stat-paragraphs", "docx.help-panels.paragraphs", stats.paragraphs as i64))
+            .child(stat_row("stat-lines", "docx.help-panels.lines", stats.lines as i64))
+            .child(stat_row("stat-half-width-words", "docx.help-panels.half-width-words", stats.half_width_words as i64))
+            .child(stat_row("stat-full-width-chars", "docx.help-panels.full-width-chars", stats.full_width_chars as i64))
+            .child(div().h(px(4.)))
+            .child(mark(
+                "include-notes",
+                Checkbox::new("word-count-include-notes").checked(include_notes).label(text("docx.help-panels.include-notes"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.word_count.as_mut()) {
+                            p.include_notes = !p.include_notes;
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            ));
 
         Some(SidebarPanel { title: text("docx.help-panels.word-count"), body: body.into_any_element() })
     }
@@ -1874,6 +1547,9 @@ impl SlideEditor {
 
     /// Apply the entered document properties via `FlowCommand::SetDocumentProperties` and font embedding settings.
     pub(crate) fn apply_doc_properties(&mut self, cx: &mut Context<Self>) {
+        if self.alert_edit_blocked("file.info", cx) {
+            return;
+        }
         let (title, creator, subject, keywords, description, category, manager, company, custom, embed_tt, save_sub, embed_sys) = {
             let Some(p) = self.doc_state().and_then(|s| s.helper.properties.as_ref()) else { return };
             (
@@ -1950,13 +1626,13 @@ impl SlideEditor {
                 })
         };
 
-        let stat_item = |label: &'static str, value: usize| {
+        let stat_item = |label: &'static str, value: i64| {
             h_flex()
                 .justify_between()
                 .items_center()
                 .py(px(2.))
                 .child(div().text_sm().text_color(theme.muted_foreground).child(text(label)))
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(format!("{}{}", if value < 0 { "-" } else { "" }, crate::shell::ribbon::thousands(value.unsigned_abs() as usize))))
         };
 
         let meta_item = |label: &'static str, val: &str| {
@@ -1988,9 +1664,9 @@ impl SlideEditor {
             .p(px(8.))
             .rounded(px(4.))
             .bg(theme.title_bar_border.opacity(0.15))
-            .child(stat_item("docx.help-panels.pages", p.stats.pages))
-            .child(stat_item("docx.help-panels.words", p.stats.words))
-            .child(stat_item("docx.help-panels.characters", p.stats.characters_with_spaces))
+            .child(stat_item("docx.help-panels.pages", p.stats.pages as i64))
+            .child(stat_item("docx.help-panels.words", p.stats.words as i64))
+            .child(stat_item("docx.help-panels.characters", p.stats.characters_with_spaces as i64))
             .child(meta_item("pptx.properties-panel.created", &crate::clock::format_local_datetime(&p.created)))
             .child(meta_item("pptx.properties-panel.modified", &crate::clock::format_local_datetime(&p.modified)))
             .child(meta_item("docx.properties-panel.last-printed", &crate::clock::format_local_datetime(&p.last_printed)))

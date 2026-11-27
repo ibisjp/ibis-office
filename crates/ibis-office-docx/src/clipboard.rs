@@ -488,7 +488,7 @@ fn last_caret_in_blocks(blocks: &[Block]) -> Option<FlowPos> {
 /// Materialize all supported run properties so destination defaults cannot leak.
 pub(super) fn resolved_format(r: &FlowRun) -> RunFormat {
     let s = &r.style;
-    RunFormat { font: s.font.clone(), h_ansi_font: s.h_ansi_font.clone(), east_asian_font: s.east_asian_font.clone(), cs_font: s.cs_font.clone(), east_asia_hint: Some(s.east_asia_hint), size: Some(s.size), cs_size: s.cs_size,
+    RunFormat { font_theme: None, east_asian_font_theme: None, h_ansi_font_theme: None, cs_font_theme: None, font: s.font.clone(), h_ansi_font: s.h_ansi_font.clone(), east_asian_font: s.east_asian_font.clone(), cs_font: s.cs_font.clone(), east_asia_hint: Some(s.east_asia_hint), size: Some(s.size), cs_size: s.cs_size,
         bold: Some(s.bold), italic: Some(s.italic), underline: Some(s.underline), underline_style: Some(s.underline_style),
         underline_color: Some(s.underline_color), strike: Some(s.strike), double_strike: Some(s.double_strike), caps: Some(s.caps), small_caps: Some(s.small_caps),
         color: Some(s.color), theme_color: r.format.theme_color.clone(), highlight: Some(s.highlight), shd_pattern: None, effects: None, border: Some(s.border.clone()),

@@ -220,45 +220,7 @@ impl SlideEditor {
     }
 
     pub fn extract_groups_for_shapes(groups: &[ibis_doc_model::ShapeGroup], shape_ids: &[ShapeId]) -> Vec<ibis_doc_model::ShapeGroup> {
-        let set: std::collections::HashSet<ShapeId> = shape_ids.iter().copied().collect();
-        let mut result = Vec::new();
-        for g in groups {
-            let mut leaves = Vec::new();
-            Self::collect_group_leaves(g, &mut leaves);
-            if !leaves.is_empty() && leaves.iter().all(|id| set.contains(id)) {
-                result.push(g.clone());
-            }
-        }
-        result
-    }
-
-    fn map_group_hierarchy(
-        group: &ibis_doc_model::ShapeGroup,
-        id_map: &std::collections::HashMap<ShapeId, ShapeId>,
-        used_native_ids: &mut std::collections::HashSet<u32>,
-    ) -> ibis_doc_model::ShapeGroup {
-        let mut next_native_id = 10000u32;
-        while used_native_ids.contains(&next_native_id) {
-            next_native_id += 1;
-        }
-        used_native_ids.insert(next_native_id);
-
-        let new_children = group.children.iter().map(|c| match c {
-            ibis_doc_model::GroupMember::Shape(id) => {
-                ibis_doc_model::GroupMember::Shape(*id_map.get(id).unwrap_or(id))
-            }
-            ibis_doc_model::GroupMember::Group(inner) => {
-                ibis_doc_model::GroupMember::Group(Box::new(Self::map_group_hierarchy(inner, id_map, used_native_ids)))
-            }
-        }).collect();
-
-        ibis_doc_model::ShapeGroup {
-            has_unmodelled_children: false,
-            soft_edge: None,
-            native_id: next_native_id.to_string(),
-            name: group.name.clone(),
-            children: new_children,
-        }
+        ibis_doc_model::shape_group::groups_of(groups, shape_ids)
     }
 
     /// All selected shapes have been checked before allocating ids or editing.
@@ -293,21 +255,8 @@ impl SlideEditor {
             self.shape_edit.pending_chain_copies = chain_copies;
         }
 
-        let mut used_ids = std::collections::HashSet::new();
-        fn collect_ids(groups: &[ibis_doc_model::ShapeGroup], out: &mut std::collections::HashSet<u32>) {
-            for g in groups {
-                if let Ok(id) = g.native_id.parse::<u32>() {
-                    out.insert(id);
-                }
-                for c in &g.children {
-                    if let ibis_doc_model::GroupMember::Group(inner) = c {
-                        collect_ids(std::slice::from_ref(inner.as_ref()), out);
-                    }
-                }
-            }
-        }
-        collect_ids(&self.slide().groups, &mut used_ids);
-        let copied_groups = groups.iter().map(|g| Self::map_group_hierarchy(g, &id_map, &mut used_ids)).collect();
+        let mut used_ids = ibis_doc_model::shape_group::native_ids(&self.slide().groups);
+        let copied_groups = groups.iter().map(|g| ibis_doc_model::shape_group::copy_group(g, &id_map, &mut used_ids)).collect();
 
         (copies, id_map, copied_groups)
     }
@@ -459,35 +408,21 @@ impl SlideEditor {
 
     /// 配置: line up the selection (one shape: on the slide).
     pub fn align_selected(&mut self, align: Align, cx: &mut Context<Self>) {
-        let shapes: Vec<(ShapeId, EmuRect, EmuRect)> = self.selected_shapes().into_iter().map(|s| (s.id, s.frame, interaction::bounds(s))).collect();
+        use ibis_doc_model::shape_arrange::{self, AlignEdge, Arranged};
+        let shapes: Vec<Arranged> = self.selected_shapes().into_iter().map(Arranged::of).collect();
         if shapes.is_empty() {
             return;
         }
-        let area = if shapes.len() == 1 || self.shape_edit.align_to_slide {
-            let size = self.presentation().size_of(self.slide());
-            EmuRect::new(0, 0, size.width, size.height)
-        } else {
-            let l = shapes.iter().map(|s| s.2.x).min().unwrap_or(0);
-            let t = shapes.iter().map(|s| s.2.y).min().unwrap_or(0);
-            let r = shapes.iter().map(|s| s.2.right()).max().unwrap_or(0);
-            let b = shapes.iter().map(|s| s.2.bottom()).max().unwrap_or(0);
-            EmuRect::new(l, t, r - l, b - t)
+        let size = self.presentation().size_of(self.slide());
+        let edge = match align {
+            Align::Left => AlignEdge::Left,
+            Align::Center => AlignEdge::Center,
+            Align::Right => AlignEdge::Right,
+            Align::Top => AlignEdge::Top,
+            Align::Middle => AlignEdge::Middle,
+            Align::Bottom => AlignEdge::Bottom,
         };
-        let slide = self.current_slide;
-        let commands = shapes
-            .into_iter()
-            .filter_map(|(id, frame, b)| {
-                let (dx, dy) = match align {
-                    Align::Left => (area.x - b.x, 0),
-                    Align::Center => (area.x + area.width / 2 - (b.x + b.width / 2), 0),
-                    Align::Right => (area.right() - b.right(), 0),
-                    Align::Top => (0, area.y - b.y),
-                    Align::Middle => (0, area.y + area.height / 2 - (b.y + b.height / 2)),
-                    Align::Bottom => (0, area.bottom() - b.bottom()),
-                };
-                ((dx, dy) != (0, 0)).then(|| Command::SetFrame { slide, frames: vec![(id, frame.translated(dx, dy))], with_attached: true })
-            })
-            .collect();
+        let commands = shape_arrange::align(self.current_slide, &shapes, edge, EmuRect::new(0, 0, size.width, size.height), self.shape_edit.align_to_slide);
         self.run(commands, cx);
     }
 
@@ -509,34 +444,12 @@ impl SlideEditor {
     }
 
     pub fn collect_group_leaves(group: &ibis_doc_model::ShapeGroup, out: &mut Vec<ShapeId>) {
-        for child in &group.children {
-            match child {
-                ibis_doc_model::GroupMember::Shape(id) => out.push(*id),
-                ibis_doc_model::GroupMember::Group(inner) => Self::collect_group_leaves(inner, out),
-            }
-        }
+        ibis_doc_model::shape_group::leaves(group, out)
     }
 
     pub fn can_group(&self) -> bool {
         let selected = self.selected_ids();
-        if selected.len() < 2 { return false; }
-        let slide = self.slide();
-        let mut top_elements = 0;
-        let mut counted_leaves = std::collections::HashSet::new();
-        for g in &slide.groups {
-            let mut leaves = Vec::new();
-            Self::collect_group_leaves(g, &mut leaves);
-            if leaves.iter().any(|id| selected.contains(id)) {
-                top_elements += 1;
-                counted_leaves.extend(leaves);
-            }
-        }
-        for id in &selected {
-            if !counted_leaves.contains(id) {
-                top_elements += 1;
-            }
-        }
-        top_elements >= 2
+        selected.len() >= 2 && ibis_doc_model::shape_group::top_level_count(self.slide(), &selected) >= 2
     }
 
     pub fn can_ungroup(&self) -> bool {
@@ -556,117 +469,10 @@ impl SlideEditor {
     /// グループ化: group the selected shapes into a new ShapeGroup.
     pub fn group_selected(&mut self, cx: &mut Context<Self>) {
         let selected_ids = self.selected_ids();
-        if selected_ids.len() < 2 { return; }
         let Some(slide) = self.presentation().slide(self.current_slide).cloned() else { return };
-
-        let mut children = Vec::new();
-        let mut remaining_groups = Vec::new();
-        let mut consumed_leaves = std::collections::HashSet::new();
-
-        for g in &slide.groups {
-            let mut leaves = Vec::new();
-            Self::collect_group_leaves(g, &mut leaves);
-            if leaves.iter().any(|id| selected_ids.contains(id)) {
-                children.push(ibis_doc_model::GroupMember::Group(Box::new(g.clone())));
-                consumed_leaves.extend(leaves);
-            } else {
-                remaining_groups.push(g.clone());
-            }
-        }
-
-        for shape in &slide.shapes {
-            if selected_ids.contains(&shape.id) && !consumed_leaves.contains(&shape.id) {
-                children.push(ibis_doc_model::GroupMember::Shape(shape.id));
-                consumed_leaves.insert(shape.id);
-            }
-        }
-
-        if children.len() < 2 { return; }
-
-        children.sort_by_key(|member| match member {
-            ibis_doc_model::GroupMember::Shape(id) => slide.shape_index(*id).unwrap_or(usize::MAX),
-            ibis_doc_model::GroupMember::Group(g) => {
-                let mut leaves = Vec::new();
-                Self::collect_group_leaves(g, &mut leaves);
-                leaves.iter().filter_map(|id| slide.shape_index(*id)).min().unwrap_or(usize::MAX)
-            }
-        });
-
-        let mut used_ids = std::collections::HashSet::new();
-        fn collect_group_ids(groups: &[ibis_doc_model::ShapeGroup], out: &mut std::collections::HashSet<u32>) {
-            for g in groups {
-                if let Ok(id) = g.native_id.parse::<u32>() {
-                    out.insert(id);
-                }
-                for c in &g.children {
-                    if let ibis_doc_model::GroupMember::Group(inner) = c {
-                        collect_group_ids(std::slice::from_ref(inner.as_ref()), out);
-                    }
-                }
-            }
-        }
-        collect_group_ids(&slide.groups, &mut used_ids);
-        let mut next_native_id = 10000u32;
-        while used_ids.contains(&next_native_id) {
-            next_native_id += 1;
-        }
-
-        let mut max_group_num = 0;
-        fn collect_names(groups: &[ibis_doc_model::ShapeGroup], max_num: &mut usize) {
-            for g in groups {
-                if let Some(num_str) = g.name.strip_prefix("グループ ").or_else(|| g.name.strip_prefix("Group ")) { // i18n-ok（保存されたグループ名の接頭辞（日本語・英語の両方を読む））
-                    if let Ok(n) = num_str.parse::<usize>() {
-                        *max_num = (*max_num).max(n);
-                    }
-                }
-                for c in &g.children {
-                    if let ibis_doc_model::GroupMember::Group(inner) = c {
-                        collect_names(std::slice::from_ref(inner.as_ref()), max_num);
-                    }
-                }
-            }
-        }
-        collect_names(&slide.groups, &mut max_group_num);
-        let new_name = crate::i18n::format("_pptx.group-n", &[("n", &(max_group_num + 1))]);
-
-        let new_group = ibis_doc_model::ShapeGroup {
-            has_unmodelled_children: false,
-            soft_edge: None,
-            native_id: next_native_id.to_string(),
-            name: new_name,
-            children,
-        };
-
-        let mut target_leaves = Vec::new();
-        Self::collect_group_leaves(&new_group, &mut target_leaves);
-        target_leaves.sort_by_key(|id| slide.shape_index(*id).unwrap_or(usize::MAX));
-
-        let mut sim_shapes: Vec<ShapeId> = slide.shapes.iter().map(|s| s.id).collect();
-        let min_idx = sim_shapes.iter().position(|id| target_leaves.contains(id)).unwrap();
-        let mut commands = Vec::new();
-
-        for (offset, &leaf_id) in target_leaves.iter().enumerate() {
-            let desired_idx = min_idx + offset;
-            let current_idx = sim_shapes.iter().position(|&id| id == leaf_id).unwrap();
-            if current_idx != desired_idx {
-                commands.push(Command::MoveShape {
-                    slide: slide.id,
-                    shape: leaf_id,
-                    index: desired_idx,
-                });
-                sim_shapes.remove(current_idx);
-                sim_shapes.insert(desired_idx, leaf_id);
-            }
-        }
-
-        remaining_groups.push(new_group);
-        commands.push(Command::SetShapeGroups {
-            slide: slide.id,
-            groups: remaining_groups,
-        });
-
-        let new_selection = target_leaves.clone();
-        if self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx) {
+        let Some(grouping) = ibis_doc_model::shape_group::group(&slide, &selected_ids, |n| crate::i18n::format("_pptx.group-n", &[("n", &n)])) else { return };
+        let new_selection = grouping.leaves.clone();
+        if self.apply_pptx_commands_checked(vec![Command::Batch(grouping.commands)], cx) {
             self.set_selection(new_selection);
         }
     }
@@ -821,7 +627,7 @@ impl SlideEditor {
     pub fn set_selected_text_wordart_style(&mut self, style_idx: usize, window: &mut Window, cx: &mut Context<Self>) {
         let preset = WORDART_PRESETS.get(style_idx).copied().unwrap_or(WORDART_PRESETS[0]);
         let shadow = preset.shadow.map(|(dir, dist, blur)| ibis_doc_model::Shadow {
-            color: Color { rgb: Rgb(0), alpha: 102 },
+            color: Color { rgb: Rgb(0), alpha: 102, theme: None },
             blur,
             distance: dist,
             direction: dir,
@@ -1160,6 +966,58 @@ impl SlideEditor {
         }
     }
 
+    /// The grid's spacing (`p:gridSpacing`), in EMU.
+    pub fn grid_spacing(&self) -> ibis_doc_model::EmuSize {
+        let s = self.presentation().view_grid.spacing;
+        ibis_doc_model::EmuSize::new(s.width.max(1), s.height.max(1))
+    }
+
+    /// A point put on the nearest grid intersection.
+    pub fn grid_snap_point(&self, p: ibis_doc_model::EmuPoint) -> ibis_doc_model::EmuPoint {
+        let s = self.grid_spacing();
+        ibis_doc_model::EmuPoint::new(crate::interaction::snap_coord(p.x, s.width), crate::interaction::snap_coord(p.y, s.height))
+    }
+
+    /// The offset `(dx, dy)` changed so that `origin` moved by it lands on the grid.
+    pub fn grid_snap_delta(&self, origin: ibis_doc_model::EmuPoint, dx: i64, dy: i64) -> (i64, i64) {
+        let s = self.grid_spacing();
+        crate::interaction::snap_delta_to_grid_xy(origin, dx, dy, s.width, s.height)
+    }
+
+    pub fn is_pptx_smart_guides_enabled(&self) -> bool {
+        !self.shape_edit.hide_smart_guides
+    }
+
+    /// The settings of the 「グリッドとガイド」 dialog (a view setting: not an edit, saved in `viewProps.xml`).
+    pub fn set_grid_and_guides(&mut self, settings: GridAndGuides, cx: &mut Context<Self>) {
+        if !self.uses_shape_edit() { return; }
+        self.shape_edit.snap_to_grid = settings.snap_to_grid;
+        self.shape_edit.snap_to_shape = settings.snap_to_objects;
+        self.shape_edit.gridlines = settings.show_grid;
+        self.shape_edit.hide_smart_guides = !settings.smart_guides;
+        self.document.presentation_mut().view_grid.spacing = settings.spacing;
+        cx.notify();
+    }
+
+    /// The flags as the file keeps them (`snapToGrid`, `snapToObjects`, `showGuides`) taken from what is on now: for the copy the saving writes.
+    pub fn view_grid_for_save(&self) -> ibis_doc_model::ViewGrid {
+        ibis_doc_model::ViewGrid {
+            spacing: self.grid_spacing(),
+            snap_to_grid: self.shape_edit.snap_to_grid,
+            snap_to_objects: self.shape_edit.snap_to_shape,
+            show_guides: self.shape_edit.guides,
+        }
+    }
+
+    /// What the file says is put on (when the file is opened).
+    pub fn take_view_grid_from_file(&mut self) {
+        if !self.uses_shape_edit() { return; }
+        let g = self.presentation().view_grid;
+        self.shape_edit.snap_to_grid = g.snap_to_grid;
+        self.shape_edit.snap_to_shape = g.snap_to_objects;
+        self.shape_edit.guides = g.show_guides;
+    }
+
     pub fn is_pptx_snap_to_shape_enabled(&self) -> bool {
         self.shape_edit.snap_to_shape
     }
@@ -1259,4 +1117,14 @@ impl SlideEditor {
         let commands = self.in_edited_cell(commands);
         self.run(commands, cx);
     }
+}
+
+/// The 「グリッドとガイド」 dialog's settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridAndGuides {
+    pub snap_to_grid: bool,
+    pub snap_to_objects: bool,
+    pub spacing: ibis_doc_model::EmuSize,
+    pub show_grid: bool,
+    pub smart_guides: bool,
 }

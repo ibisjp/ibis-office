@@ -66,6 +66,8 @@ fn open_and_save_without_an_edit_keeps_every_part() {
             e.load(loaded.presentation, shown, window, cx);
             e.set_loaded_source(loaded.source);
             e.set_file_path(Some(copy.clone()));
+            // As `file_opened` does after it: the window's snapping and guides are what the file's `viewProps.xml` says (else the save finds them changed).
+            e.take_view_grid_from_file();
         });
         s.settle();
         // Under another name: a file with a password to modify refuses to be written over.

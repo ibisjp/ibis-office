@@ -163,7 +163,9 @@ fn new_zoom_cards_are_written_as_powerpoint_writes_them() {
         let id = doc.ids().new_shape_id();
         let mut picture = Picture::new(media);
         // The outline PowerPoint draws round a zoom card (`a:ln w="3175"`, light gray).
-        picture.stroke = Some(ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xD3D3D3)), 3175));
+        let mut stroke = ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xD3D3D3)), 3175);
+        stroke.join = ibis_doc_model::LineJoin::Round; // (no join element, which reads as round: the editor's card)
+        picture.stroke = Some(stroke);
         let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
         let index = opened.presentation.slide(on).unwrap().shapes.len() + commands.iter().filter(|c| matches!(c, Command::InsertShape { .. })).count();
         commands.push(Command::InsertShape { slide: on, shapes: vec![(index, shape)] });

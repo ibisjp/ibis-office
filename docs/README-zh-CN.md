@@ -28,32 +28,33 @@ ibisOffice 是一款用于查看、编辑和保存 Word、Excel 和 PowerPoint �
 <table>
   <tr>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Windows.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Windows.zip">
         <img src="../asset/download-windows.svg" alt="Download for Windows" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Windows.zip"><code>ibisOffice-0.8.9-Windows.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Windows.zip"><code>ibisOffice-0.8.10-Windows.zip</code></a><br>
       <small>Windows 10 / 11（64 位）</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-macOS.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-macOS.zip">
         <img src="../asset/download-mac.svg" alt="Download for Mac" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-macOS.zip"><code>ibisOffice-0.8.9-macOS.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-macOS.zip"><code>ibisOffice-0.8.10-macOS.zip</code></a><br>
       <small>macOS 11 或更高版本（Apple 芯片）</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Linux.AppImage">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Linux.AppImage">
         <img src="../asset/download-linux.svg" alt="Download for Linux" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Linux.AppImage"><code>ibisOffice-0.8.9-Linux.AppImage</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Linux.AppImage"><code>ibisOffice-0.8.10-Linux.AppImage</code></a><br>
       <small>Linux x86_64</small>
     </td>
   </tr>
 </table>
 
-- **Windows**：下载并解压 `ibisOffice-0.8.9-Windows.zip`，然后运行 `ibisOffice` 文件夹中的 `ibisOffice.exe`。
-- **macOS**：下载并解压 `ibisOffice-0.8.9-macOS.zip`，然后将 `ibisOffice.app` 移动到“应用程序”文件夹。
-- **Linux**：下载 `ibisOffice-0.8.9-Linux.AppImage`，赋予其可执行权限（`chmod +x`），然后双击运行。可在主流桌面 Linux 发行版上运行（glibc 2.31 或更高版本：Ubuntu、Debian、Fedora、Arch Linux 等）。无需安装，也不需要 FUSE。
+- **Windows**：下载并解压 `ibisOffice-0.8.10-Windows.zip`，然后运行 `ibisOffice` 文件夹中的 `ibisOffice.exe`。
+- **macOS**：下载并解压 `ibisOffice-0.8.10-macOS.zip`，然后将 `ibisOffice.app` 移动到“应用程序”文件夹。
+- **Linux**：下载 `ibisOffice-0.8.10-Linux.AppImage`，赋予其可执行权限（`chmod +x`），然后双击运行。可在主流桌面 Linux 发行版上运行（glibc 2.31 或更高版本：Ubuntu、Debian、Fedora、Arch Linux 等）。无需安装，也不需要 FUSE。
+  在 NixOS 上，请参见 [ibisOffice on NixOS](nixos.md)（英文）。
 - **试用网页版**：在浏览器中打开 [playground](https://ibisjp.github.io/ibis-office/)——无需安装（需要支持 WebGPU 的浏览器）。可以直接打开示例 Word、Excel 和 PowerPoint 文档立即试用。
 - **更新日志**：发行说明和近期更新请见 [CHANGELOG.md](../CHANGELOG.md)。
 - **观看视频**：ibisOffice 的介绍视频（YouTube）。
@@ -188,7 +189,7 @@ npm install @ibisjp/ibis-office
 
 软件包 [`@ibisjp/ibis-office`](https://www.npmjs.com/package/@ibisjp/ibis-office) 包含编辑器以及您的页面所导入的加载器。使用 `npx ibis-office-copy public/ibisoffice` 将编辑器复制到服务器提供的文件夹中，使用 `npm update` 获取新版本。不使用 npm 时，请使用下面的压缩包。
 
-网页版是一组静态文件。请下载 [`ibisOffice-0.8.9-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip)（[v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9) 的网页版），用 [SHA-256](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip.sha256) 校验后，放到您自己的 Web 服务器上。您的页面用 `iframe` 加载它，并向 ibisOffice 提供几个函数（列出、打开和保存文件）；文件、登录和权限仍由您的系统管理，编辑器在访问者的浏览器中运行。
+网页版是一组静态文件。请下载 [`ibisOffice-0.8.10-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.zip)（[v0.8.10](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.10) 的网页版），用 [SHA-256](https://github.com/ibisjp/ibis-office/releases/download/v0.8.10/ibisOffice-0.8.10-Web.zip.sha256) 校验后，放到您自己的 Web 服务器上。您的页面用 `iframe` 加载它，并向 ibisOffice 提供几个函数（列出、打开和保存文件）；文件、登录和权限仍由您的系统管理，编辑器在访问者的浏览器中运行。
 
 下载与校验、最小化部署（文件放在哪里、服务器设置、打开文档的最小页面）以及全部选项、函数和事件，请见[嵌入网页版](web-embedding.md)（英文）。
 

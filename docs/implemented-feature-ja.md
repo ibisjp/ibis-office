@@ -521,6 +521,41 @@ ibisOffice が実装している Word (.docx)・Excel (.xlsx)・PowerPoint (.ppt
 | 509 | docx: 最近使ったファイルの「…」メニューから履歴だけを削除 | <nobr>完了</nobr> |
 | 510 | docx: 色選択ダイアログ（色相環） | <nobr>完了</nobr> |
 | 511 | docx: 数値欄の上下矢印で単位を保ったまま増減 | <nobr>完了</nobr> |
+| 512 | docx: 配色「Office」（Microsoft 365 の既定値）と Office 2013 - 2022 の配色、パレットがファイルのテーマに従う | <nobr>完了</nobr> |
+| 513 | docx: MCP の版つきの読み取りと編集ツールの拡充（revision・state・expected_revision） | <nobr>完了</nobr> |
+| 514 | docx: 校閲 > 個人情報の消し忘れの検査（メモ・コメント・非表示の内容を取り除く） | <nobr>完了</nobr> |
+| 515 | docx: タッチ画面：1 本指で選択・2 本指でスクロール、指のスクロールの慣性と端のバウンド | <nobr>完了</nobr> |
+| 516 | docx: タッチ画面：指の長押しで右クリックのメニュー | <nobr>完了</nobr> |
+| 517 | docx: ソフトキーボードの上のツールバー（編集する場所に応じたボタン） | <nobr>完了</nobr> |
+| 518 | docx: 幅の狭いタッチ画面の窓で、メニュー バーとツールバーを下に置く | <nobr>完了</nobr> |
+| 519 | docx: iOS のソフトキーボードでの日本語の変換中の文字と絵文字の入力 | <nobr>完了</nobr> |
+| 520 | docx: 章番号つきのページ番号と見出しの一覧 | <nobr>完了</nobr> |
+| 521 | docx: スタイルの変更で日本語用・英数字用の書体を選ぶ（テーマ書体つき） | <nobr>完了</nobr> |
+| 522 | docx: 縦書きの脚注（本文の下・漢数字・行グリッド） | <nobr>完了</nobr> |
+| 523 | docx: 文字カウントを Microsoft Word の数え方に合わせる（行内改行・空の段落・単語・注・テキスト ボックス） | <nobr>完了</nobr> |
+| 524 | docx: 原稿用紙の設定（マス目・下線・外枠・罫線の色） | <nobr>完了</nobr> |
+| 525 | docx: 表示 > グリッド線が文字の向き（横書き・縦書き）に沿う、縦書きの綴じしろ | <nobr>完了</nobr> |
+| 526 | docx: フォーム入力パネル（タグつきの項目を一括入力、CSV・YAML の読み書き） | <nobr>完了</nobr> |
+| 527 | docx: 絵文字の並び（家族・旗・肌の色・キーキャップ）を 1 つとして扱うカーソル移動・Backspace・Delete | <nobr>完了</nobr> |
+| 528 | docx: 文書最後の段落の改ページの後に新しいページを作らない | <nobr>完了</nobr> |
+| 529 | docx: 表の行がページ末で分かれるときの罫線とセルの縦位置 | <nobr>一部</nobr> |
+| 530 | docx: ルビの行の高さと、ルビつきの文字の傍点 | <nobr>一部</nobr> |
+| 531 | docx: 囲み線の行の高さと、書体ごとの下線の位置 | <nobr>一部</nobr> |
+| 532 | docx: 図の横の行での約物の詰め | <nobr>一部</nobr> |
+| 533 | docx: 互換性 14 の両端揃えでの約物の詰め | <nobr>一部</nobr> |
+| 534 | docx: 文字グリッド（linesAndChars・snapToChars）の 1 行の長さと文字の位置 | <nobr>一部</nobr> |
+| 535 | docx: 空白（U+2000 から U+200A など）と欧文・記号の字の幅を書体の表から求める | <nobr>一部</nobr> |
+| 536 | docx: 文書内の SmartArt を描画部分から読んで配置する | <nobr>一部</nobr> |
+| 537 | docx: OpenDocument テキスト（.odt）の読み込み（ヘッダー・フッター・タブ位置・セクション・文字位置・図形） | <nobr>一部</nobr> |
+| 538 | docx: 一太郎（.jtd）の読み取り専用の表示と docx への変換 | <nobr>一部</nobr> |
+| 539 | docx: DocuWorks（.xdw・.xbd）の読み取り | <nobr>一部</nobr> |
+| 540 | docx: Markdown の PlantUML（plantuml・puml のコードブロックを図として描く） | <nobr>完了</nobr> |
+| 541 | docx: PDF・XPS・OFD の Markdown への書き出し（ページの図形つき）と EMF・WMF 画像の保持 | <nobr>完了</nobr> |
+| 542 | docx: PDF の表示：軸・放射のグラデーションとソフトマスク | <nobr>完了</nobr> |
+| 543 | docx: 法令の新旧対照表と法案の五段表（Lawtext・法令 XML から）、Lawtext・法令標準 XML で保存 | <nobr>一部</nobr> |
+| 544 | docx: MCP を HTTP で使う（--mcp --http、ChatGPT の Secure MCP Tunnel） | <nobr>完了</nobr> |
+| 545 | docx: Web 版：明朝体の代わりの書体に明朝、ゴシック体にゴシックを使う | <nobr>完了</nobr> |
+| 546 | docx: 描画の速さ（グラデーションの帯・設定・行の流れ・メニュー バーの幅のキャッシュ） | <nobr>完了</nobr> |
 
 ### xlsx
 
@@ -1472,6 +1507,33 @@ ibisOffice が実装している Word (.docx)・Excel (.xlsx)・PowerPoint (.ppt
 | 944 | xlsx: 最近使ったファイルの「…」メニューから履歴だけを削除 | <nobr>完了</nobr> |
 | 945 | xlsx: 色選択ダイアログ（色相環） | <nobr>完了</nobr> |
 | 946 | xlsx: 数値欄の上下矢印で単位を保ったまま増減 | <nobr>完了</nobr> |
+| 947 | xlsx: 配色「Office」（Microsoft 365 の既定値）と Office 2013 - 2022 の配色、パレットがファイルのテーマに従う | <nobr>完了</nobr> |
+| 948 | xlsx: MCP の版つきの読み取りと編集ツールの拡充（revision・state・expected_revision） | <nobr>完了</nobr> |
+| 949 | xlsx: 校閲 > 個人情報の消し忘れの検査（メモ・コメント・非表示の内容を取り除く） | <nobr>完了</nobr> |
+| 950 | xlsx: タッチ画面：1 本指で選択・2 本指でスクロール、指のスクロールの慣性と端のバウンド | <nobr>完了</nobr> |
+| 951 | xlsx: タッチ画面：指の長押しで右クリックのメニュー | <nobr>完了</nobr> |
+| 952 | xlsx: ソフトキーボードの上のツールバー（編集する場所に応じたボタン） | <nobr>完了</nobr> |
+| 953 | xlsx: 幅の狭いタッチ画面の窓で、メニュー バーとツールバーを下に置く | <nobr>完了</nobr> |
+| 954 | xlsx: iOS のソフトキーボードでの日本語の変換中の文字と絵文字の入力 | <nobr>完了</nobr> |
+| 955 | xlsx: 表の下端への行の追加（右下のセルで Tab・サイズ変更のハンドル・貼り付け） | <nobr>完了</nobr> |
+| 956 | xlsx: グループ化（アウトライン）：8 レベルの入れ子・折りたたみの保存・集計行の位置・ボタンの大きさ | <nobr>完了</nobr> |
+| 957 | xlsx: リストの入力規則：空白を無視、拒否した入力で元の値を保つ、複数セルの相対参照 | <nobr>完了</nobr> |
+| 958 | xlsx: 保護したシートで隠した数式を見せない（編集・コピー・MCP） | <nobr>完了</nobr> |
+| 959 | xlsx: シートをまとめて選んだときの挿入メニューのグレー表示と列・行の自動調整 | <nobr>完了</nobr> |
+| 960 | xlsx: 日付の入力：2 桁の年（1930 から 2029）、月と年（10/2032） | <nobr>完了</nobr> |
+| 961 | xlsx: 地域ごとの表示形式 [$-locale]（ko-KR・ar-SA・th-TH など）と Power Query の日付・datetimezone | <nobr>完了</nobr> |
+| 962 | xlsx: 正規表現の関数（REGEXTEST・REGEXEXTRACT・REGEXREPLACE）の先読み・後読み・後方参照 | <nobr>完了</nobr> |
+| 963 | xlsx: IBIS.FIELDMATCH・IBIS.RECORDMATCH（氏名・住所・生年月日・番号などの照合） | <nobr>完了</nobr> |
+| 964 | xlsx: 制限つきのグリッド（xlsx.grid.limited） | <nobr>完了</nobr> |
+| 965 | xlsx: CSV・TSV・JSON・JSON Lines・Parquet・Arrow・Avro・SQLite をクエリとして読み込み、更新 | <nobr>完了</nobr> |
+| 966 | xlsx: 回転した文字の描画と印刷（Excel の枠・余白・基準線） | <nobr>一部</nobr> |
+| 967 | xlsx: 図形・図の印刷位置（twoCellAnchor の左上から右下のセルまで） | <nobr>一部</nobr> |
+| 968 | xlsx: 絵文字の並びを 1 つとして扱うセルの編集 | <nobr>完了</nobr> |
+| 969 | xlsx: 数式バーを画面の下に置く（モバイル） | <nobr>完了</nobr> |
+| 970 | xlsx: シートのタブを指の長押しで並べ替える（iOS） | <nobr>一部</nobr> |
+| 971 | xlsx: OpenDocument スプレッドシート（.ods）の読み込み（グループ・数値書式・グラフ・図形） | <nobr>一部</nobr> |
+| 972 | xlsx: UKE・DPC のレセプトのファイルをシートとして開く | <nobr>一部</nobr> |
+| 973 | xlsx: 描画の速さ（シートの文字列・見出しのキャッシュ） | <nobr>完了</nobr> |
 
 ### pptx
 
@@ -1852,3 +1914,22 @@ ibisOffice が実装している Word (.docx)・Excel (.xlsx)・PowerPoint (.ppt
 | 373 | pptx: 最近使ったファイルの「…」メニューから履歴だけを削除 | <nobr>完了</nobr> |
 | 374 | pptx: 色選択ダイアログ（色相環） | <nobr>完了</nobr> |
 | 375 | pptx: 数値欄の上下矢印で単位を保ったまま増減 | <nobr>完了</nobr> |
+| 376 | pptx: 配色「Office」（Microsoft 365 の既定値）と Office 2013 - 2022 の配色、パレットがファイルのテーマに従う | <nobr>完了</nobr> |
+| 377 | pptx: MCP の版つきの読み取りと編集ツールの拡充（revision・state・expected_revision） | <nobr>完了</nobr> |
+| 378 | pptx: 校閲 > 個人情報の消し忘れの検査（メモ・コメント・非表示の内容を取り除く） | <nobr>完了</nobr> |
+| 379 | pptx: タッチ画面：1 本指で選択・2 本指でスクロール、指のスクロールの慣性と端のバウンド | <nobr>完了</nobr> |
+| 380 | pptx: タッチ画面：指の長押しで右クリックのメニュー | <nobr>完了</nobr> |
+| 381 | pptx: ソフトキーボードの上のツールバー（編集する場所に応じたボタン） | <nobr>完了</nobr> |
+| 382 | pptx: 幅の狭いタッチ画面の窓で、メニュー バーとツールバーを下に置く | <nobr>完了</nobr> |
+| 383 | pptx: iOS のソフトキーボードでの日本語の変換中の文字と絵文字の入力 | <nobr>完了</nobr> |
+| 384 | pptx: グリッドとガイドのダイアログ（間隔・グリッドに合わせる）と既定の図形・線・テキスト ボックス | <nobr>完了</nobr> |
+| 385 | pptx: 配布資料の用紙指定（--print-paper）と用紙に合わせた配置、グラフの白黒印刷 | <nobr>完了</nobr> |
+| 386 | pptx: 画面切り替えとアニメーションを Microsoft PowerPoint の記録に合わせる（クラッシュ・きらめき・ワープ・ズーム・ページめくりなど） | <nobr>一部</nobr> |
+| 387 | pptx: アニメーションは画面切り替えの後に始まる | <nobr>完了</nobr> |
+| 388 | pptx: 文字・塗りつぶし・リンクの色がテーマの参照を保つ | <nobr>完了</nobr> |
+| 389 | pptx: 図形のグループ化・コピー・整列の MCP ツール | <nobr>完了</nobr> |
+| 390 | pptx: スライド ショー中の Ctrl キー（ペン・レーザー・グリッド・ズーム）を Windows で使う | <nobr>完了</nobr> |
+| 391 | pptx: 文字書式のコピーと貼り付けのショートカット（Alt+Ctrl+C・Alt+Ctrl+V） | <nobr>完了</nobr> |
+| 392 | pptx: 狭い窓でスライドの一覧を隠し、スライド ショーのボタンを丸くする | <nobr>完了</nobr> |
+| 393 | pptx: OpenDocument プレゼンテーション（.odp）の読み込み（3-D 円グラフ・ページへのリンク・行間・タブ） | <nobr>一部</nobr> |
+| 394 | pptx: Web ページの書き出しでグラフと SmartArt を画像として描く | <nobr>完了</nobr> |

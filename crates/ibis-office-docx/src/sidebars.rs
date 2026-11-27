@@ -24,6 +24,7 @@ pub(crate) const SIDEBARS: &[SidebarDef] = &[
     sidebar_def!("sidebar.find", "sidebar.find", Right, G::Document, Pane, panels: &["find_panel"], cmd: Some("edit.find-replace"), open: None, start: true, available: always, key: Some("⌘F"), toolbar: None),
     sidebar_def!("sidebar.selection", "sidebar.selection", Right, G::Document, Pane, panels: &["selection_pane_panel"], cmd: Some("docx.selection-pane"), open: None, start: false, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.quick-parts", "sidebar.quick-parts", Right, G::Document, Pane, panels: &["quick_parts_panel"], cmd: Some("docx.quick-parts.panel"), open: None, start: false, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.form-fill", "sidebar.form-fill", Right, G::Document, Pane, panels: &["form_fill_panel"], cmd: Some("docx.show-form-fill"), open: None, start: false, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.merge", "sidebar.merge", Right, G::Document, Pane, panels: &["merge_panel"], cmd: None, open: None, start: false, available: always, key: None, toolbar: None),
     // Right pane: review.
     sidebar_def!("sidebar.spelling", "sidebar.spelling", Right, G::Review, Pane, panels: &["doc_spelling_panel"], cmd: None, open: Some(by_format), start: true, available: always, key: None, toolbar: None),

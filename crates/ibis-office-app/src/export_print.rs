@@ -42,9 +42,39 @@ fn place_box_height(per_page: usize) -> Option<f32> {
     }
 }
 
-/// Whether a place takes the snap of [`snap_scale`] (1, 2 and 3 to a page: the rule held for 130 sizes; not measured for the others).
+/// Whether a place takes the snap of [`snap_scale`] (1, 2 and 3 to a page: the rule held for 130 sizes; 6 to a page: a 4:3 slide on A3 is 360 x 270 pt, half its
+/// size, while the same slide on the other papers is not near 50 %, `2026-11-23-225-paper-sizes-result.md` 1・2 節; not measured for the others).
 fn snaps(per_page: usize) -> bool {
-    matches!(per_page, 1..=3)
+    matches!(per_page, 1..=3 | 6)
+}
+
+/// PowerPoint's places for 1, 2, 3 and 6 slides to a landscape handout page, as [`powerpoint_places`] gives them for a portrait one: the box's width as a fraction of
+/// the page, the centres of the columns (from the left) and of the rows (from the bottom). The box is the 4:3 one of that width, except 1 to a page (0.8 of the
+/// page's height). Measured on Microsoft 365's PDFs on A4 of 16:9 and 4:3 decks (`tasks/doc/requests/2026-11-23-225-paper-sizes-result.md` 3 節: 2 across in a row, 3 across,
+/// 6 as 3 by 2, 1 in the middle; every place within 0.25 unit of these). 4 and 9 are measured too (below). The others (8, 16: PowerPoint has no such layouts) are shared out evenly.
+fn landscape_places(per_page: usize) -> Option<(f32, &'static [f32], &'static [f32])> {
+    const COLUMN_THREE: &[f32] = &[0.2, 0.5, 0.8];
+    match per_page {
+        1 => Some((0.86, &[0.5], &[0.5])),
+        2 => Some((0.41, &[0.275, 0.725], &[0.5])),
+        3 => Some((0.26, COLUMN_THREE, &[0.7175])),
+        6 => Some((0.26, COLUMN_THREE, &[0.7175, 0.2825])),
+        // 4 and 9 to a landscape page: the places of the portrait page (2 by 2, 3 by 3), measured on A4 (`2026-11-25-225-more-papers-result.md`: every place within 0.3 unit).
+        4 => Some((0.41, &[0.275, 0.725], &[0.7175, 0.2825])),
+        9 => Some((0.26, COLUMN_THREE, &[0.79, 0.5, 0.21])),
+        _ => None,
+    }
+}
+
+/// The height of the box a slide goes in at a place of a landscape handout page, as a fraction of the page's height, where it is not the 4:3 box of the place's
+/// width (1 to a page 0.8, as portrait; 4 to a page 0.365, as 2 to a portrait page; 9 to a page 0.22, as 3 and 6 to a portrait page; measured on A4 with 16:9 and 4:3 decks).
+fn landscape_box_height(per_page: usize) -> Option<f32> {
+    match per_page {
+        1 => Some(0.8),
+        4 => Some(0.365),
+        9 => Some(0.22),
+        _ => None,
+    }
 }
 
 /// PowerPoint's scale of a slide that fits its box at `fit` (the box's width or height over the slide's): a slide near its own size or half of
@@ -110,6 +140,10 @@ pub struct HandoutMarks {
     pub slide_numbers: Vec<usize>,
     /// The size of the file's slides in points (their proportions alone when `None`).
     pub slide_size_pt: Option<(f32, f32)>,
+    /// The paper the page is the size of (`--print-paper` with the page fitted to it, #225): PowerPoint puts a handout's frames where its places on the
+    /// page say, with the page as large as the paper (a portrait page 540 x 720 pt grown to A4 is stretched across and down by different factors, so the
+    /// frames' places are fractions of the paper, not of a 540 x 720 pt page scaled by one factor). The page is the paper's size, turned on its side with `landscape`.
+    pub on_paper: Option<Paper>,
 }
 /// The notes of a slide as a printed page carries them.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -163,6 +197,68 @@ const MARGIN: f32 = 36.0;
 pub(crate) const PX_PER_PT: f32 = 2.0;
 /// The width of the frame PowerPoint draws ("Frame slides"): 0.96 pt (1.28 of the units of its print PDF, which are 0.75 pt), measured on PrintOut PDFs of slides, notes pages and handouts with and without the option (`tasks/doc/requests/2026-11-18-225-frame.md`).
 pub(crate) const FRAME_PT: f32 = 0.96;
+
+/// A paper the pages are printed on (`--print-paper`, #225): its short and long sides in points. Microsoft Print to PDF (PowerPoint's printer) gives a page whole pixels of
+/// its 600 dpi (0.12 pt): A4 4961 x 7016 pixels, 595.32 x 841.92 pt (`tasks/doc/design/225-print-paper.md`); the other papers are rounded to whole pixels the same way
+/// (only A4 was measured).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Paper {
+    pub short: f32,
+    pub long: f32,
+}
+
+/// A printed page on a paper: the page's size, and how the slide's page (the picture of a slide, a notes page or a handout page) is put on it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaperFit {
+    /// The paper's size in points, in the page's orientation.
+    pub page_pt: (f32, f32),
+    /// Points of the paper to a point of the page drawn.
+    pub scale: f32,
+    /// The paper's point of the drawn page's top left corner.
+    pub shift: (f32, f32),
+}
+
+impl Paper {
+    /// The size from millimetres, in whole pixels of the printer's 600 dpi.
+    fn from_mm(a: f32, b: f32) -> Self {
+        let pt = |mm: f32| (mm / 25.4 * 600.0).round() * 0.12;
+        let (a, b) = (pt(a), pt(b));
+        Paper { short: a.min(b), long: a.max(b) }
+    }
+
+    /// `a3`, `a4`, `a5`, `b4`, `b5` (JIS), `letter`, `legal`, `tabloid` or `<width>x<height>mm`.
+    pub fn parse(text: &str) -> Result<Paper, String> {
+        let name = text.trim().to_ascii_lowercase();
+        let paper = match name.as_str() {
+            "a3" => Self::from_mm(297.0, 420.0),
+            "a4" => Self::from_mm(210.0, 297.0),
+            "a5" => Self::from_mm(148.0, 210.0),
+            "b4" => Self::from_mm(257.0, 364.0),
+            "b5" => Self::from_mm(182.0, 257.0),
+            "letter" => Paper { short: 612.0, long: 792.0 },
+            "legal" => Paper { short: 612.0, long: 1008.0 },
+            "tabloid" => Paper { short: 792.0, long: 1224.0 },
+            _ => {
+                let custom = name.strip_suffix("mm").and_then(|n| n.split_once('x')).and_then(|(w, h)| Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?)));
+                match custom {
+                    Some((w, h)) if w >= 10.0 && h >= 10.0 && w <= 5000.0 && h <= 5000.0 => Self::from_mm(w, h),
+                    _ => return Err(format!("--print-paper takes a3, a4, a5, b4, b5, letter, legal, tabloid or <width>x<height>mm: {text}")),
+                }
+            }
+        };
+        Ok(paper)
+    }
+
+    /// Put a page of `page` points on this paper, as PowerPoint prints (`tasks/doc/requests/2026-11-23-225-patterns-7plus-result.md` 3 節): the paper is landscape when
+    /// the page is as wide as it is high (a notes page and a portrait handout stay portrait), the page is scaled to the smaller of the two ratios when it fits the paper
+    /// (not at all when it does not: 100 %), and put in the middle.
+    pub fn fit(&self, page: (f32, f32), fit: bool) -> PaperFit {
+        let (w, h) = if page.0 >= page.1 { (self.long, self.short) } else { (self.short, self.long) };
+        let scale = if fit && page.0 > 0.0 && page.1 > 0.0 { (w / page.0).min(h / page.1) } else { 1.0 };
+        PaperFit { page_pt: (w, h), scale, shift: ((w - page.0 * scale) / 2.0, (h - page.1 * scale) / 2.0) }
+    }
+}
+
 
 /// What a colour is for: PowerPoint prints the grey and the black-and-white pages by the kind of thing, not by one rule for every colour (Windows
 /// PowerPoint's `PrintOut` PDFs, `tasks/doc/requests/2026-11-16-225-print-color-result.md`).
@@ -257,9 +353,14 @@ pub fn handouts(slides: &[RgbaImage], per_page: u8, framed: bool, landscape: boo
 pub(crate) fn handouts_on<C: Canvas>(sizes: &[(f32, f32)], per_page: u8, framed: bool, landscape: bool, marks: &HandoutMarks, layer: &mut dyn TextLayer, blank: &mut dyn FnMut((f32, f32)) -> C) -> Vec<(C, (f32, f32))> {
     let (columns, rows) = handout_grid(per_page, landscape);
     let per_page = columns * rows;
-    let (page_w, page_h) = if landscape { (page_of(marks).1, page_of(marks).0) } else { page_of(marks) };
-    // PowerPoint's own places (portrait, 1 to 9); anything else (on its side, 8 or 16) is shared out evenly.
-    let places = if landscape { None } else { powerpoint_places(per_page) };
+    let (page_w, page_h) = match marks.on_paper {
+        Some(paper) if landscape => (paper.long, paper.short),
+        Some(paper) => (paper.short, paper.long),
+        None if landscape => (page_of(marks).1, page_of(marks).0),
+        None => page_of(marks),
+    };
+    // PowerPoint's own places (portrait 1 to 9, landscape 1, 2, 3 and 6); anything else (on its side, 4, 8, 9 or 16) is shared out evenly.
+    let places = if landscape { landscape_places(per_page) } else { powerpoint_places(per_page) };
     let cell_w = (page_w - 2.0 * MARGIN) / columns as f32;
     let cell_h = (page_h - 2.0 * MARGIN) / rows as f32;
     // Room between slides.
@@ -275,7 +376,7 @@ pub(crate) fn handouts_on<C: Canvas>(sizes: &[(f32, f32)], per_page: u8, framed:
                 let (w, h, x, y) = if let Some((width, xs, ys)) = places {
                     // As large as fits the place's box, in the middle of its place.
                     let box_w = width * page_w;
-                    let box_h = place_box_height(per_page).map_or(box_w * 0.75, |f| f * page_h);
+                    let box_h = if landscape { landscape_box_height(per_page) } else { place_box_height(per_page) }.map_or(box_w * 0.75, |f| f * page_h);
                     // The slide's size in points (the file's), for the snap below; the proportions of `sizes` if it is not known.
                     let pt = marks.slide_size_pt.filter(|_| sizes.iter().all(|s| *s == sizes[0])).unwrap_or(slide);
                     let fit = (box_w / pt.0.max(1.0)).min(box_h / pt.1.max(1.0));
@@ -298,7 +399,7 @@ pub(crate) fn handouts_on<C: Canvas>(sizes: &[(f32, f32)], per_page: u8, framed:
                     let baseline = y.round() + h as f32 + SLIDE_NUMBER_BASELINE_PT * PX_PER_PT;
                     draw_text_on_baseline(layer, &mut page, PX_PER_PT, &number.to_string(), x.round(), baseline, size, Some((38, 38, 38)));
                 }
-                if per_page == 3 && places.is_some() {
+                if per_page == 3 && places.is_some() && !landscape {
                     // Lines for notes to the right of each slide, as many as its height takes, from just under its top.
                     let pitch = MEMO_PITCH_PT * page_w / HANDOUT_PAGE.0 * PX_PER_PT;
                     let left = x.round() + w as f32 + 0.04 * page_w * PX_PER_PT;
@@ -504,7 +605,7 @@ impl Canvas for VectorCanvas<'_> {
     fn put_slide(&mut self, index: usize, at: (f32, f32), (w, h): (u32, u32), framed: bool) {
         let Some(slide) = self.slides.get(index) else { return };
         let (x, y, w, h) = (at.0 / PX_PER_PT, at.1 / PX_PER_PT, w as f32 / PX_PER_PT, h as f32 / PX_PER_PT);
-        self.layers.push(crate::pdf_vector::Layer { records: slide.records.clone(), scale_factor: slide.density, k: w / slide.width.max(1.0), origin: (x, y), clip: Some((x, y, w, h)), hairline: slide.hairline.clone(), charts: slide.charts.clone() });
+        self.layers.push(crate::pdf_vector::Layer { records: slide.records.clone(), scale_factor: slide.density, k: w / slide.width.max(1.0), origin: (x, y), clip: Some((x, y, w, h)), hairline: slide.hairline.clone(), charts: slide.charts.clone(), fixed_lines: false });
         if framed {
             // PowerPoint's frame: 0.96 pt, its outer edge at the slide's (the stroke's middle half of it in).
             let line = FRAME_PT;
@@ -519,7 +620,7 @@ impl Canvas for VectorCanvas<'_> {
                 corner_radii: gpui_kit::Corners::default(),
                 border_style: gpui_kit::BorderStyle::Solid,
             };
-            self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new() });
+            self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new(), fixed_lines: true });
         }
     }
 
@@ -543,7 +644,7 @@ impl Canvas for VectorCanvas<'_> {
             .cloned()
             .collect();
         let clip = (x, y, *width as f32 / PX_PER_PT, (rows.1 - rows.0) as f32 / PX_PER_PT);
-        self.layers.push(crate::pdf_vector::Layer { records, scale_factor: *density, k, origin: (x, y - rows.0 as f32 / PX_PER_PT), clip: Some(clip), hairline: Vec::new(), charts: Vec::new() });
+        self.layers.push(crate::pdf_vector::Layer { records, scale_factor: *density, k, origin: (x, y - rows.0 as f32 / PX_PER_PT), clip: Some(clip), hairline: Vec::new(), charts: Vec::new(), fixed_lines: false });
     }
 
     fn put_frame(&mut self, rect: (f32, f32, f32, f32), line: f32) {
@@ -557,7 +658,7 @@ impl Canvas for VectorCanvas<'_> {
             corner_radii: gpui_kit::Corners::default(),
             border_style: gpui_kit::BorderStyle::Solid,
         };
-        self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new() });
+        self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new(), fixed_lines: true });
     }
 
     fn put_rule(&mut self, at: (f32, f32), len: f32, thickness: f32) {
@@ -572,7 +673,7 @@ impl Canvas for VectorCanvas<'_> {
             corner_radii: gpui_kit::Corners::default(),
             border_style: gpui_kit::BorderStyle::Solid,
         };
-        self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new() });
+        self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new(), fixed_lines: false });
     }
 }
 
@@ -640,7 +741,7 @@ fn draw_marks(layer: &mut dyn TextLayer, page: &mut dyn Canvas, marks: &HandoutM
     }
 }
 
-#[cfg(any(all(test, windows), all(any(target_os = "macos", target_os = "linux"), feature = "scenarios")))]
+#[cfg(any(all(test, windows), all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios")))]
 #[path = "tests/pptx/export_print_tests.rs"]
 pub(crate) mod export_print_tests;
 
@@ -785,6 +886,51 @@ mod tests {
             }
             let got = ((x1 + 1 - x0) as f32, (y1 + 1 - y0) as f32);
             assert!(near(got.0, w) && near(got.1, h), "{sw}x{sh} to {n} a page: {got:?}");
+        }
+    }
+
+    /// #225: a handout on A4 (Microsoft 365's PDFs, `2026-11-23-225-paper-sizes-result.md`; the numbers are its units, 0.75 pt, times 0.75): the frames are put by the places'
+    /// fractions of the paper, in landscape too (2 across, 3 across, 6 as 3 by 2, 1 in the middle), and a 4:3 slide that is near half its size snaps to half (6 to a page on A3).
+    #[test]
+    fn handouts_on_a_paper_are_put_by_fractions_of_the_paper() {
+        let near = |got: f32, u: f32| (got / PX_PER_PT - u * 0.75).abs() <= 0.2 * 0.75 + 0.5 / PX_PER_PT;
+        // (paper, landscape, slide size in pt, slides to a page, first frame (x, y, w, h) in units, last frame of the page's first)
+        let cases = [
+            ("a4", false, (960.0, 540.0), 6u8, (55.52, 144.16, 325.44, 183.04)),
+            ("a4", false, (720.0, 540.0), 6, (55.52, 113.60, 325.44, 244.0)),
+            ("a4", true, (960.0, 540.0), 2, (78.56, 267.52, 460.32, 258.88)),
+            ("a4", true, (720.0, 540.0), 2, (68.64, 216.80, 480.0, 360.0)),
+            ("a4", true, (960.0, 540.0), 3, (78.56, 142.24, 291.84, 164.0)),
+            ("a4", true, (720.0, 540.0), 6, (78.56, 114.88, 291.84, 218.72)),
+            ("a4", true, (960.0, 540.0), 1, (78.56, 125.28, 965.44, 543.04)),
+            ("a4", true, (720.0, 540.0), 1, (137.76, 79.36, 846.88, 635.2)),
+            ("a4", true, (960.0, 540.0), 4, (78.56, 94.88, 460.32, 258.72)),
+            ("a4", true, (720.0, 540.0), 4, (115.52, 79.36, 386.24, 289.76)),
+            ("a4", true, (960.0, 540.0), 9, (78.56, 84.64, 291.84, 164.0)),
+            ("a4", true, (720.0, 540.0), 9, (108.00, 79.36, 232.80, 174.72)),
+            ("a4", false, (720.0, 540.0), 4, (55.52, 195.20, 325.44, 244.0)),
+            ("a4", false, (960.0, 540.0), 9, (55.52, 177.60, 206.24, 116.0)),
+            ("a3", false, (720.0, 540.0), 6, (68.64, 153.28, 480.0, 360.0)),
+            ("b4", false, (720.0, 540.0), 6, (68.00, 139.52, 398.24, 298.56)),
+            ("letter", false, (720.0, 540.0), 6, (69.60, 105.60, 309.60, 232.16)),
+        ];
+        for (name, landscape, (sw, sh), n, (x, y, w, h)) in cases {
+            let paper = Paper::parse(name).unwrap();
+            let slides: Vec<RgbaImage> = (0..2).map(|_| solid((sw / 4.0) as u32, (sh / 4.0) as u32, [200, 0, 0])).collect();
+            let marks = HandoutMarks { slide_size_pt: Some((sw, sh)), on_paper: Some(paper), ..Default::default() };
+            let page = &handouts(&slides, n, false, landscape, &marks, &mut NoText)[0];
+            let (page_w, page_h) = if landscape { (paper.long, paper.short) } else { (paper.short, paper.long) };
+            assert_eq!(page.1, (page_w, page_h), "{name} {n}");
+            // The first slide's red: the box it is in (the second slide is far from the first's corner, or on another row or column).
+            let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+            let (reach_x, reach_y) = (((x + w) * 0.75 + 1.0) * PX_PER_PT, ((y + h) * 0.75 + 1.0) * PX_PER_PT);
+            for (px, py, q) in page.0.enumerate_pixels() {
+                if q[0] == 200 && q[1] == 0 && (px as f32) < reach_x && (py as f32) < reach_y {
+                    (x0, y0, x1, y1) = (x0.min(px), y0.min(py), x1.max(px), y1.max(py));
+                }
+            }
+            let got = (x0 as f32, y0 as f32, (x1 + 1 - x0) as f32, (y1 + 1 - y0) as f32);
+            assert!(near(got.0, x) && near(got.1, y) && near(got.2, w) && near(got.3, h), "{name} landscape {landscape} {sw}x{sh} {n} to a page: {got:?}");
         }
     }
 

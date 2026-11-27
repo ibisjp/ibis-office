@@ -436,6 +436,13 @@ impl SlideEditor {
         #[cfg(not(target_family = "wasm"))]
         match crate::read_file::read_file(&entry.path) {
             Ok(loaded) => {
+                if loaded.jtd_original.is_some() {
+                    if let Some(panel) = self.recover_unsaved.as_mut() {
+                        panel.message = text("file.jtd-read-only").to_string();
+                    }
+                    cx.notify();
+                    return;
+                }
                 let name: SharedString = crate::i18n::format("shell.autorecover.recovered-name", &[("file_name", &entry.file_name)]).into();
                 self.load(loaded.presentation, name, window, cx);
                 self.set_loaded_source(loaded.source);

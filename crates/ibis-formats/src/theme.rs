@@ -40,6 +40,16 @@ impl Theme {
         jpan.as_deref().filter(|f| !f.is_empty()).or(ea.as_deref().filter(|f| !f.is_empty()))
     }
 
+    /// The theme's typefaces as Word's theme font references (`majorHAnsi`, `minorEastAsia`, ...) resolve them.
+    pub(crate) fn font_names(&self) -> ibis_doc_model::ThemeFonts {
+        let set = |major: bool| ibis_doc_model::FontSet {
+            latin: self.typeface(if major { "+mj-lt" } else { "+mn-lt" }),
+            east_asian: self.east_asian_typeface(major),
+            complex: self.complex_typeface(major),
+        };
+        ibis_doc_model::ThemeFonts { major: set(true), minor: set(false) }
+    }
+
     /// The colour scheme, by name.
     pub(crate) fn colors(&self) -> Vec<(String, Rgb)> {
         let mut out: Vec<(String, Rgb)> = self.colors.iter().map(|(k, v)| (k.clone(), *v)).collect();
@@ -205,6 +215,8 @@ fn office_default_colour(name: &str) -> Option<Rgb> {
 pub(crate) struct Colors<'t> {
     theme: &'t Theme,
     map: HashMap<String, String>,
+    /// Keep the theme reference of a `a:schemeClr` on the colour it gives (presentations: the colour follows the theme).
+    refs: bool,
 }
 
 impl<'t> Colors<'t> {
@@ -233,7 +245,13 @@ impl<'t> Colors<'t> {
                 apply(node);
             }
         }
-        Self { theme, map }
+        Self { theme, map, refs: false }
+    }
+
+    /// These colours keep the theme reference of every `a:schemeClr` they resolve (see [`ibis_doc_model::ThemeRef`]).
+    pub(crate) fn keeping_theme_refs(mut self) -> Self {
+        self.refs = true;
+        self
     }
 
     pub(crate) fn theme(&self) -> &Theme {
@@ -241,12 +259,25 @@ impl<'t> Colors<'t> {
     }
 
     pub(crate) fn with_theme<'u>(&self, theme: &'u Theme) -> Colors<'u> {
-        Colors { theme, map: self.map.clone() }
+        Colors { theme, map: self.map.clone(), refs: self.refs }
     }
 
     /// A theme colour by name (`accent1`, `tx1`, …), through the colour map.
     pub(crate) fn named(&self, name: &str) -> Color {
         Color::opaque(self.scheme(name).unwrap_or(Rgb::BLACK))
+    }
+
+    /// A theme colour by name as a colour that keeps its reference (when references are kept): what a hyperlink's colour is.
+    pub(crate) fn named_ref(&self, name: &str) -> Option<Color> {
+        let rgb = self.scheme(name)?;
+        let mut color = Color::opaque(rgb);
+        if self.refs {
+            let slot = ibis_doc_model::ThemeSlot::from_name(name)?;
+            let mapped = self.map.get(name).map(String::as_str).unwrap_or(name);
+            let via = ibis_doc_model::ThemeSlot::from_name(mapped)?;
+            color.theme = ibis_doc_model::ThemeRef::new(slot, via, &[]).map(|t| t.resolved_to(rgb, 255));
+        }
+        Some(color)
     }
 
     pub(crate) fn scheme(&self, name: &str) -> Option<Rgb> {
@@ -288,7 +319,32 @@ impl<'t> Colors<'t> {
             }
             _ => return None,
         };
-        Some(apply_modifiers(base, node))
+        let mut color = apply_modifiers(base, node);
+        if self.refs && node.tag_name().name() == "schemeClr" {
+            color.theme = self.theme_ref(node).map(|t| t.resolved_to(color.rgb, color.alpha));
+        }
+        Some(color)
+    }
+
+    /// The reference a `a:schemeClr` makes (its name as written, as the colour map turns it, and its transforms). `None` for
+    /// `phClr`, a name that is no slot, or transforms the reference cannot hold (they stay in the file's element).
+    fn theme_ref(&self, node: Node) -> Option<ibis_doc_model::ThemeRef> {
+        let name = ibis_doc_model::ThemeSlot::from_name(colour_attribute(node, "val")?)?;
+        let mapped = self.map.get(name.name()).map(String::as_str).unwrap_or(name.name());
+        let via = ibis_doc_model::ThemeSlot::from_name(mapped)?;
+        let mut mods = Vec::new();
+        for m in elements(node) {
+            if m.tag_name().namespace() != Some(DRAWING_NS) {
+                return None;
+            }
+            let val = match colour_attribute(m, "val") {
+                Some(v) => v.parse::<i32>().ok()?,
+                None => 0,
+            };
+            mods.push(ibis_doc_model::ThemeMod::new(m.tag_name().name(), val)?);
+        }
+        // A colour the theme does not name (a file without a theme part) is drawn with Office's defaults; it still follows the slot.
+        ibis_doc_model::ThemeRef::new(name, via, &mods)
     }
 }
 
@@ -469,156 +525,15 @@ fn preset_color(name: &str) -> Rgb {
 }
 
 /// Apply DrawingML colour transforms in document order as PowerPoint does.
-fn apply_modifiers(mut color: Color, node: Node) -> Color {
-    for m in elements(node).filter(|m| m.tag_name().namespace() == Some(DRAWING_NS)) {
-        let raw_val = colour_attribute(m, "val").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
-        let val = raw_val / 100_000.0;
-        let (r, g, b) = (color.rgb.r() as f32 / 255.0, color.rgb.g() as f32 / 255.0, color.rgb.b() as f32 / 255.0);
-        let (r, g, b) = match m.tag_name().name() {
-            "lum" => {
-                let (h, s, _) = rgb_to_hsl(r, g, b);
-                hsl_to_rgb_f32(h, s, val.clamp(0.0, 1.0))
-            }
-            "lumMod" => {
-                let (h, s, mut l) = rgb_to_hsl(r, g, b);
-                l *= val;
-                hsl_to_rgb_f32(h, s, l.clamp(0.0, 1.0))
-            }
-            "lumOff" => {
-                let (h, s, mut l) = rgb_to_hsl(r, g, b);
-                l += val;
-                hsl_to_rgb_f32(h, s, l.clamp(0.0, 1.0))
-            }
-            "sat" => {
-                let (h, _, l) = rgb_to_hsl(r, g, b);
-                hsl_to_rgb_f32(h, val.clamp(0.0, 1.0), l)
-            }
-            "satMod" => {
-                let (h, mut s, l) = rgb_to_hsl(r, g, b);
-                s *= val;
-                // Do not clamp `s` to 1.0 before converting back to RGB: when a prior `tint`
-                // raised `l` toward 1.0, `s > 1.0` scales the remaining chroma `2 * s * (1 - l)`
-                // before `hsl_to_rgb_f32` clamps each RGB channel to 0.0..=1.0 (pptx-C020-b3).
-                hsl_to_rgb_f32(h, s.max(0.0), l)
-            }
-            "satOff" => {
-                let (h, mut s, l) = rgb_to_hsl(r, g, b);
-                s += val;
-                hsl_to_rgb_f32(h, s.clamp(0.0, 1.0), l)
-            }
-            "hue" => {
-                let (_, s, l) = rgb_to_hsl(r, g, b);
-                let h = (raw_val / 21_600_000.0).rem_euclid(1.0);
-                hsl_to_rgb_f32(h, s, l)
-            }
-            "hueMod" => {
-                let (mut h, s, l) = rgb_to_hsl(r, g, b);
-                h = (h * val).rem_euclid(1.0);
-                hsl_to_rgb_f32(h, s, l)
-            }
-            "hueOff" => {
-                let (mut h, s, l) = rgb_to_hsl(r, g, b);
-                h = (h + raw_val / 21_600_000.0).rem_euclid(1.0);
-                hsl_to_rgb_f32(h, s, l)
-            }
-            "comp" => {
-                let (h, s, l) = rgb_to_hsl(r, g, b);
-                let h = (h + 0.5).rem_euclid(1.0);
-                hsl_to_rgb_f32(h, s, l)
-            }
-            "red" => (val.clamp(0.0, 1.0), g, b),
-            "redMod" => ((r * val).clamp(0.0, 1.0), g, b),
-            "redOff" => ((r + val).clamp(0.0, 1.0), g, b),
-            "green" => (r, val.clamp(0.0, 1.0), b),
-            "greenMod" => (r, (g * val).clamp(0.0, 1.0), b),
-            "greenOff" => (r, (g + val).clamp(0.0, 1.0), b),
-            "blue" => (r, g, val.clamp(0.0, 1.0)),
-            "blueMod" => (r, g, (b * val).clamp(0.0, 1.0)),
-            "blueOff" => (r, g, (b + val).clamp(0.0, 1.0)),
-            "gamma" => (linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b)),
-            "invGamma" => (srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b)),
-            // Tint mixes towards white, shade towards black (in linear light).
-            "tint" => map_linear(r, g, b, |c| 1.0 - (1.0 - c) * val),
-            "shade" => map_linear(r, g, b, |c| c * val),
-            "alpha" => {
-                color.alpha = (val.clamp(0.0, 1.0) * 255.0).round() as u8;
-                (r, g, b)
-            }
-            "alphaOff" => {
-                color.alpha = (color.alpha as f32 + val * 255.0).clamp(0.0, 255.0).round() as u8;
-                (r, g, b)
-            }
-            "alphaMod" => {
-                color.alpha = (color.alpha as f32 * val).clamp(0.0, 255.0).round() as u8;
-                (r, g, b)
-            }
-            "gray" => {
-                let y = 0.299 * r + 0.587 * g + 0.114 * b;
-                (y, y, y)
-            }
-            "inv" => map_linear(r, g, b, |c| 1.0 - c),
-            _ => (r, g, b),
-        };
-        let to8 = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
-        color.rgb = Rgb::from_rgb(to8(r), to8(g), to8(b));
-    }
-    color
+fn apply_modifiers(color: Color, node: Node) -> Color {
+    let mods: Vec<(&str, f32)> = elements(node)
+        .filter(|m| m.tag_name().namespace() == Some(DRAWING_NS))
+        .map(|m| (m.tag_name().name(), colour_attribute(m, "val").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0)))
+        .collect();
+    ibis_doc_model::apply_color_modifiers(color, &mods)
 }
 
-fn map_linear(r: f32, g: f32, b: f32, f: impl Fn(f32) -> f32) -> (f32, f32, f32) {
-    let m = |c: f32| linear_to_srgb(f(srgb_to_linear(c)));
-    (m(r), m(g), m(b))
-}
-
-fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
-}
-
-fn linear_to_srgb(c: f32) -> f32 {
-    let c = c.clamp(0.0, 1.0);
-    if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
-}
-
-fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let l = (max + min) / 2.0;
-    if max == min {
-        return (0.0, 0.0, l);
-    }
-    let d = max - min;
-    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
-    let h = if max == r {
-        (g - b) / d + if g < b { 6.0 } else { 0.0 }
-    } else if max == g {
-        (b - r) / d + 2.0
-    } else {
-        (r - g) / d + 4.0
-    };
-    (h / 6.0, s, l)
-}
-
-/// `h`, `s` and `l` in 0..=1. Returns `(r, g, b)` in 0.0..=1.0.
-fn hsl_to_rgb_f32(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
-    if s <= 0.0 {
-        return (l, l, l);
-    }
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
-    let p = 2.0 * l - q;
-    let hue = |t: f32| {
-        let t = t.rem_euclid(1.0);
-        if t < 1.0 / 6.0 {
-            p + (q - p) * 6.0 * t
-        } else if t < 0.5 {
-            q
-        } else if t < 2.0 / 3.0 {
-            p + (q - p) * (2.0 / 3.0 - t) * 6.0
-        } else {
-            p
-        }
-    };
-    (hue(h + 1.0 / 3.0), hue(h), hue(h - 1.0 / 3.0))
-}
+use ibis_doc_model::theme_color::{hsl_to_rgb_f32, linear_to_srgb};
 
 /// `h`, `s` and `l` in 0..=1.
 fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {

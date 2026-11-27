@@ -122,6 +122,8 @@ xlsx.group	グループ化
 xlsx.ungroup	グループ解除
 xlsx.collapse	詳細を表示しない
 xlsx.expand	詳細を表示
+xlsx.outline-summary-below	詳細データの下に集計行を表示する
+xlsx.outline-summary-right	詳細データの右に集計列を表示する
 xlsx.conditional	条件付き書式
 xlsx.paste-skip-blanks	空白セルを無視する
 xlsx.clear-all	すべてクリア
@@ -1021,7 +1023,7 @@ _xlsx.define-name	名前の定義…
 _xlsx.protect-sheet	シートの保護…
 _xlsx.group-select-all	すべてのシートを選択
 _xlsx.group-ungroup	シートのグループ解除
-_xlsx.group-title	[グループ]
+_xlsx.group-title	- グループ
 _xlsx.group-blocked	このコマンドは、複数のシートを選択している場合は使用できません。1 つのシートだけを選択してから、もう一度やり直してください。
 _xlsx.the-number-in-this-cell-is-formatted-as-text	このセルの数値は、文字列形式で保存されています
 _xlsx.the-formula-in-this-cell-results-in-an-error	このセルの数式の結果はエラーです
@@ -1899,6 +1901,13 @@ xlsx.links-banner.close	閉じる
 xlsx.links-banner.updated	{count} 件のリンクの値を更新しました。
 xlsx.links-banner.partly	{count} 件のリンクの値を更新しました。見つからないファイル：{missing}
 xlsx.query-from-table	テーブルまたは範囲から…
+xlsx.query-from-sqlite	SQLite ファイルから
+query.sqlite-tables	SQLite のテーブルを選択
+query.sqlite-no-tables	SQLite ファイルに取り込めるテーブルがありません
+xlsx.query-from-avro	Avro ファイルから
+xlsx.query-from-arrow-ipc	Arrow IPC ファイルから
+xlsx.query-from-json-lines	JSON Lines ファイルから
+xlsx.query-from-parquet	Parquet ファイルから
 xlsx.query-blank	空のクエリ…
 xlsx.queries	クエリと接続
 query.no-data	データのあるセルを選んでください。
@@ -1946,6 +1955,7 @@ query.tab.combine	結合
 query.op.promote	1 行目をヘッダーとして使用
 query.op.demote	ヘッダーを 1 行目として使用
 query.op.change-type	データ型の変更
+query.op.change-type-locale	ロケールを使用して型を変更
 query.op.select-columns	列の選択
 query.op.remove-columns	列の削除
 query.op.rename	列名の変更
@@ -2041,6 +2051,11 @@ query.field.take	保持する行数（繰り返し）
 query.field.first-row	最初の行（1 が先頭）
 query.field.parameter-name	パラメーター名
 query.field.parameter-value	現在の値
+query.parquet-pick-files	このクエリで使う Parquet ファイルをすべて選択
+query.parquet-file-count	{count} 件の Parquet ファイルを選択中
+query.parquet-columns	Parquet の列を選択
+query.parquet-unsupported	取り込み対象外
+query.parquet-select-column	取り込む列を1つ以上選択してください。
 query.type.any	任意
 query.type.text	テキスト
 query.type.whole	整数
@@ -2594,6 +2609,8 @@ xlsx.fndesc.count	数値が入っているセルの個数を数える
 xlsx.fndesc.counta	空でないセルの個数を数える
 xlsx.fndesc.max	数値の最大値を求める
 xlsx.fndesc.min	数値の最小値を求める
+xlsx.fndesc.ibis.fieldmatch	日付（date）、住所（address）、性別（gender）、氏名（name）、振り仮名（kana）、氏名＋振り仮名（name-with-kana）、電話番号（phone）、郵便番号（postal）、メール（email）、法人番号（corporate-number）、個人番号（mynumber）、運転免許証番号（drivers-license）、日本の旅券番号・2行のMRZ（passport-jp）を照合する。表記差を吸収した一致は2、曖昧一致は1、一致なしは0、比較できないときは#N/A。住所・氏名の第4引数には外字ワイルドカードを指定できる。
+xlsx.fndesc.ibis.recordmatch	複数の照合結果を1つにまとめる。1つの範囲を渡すと行ごとに判定する。不一致があれば0、全項目が一致なら2、それ以外で比較できた項目があれば1。全項目を比較できない場合は#N/A。
 xlsx.fndesc.if	条件が成り立つかで、返す値を切り替える
 xlsx.fndesc.iferror	式がエラーになったときだけ、代わりの値を返す
 xlsx.fndesc.ifs	複数の条件を順に調べ、最初に成り立つものの値を返す
@@ -3003,6 +3020,8 @@ query.step-name.added-custom	追加されたカスタム
 query.step-name.added-conditional-column	追加された条件列
 query.step-name.added-index	追加されたインデックス
 query.culture.zh-cn	中国語 (簡体字、中国)
+query.culture.en-gb	英語 (英国)
+query.culture.th-th	タイ語 (タイ)
 query.step-name.inserted-text-length	挿入されたテキストの長さ
 query.step-name.inserted-absolute-value	挿入された絶対値
 query.step-name.inserted-square-root	挿入された平方根
@@ -3012,3 +3031,9 @@ query.m-error.syntax	{line} 行目：コードを読み取れません：{messag
 query.m-error.raised	{reason}：{message}
 query.m-error.limit	コードの実行に時間がかかりすぎるか、入れ子が深すぎます：{message}
 query.m-error.not-table	結果が表ではありません（{type} です）。
+xlsx.query-from-json-array	JSON ファイルから
+query.json-arrays	取り込む JSON 配列を選択
+query.json-no-arrays	取り込める JSON 配列がありません
+xlsx.query-from-delimited	CSV／TSV クエリ
+query.delimited-headers	先頭行を列名にする
+xlsx.query-from-parquet-folder	Parquet フォルダから

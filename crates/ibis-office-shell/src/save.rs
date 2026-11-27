@@ -71,6 +71,10 @@ impl SlideEditor {
     /// ⌘S: save to the file it was opened from (or ask where, for a file
     /// that has no path yet).
     pub fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_jtd_read_only() {
+            self.set_status(crate::i18n::text("file.jtd-read-only").to_string(), cx);
+            return;
+        }
         self.commit_pending_edit(window, cx);
         if self.refuse_save(cx) {
             return;
@@ -107,6 +111,10 @@ impl SlideEditor {
 
     /// ⌘⇧S, and then, once the file is written, `then`. A cancelled or failed save does not go on to `then`.
     pub(crate) fn save_as_then(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
+        if self.is_jtd_read_only() {
+            self.set_status(crate::i18n::text("file.jtd-read-only").to_string(), cx);
+            return;
+        }
         self.commit_pending_edit(window, cx);
         if self.refuse_save(cx) {
             return;
@@ -131,7 +139,7 @@ impl SlideEditor {
             self.status = Some(crate::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
             return cx.notify();
         }
-        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
         if crate::scenario::button_probe::save_as_caught() {
             return;
         }
@@ -178,6 +186,10 @@ impl SlideEditor {
     /// save confirmation's 保存: close afterwards). A cancelled or failed save does not go on to `then`. What is being
     /// typed in a cell is put in first, so it is saved too.
     pub fn save_then(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
+        if self.is_jtd_read_only() {
+            self.set_status(crate::i18n::text("file.jtd-read-only").to_string(), cx);
+            return;
+        }
         self.commit_pending_edit(window, cx);
         if self.refuse_save(cx) {
             return;
@@ -270,14 +282,25 @@ impl SlideEditor {
     /// The formats the save dialog offers for the kind of the open file (the pop-up of the dialog; a name typed with another
     /// extension is kept). Each is one `save_to` writes by its extension.
     #[cfg(not(target_family = "wasm"))]
-    fn save_formats(&self) -> Vec<SaveFormat> {
+    pub(crate) fn save_formats(&self) -> Vec<SaveFormat> {
         use crate::i18n::text;
-        self.format_info().save_formats.iter().map(|(label, extension)| SaveFormat { label: text(label), extensions: vec![extension.to_string()] }).collect()
+        let mut formats: Vec<SaveFormat> = self.format_info().save_formats.iter().map(|(label, extension)| SaveFormat { label: text(label), extensions: vec![extension.to_string()] }).collect();
+        // A document opened as a statute (法令: .lawtext, .law.txt, .xml in the 法令標準 XML, or a body that begins with 法令番号) can also be saved as Lawtext and as
+        // 法令標準 XML (`bytes_for_path` writes both by their extensions).
+        if self.has_law_source() {
+            formats.push(SaveFormat { label: text("file.save-format.lawtext"), extensions: vec!["lawtext".to_string()] });
+            formats.push(SaveFormat { label: text("file.save-format.lawxml"), extensions: vec!["xml".to_string()] });
+        }
+        formats
     }
 
     /// Save to `path`, and make it the file's path.
     #[cfg(not(target_family = "wasm"))]
     pub fn save_to(&mut self, path: std::path::PathBuf, window: &mut Window) -> Result<(), String> {
+        if self.is_jtd_read_only() { return Err(crate::i18n::text("file.jtd-read-only").to_string()); }
+        if self.jtd_source_path.as_deref().is_some_and(|original| same_file(original, &path) || path.extension().and_then(|ext| ext.to_str()).is_some_and(ibis_jtd::is_native_extension)) {
+            return Err(crate::i18n::text("file.jtd-source-protected").to_string());
+        }
         // The format may refuse for now (a presentation's master view is closed first: what is saved is the file, with what was made in it).
         if let Some(why) = crate::format::with_format!(self, save_refused(self)) {
             return Err(why);
@@ -421,8 +444,8 @@ fn write_in_place(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Whether `a` and `b` are one file (the same path, or one that links to the other).
 #[cfg(not(target_family = "wasm"))]
-fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
-    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+pub(crate) fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    a == b || same_file::is_same_file(a, b).unwrap_or(false) || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
 #[cfg(all(test, not(target_family = "wasm")))]

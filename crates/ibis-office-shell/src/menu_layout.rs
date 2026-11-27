@@ -216,7 +216,8 @@ pub fn layout(kind: Kind) -> &'static [MenuSpec] {
 
 /// Commands the layout may show more than once (the redesign allows these: comment, cross-reference, page break; the sheet's protection is in
 /// ファイル ▸ ブックの保護 and 校閲, as in Excel, 2026-11-11).
-const ALLOWED_TWICE: &[&str] = &["pptx.animation.preview", "pptx.animation.options", "docx.page-break", "docx.cross-reference", "docx.quick-parts.prop.comments", "insert.comment", "xlsx.protect-sheet"];
+/// `file.recent.item` is every line of the recent files (one id, a file each): all of them show (K0070: only the first did in the document window).
+const ALLOWED_TWICE: &[&str] = &["file.recent.item", "pptx.animation.preview", "pptx.animation.options", "docx.page-break", "docx.cross-reference", "docx.quick-parts.prop.comments", "insert.comment", "xlsx.protect-sheet"];
 
 /// The ids the layout names (so that a submenu taken over whole does not also show them where it is not named).
 fn named_ids(items: &[LayoutItem], out: &mut HashSet<&'static str>) {

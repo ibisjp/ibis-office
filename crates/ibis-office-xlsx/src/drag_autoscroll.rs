@@ -63,7 +63,7 @@ impl SlideEditor {
         let content = self.workspace_content()?;
         let (split_x, split_y) = self.frozen_split(content).unwrap_or((None, None));
         let head_w = if sheet.headings { crate::shell::sheet_metrics::row_header_width(sheet) } else { 0.0 };
-        let head_h = if sheet.headings { crate::shell::sheet_metrics::COLUMN_HEADER_HEIGHT } else { 0.0 };
+        let head_h = if sheet.headings { crate::shell::sheet_metrics::column_header_height(sheet) } else { 0.0 };
         Some((
             f32::from(ws.origin.x) + split_x.unwrap_or(head_w),
             f32::from(ws.origin.y) + split_y.unwrap_or(head_h),

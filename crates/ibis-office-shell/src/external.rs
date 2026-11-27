@@ -18,7 +18,7 @@ use gpui_kit::App;
 #[cfg(not(target_family = "wasm"))]
 static LAUNCHED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Whether this is a test run: the headless switch (`IBIS_HEADLESS`), or a program that is not the app (the app is
+/// Whether this is a test run: the headless switch (`IBIS_HEADLESS`), or a program named as a test program is (see `is_test_program_name`; the app is
 /// `ibisOffice[.exe]`; a test program is named after its crate or file: `scenarios-…`, `ibis_office_shell-…`). Not by the
 /// arguments: a file named `latest.docx` is an argument too (GitHub issue #19).
 #[cfg(not(target_family = "wasm"))]
@@ -33,7 +33,11 @@ pub fn running_under_test() -> bool {
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn is_test_program_name(name: &str) -> bool {
-    !name.starts_with("ibisOffice")
+    // A test program is named after its crate or its test file and a hash of the build (`scenarios-1a2b3c4d…`, `ibis_office_shell-4d5e6f…`). The app is
+    // not named so: `ibisOffice[.exe]`, the iOS app `IbisOffice`, the Android process `app_process64` (K0087: they were taken for test programs because
+    // they are not named `ibisOffice…`, and then the gate never let them open anything).
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    name.rsplit_once('-').is_some_and(|(_, hash)| hash.len() >= 6 && hash.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Whether `what` (a few words saying what would start: `open -a …/Word.app …`, `url https://…`) may be started now. In a
@@ -108,5 +112,18 @@ mod tests {
         assert!(!may_launch(|| "open -a Word.app a.docx".into()));
         assert_eq!(take_launched(), ["open -a Word.app a.docx"]);
         assert!(take_launched().is_empty());
+    }
+
+    /// K0087: the apps' own programs are not test programs. The iOS app's executable is `IbisOffice` (capital I: `apps/ios/Info.plist`), the Android process
+    /// is `app_process64`: `is_test_program_name` ("not named ibisOffice") takes both for test programs, so the gate never lets them start anything: the
+    /// About window's links and ヘルプ > ソースコード open nothing there.
+    #[test]
+    fn the_apps_own_program_names_are_not_test_programs() {
+        for name in ["ibisOffice", "ibisOffice.exe", "IbisOffice", "app_process64", "app_process32", "ibis-office-app"] {
+            assert!(!super::is_test_program_name(name), "{name} is the app, not a test program");
+        }
+        for name in ["scenarios-1a2b3c", "ibis_office_shell-4d5e6f", "corpus_report-7a8b9c"] {
+            assert!(super::is_test_program_name(name), "{name} is a test program");
+        }
     }
 }

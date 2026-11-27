@@ -200,6 +200,9 @@ pub struct Color {
     pub rgb: Rgb,
     /// 0 is transparent, 255 opaque.
     pub alpha: u8,
+    /// The theme colour this one follows (`a:schemeClr` with its transforms); `rgb` and `alpha` are what it worked out to
+    /// (see [`Color::theme_ref`]). `None` for a colour chosen directly.
+    pub theme: Option<crate::theme_color::ThemeRef>,
 }
 
 impl Color {
@@ -207,7 +210,7 @@ impl Color {
     pub const WHITE: Self = Self::opaque(Rgb::WHITE);
 
     pub const fn opaque(rgb: Rgb) -> Self {
-        Self { rgb, alpha: 255 }
+        Self { rgb, alpha: 255, theme: None }
     }
 }
 

@@ -183,6 +183,11 @@ fn if_(c: &mut Ctx, a: &[Expr]) -> Value {
                 {
                     return Value::Ref(r);
                 }
+                // A blank or omitted value stays so when IF only passes it on (lazy: `ISBLANK(IF(1,+A2,))`, `ISOMITTED(IF(1,LAMBDA([a],a)(),))` are TRUE and `ISNUMBER` of
+                // them FALSE, Excel; GitHub #278). The cell shows 0 (`to_cell`). Chosen element by element (an array condition) it is 0.
+                if keep_ref && matches!(v, Value::Empty | Value::Omitted) {
+                    return v;
+                }
                 empty_as_zero(c.scalar_or_array_of(v))
             }
         }

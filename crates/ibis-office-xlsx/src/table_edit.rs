@@ -14,6 +14,7 @@ use gpui_kit::component::{ActiveTheme as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use ibis_doc_model::sheet_command::PutCell;
+use ibis_formats::styled_cells;
 use ibis_doc_model::{CellInput, CellRange, CellValue, Command, Sheet, SheetCell, SheetCommand, SheetTable, SlideId, TableStyleInfo};
 
 use crate::shell::editor::SlideEditor;
@@ -67,30 +68,6 @@ pub(crate) fn headings(texts: &[String]) -> Vec<String> {
             k += 1;
         }
         out.push(name);
-    }
-    out
-}
-
-/// The cells to put so `sheet` shows `table` in its style: each cell of the
-/// range whose format differs from that of `base` (the sheet as it will be,
-/// a grown table's old edge taken off) with the style laid on, or whose
-/// content `contents` gives, with its content.
-fn styled_cells(sheet: &Sheet, base: &Sheet, table: &SheetTable, theme: &[(String, ibis_doc_model::Rgb)], contents: &[(u32, u32, CellInput)]) -> Vec<PutCell> {
-    let styled = ibis_formats::styled_with_table(base, table, theme);
-    let r = table.range;
-    let mut out = Vec::new();
-    for row in r.first_row..=r.last_row {
-        for column in r.first_column..=r.last_column {
-            let before = sheet.cell(row, column);
-            let after = styled.cell(row, column);
-            let style_before = before.map(|c| &sheet.styles[c.style as usize]);
-            let style_after = after.map(|c| &styled.styles[c.style as usize]);
-            let content = contents.iter().find(|(a, b, _)| (*a, *b) == (row, column)).map(|(_, _, i)| i.clone());
-            if style_before == style_after && content.is_none() {
-                continue;
-            }
-            out.push(PutCell { row, column, input: content.unwrap_or_else(|| input_of(before)), style: style_after.cloned() });
-        }
     }
     out
 }
@@ -401,6 +378,128 @@ impl SlideEditor {
             log::warn!("table growth rejected: {err}");
         }
         cx.notify();
+    }
+
+    /// The formulas of the table's calculated columns for `count` rows more under row `last_data` (計算列): a column whose data rows all hold one
+    /// formula filled down carries it on.
+    fn calculated_row_formulas(sheet: &Sheet, t: &SheetTable, last_data: u32, count: u32) -> Vec<(u32, u32, CellInput)> {
+        let mut out = Vec::new();
+        for c in t.range.first_column..=t.range.last_column {
+            let formulas: Vec<Option<String>> = (t.range.first_row + t.header_rows..=last_data).map(|rr| sheet.cell(rr, c).and_then(|x| x.formula.clone())).collect();
+            let calculated = !formulas.is_empty() && formulas.iter().all(Option::is_some) && formulas.windows(2).all(|w| filled_down(w[0].as_ref().unwrap(), w[1].as_ref().unwrap(), 1));
+            if calculated && let Some(Some(last)) = formulas.last() {
+                for k in 1..=count {
+                    out.push((last_data + k, c, CellInput::Formula(ibis_calc::formula::shift(last, k as i64, 0))));
+                }
+            }
+        }
+        out
+    }
+
+    /// `count` rows more at the bottom of table `index` (#303): Tab in its bottom-right cell, or its resize handle dragged down. As Excel's
+    /// `ListRows.Add`: the rows come in above the 集計行 (it moves down), the calculated columns' formulas come down, the number formats of the row above
+    /// carry on, and the table's look is laid on them; one step to undo. Without a 集計行 the cells under the table must be empty.
+    pub(crate) fn append_table_rows(&mut self, index: usize, count: u32, filled: bool, cx: &mut Context<Self>) -> bool {
+        if count == 0 || self.protection_refuses(super::protection::Guarded::InsertRows, cx) {
+            return false;
+        }
+        self.commit_cell_edit(cx);
+        let slide = self.current_slide;
+        let theme = self.theme_colors();
+        let Some((_, sheet)) = self.current_sheet() else { return false };
+        let Some(old) = sheet.tables.get(index).cloned() else { return false };
+        let sheet: Sheet = (**sheet).clone();
+        let r = old.range;
+        let last_data = r.last_row - old.totals_rows;
+        if last_data + count >= crate::sheet_ui::MAX_SHEET_ROWS {
+            return false;
+        }
+        let mut formulas = Self::calculated_row_formulas(&sheet, &old, last_data, count);
+        formulas.retain(|(rr, c, _)| !sheet.cell(*rr, *c).is_some_and(|x| !x.value.is_empty() || x.formula.is_some()));
+        if old.totals_rows > 0 {
+            // The rows come in above the 集計行 (it and what is under it move down).
+            let mut commands = vec![Command::Sheet(SheetCommand::Insert { sheet: slide, axis: ibis_doc_model::sheet_command::Axis::Rows, at: last_data + 1, count })];
+            if !formulas.is_empty() {
+                let edits = formulas.into_iter().map(|(row, column, input)| ibis_doc_model::CellEdit { row, column, input }).collect();
+                commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
+            }
+            self.run_sheet(commands, cx);
+            return true;
+        }
+        let below = (r.last_row + 1)..=(r.last_row + count);
+        if !filled && below.clone().any(|rr| (r.first_column..=r.last_column).any(|c| sheet.cell(rr, c).is_some_and(|x| !x.value.is_empty() || x.formula.is_some()))) {
+            return false;
+        }
+        let mut table = old.clone();
+        table.range.last_row += count;
+        if table.header_rows > 0 {
+            table.filter = Some(ibis_doc_model::AutoFilter { range: table.range, columns: old.filter.as_ref().map_or_else(Vec::new, |f| f.columns.clone()) });
+        }
+        let mut cells = ibis_formats::restyled_cells(&sheet, &old, &table, &theme, &formulas);
+        // The number formats of the row above carry on (Excel copies the format of the row above).
+        for column in r.first_column..=r.last_column {
+            let Some(above) = sheet.cell(last_data, column).map(|c| sheet.styles[c.style as usize].number_format.clone()) else { continue };
+            for put in cells.iter_mut().filter(|p| p.column == column && below.contains(&p.row) && sheet.cell(p.row, p.column).is_none_or(|x| x.value.is_empty() && x.formula.is_none())) {
+                if let Some(style) = put.style.as_mut() {
+                    style.number_format = above.clone();
+                }
+            }
+        }
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetTable { sheet: slide, index, table: Some(table), cells })]) {
+            log::warn!("table rows rejected: {err}");
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
+    /// The pointer moves with a table's handle held: the range the table would have (its top-left stays; at least one row of data).
+    pub(crate) fn update_table_resize(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(cell) = self.cell_under(position) else { return };
+        let Some((index, _)) = self.sheet_state().and_then(|s| s.table_resize) else { return };
+        let Some(old) = self.current_sheet().and_then(|(_, s)| s.tables.get(index).map(|t| (t.range, t.header_rows, t.totals_rows))) else { return };
+        let (r, header, totals) = old;
+        let target = if totals > 0 {
+            // With a 集計行 the rows come in above it; the columns stay.
+            CellRange { last_row: cell.1.max(r.last_row), ..r }
+        } else {
+            CellRange { last_row: cell.1.max(r.first_row + header), last_column: cell.0.max(r.first_column), ..r }
+        };
+        if let Some(s) = self.sheet_state_mut() {
+            s.table_resize = Some((index, target));
+        }
+        cx.notify();
+    }
+
+    /// The button is let go over a table's handle: the table takes the range (one step to undo). A table that would meet another one stays.
+    pub(crate) fn finish_table_resize(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some((index, target)) = self.sheet_state_mut().and_then(|s| s.table_resize.take()) else { return false };
+        cx.notify();
+        let Some((_, sheet)) = self.current_sheet() else { return true };
+        let Some(old) = sheet.tables.get(index).map(|t| (t.range, t.totals_rows)) else { return true };
+        let (r, totals) = old;
+        if target == r || self.is_read_only() {
+            return true;
+        }
+        if sheet.tables.iter().enumerate().any(|(i, t)| i != index && overlaps(t.range, target)) || sheet.merges.iter().any(|m| overlaps(*m, target) && !overlaps(*m, r)) {
+            return true;
+        }
+        if target.last_column == r.last_column && target.last_row > r.last_row {
+            self.append_table_rows(index, target.last_row - r.last_row, false, cx);
+        } else if totals == 0 {
+            if self.protection_refuses(super::protection::Guarded::InsertRows, cx) {
+                return true;
+            }
+            self.resize_table(index, target, cx);
+        }
+        true
+    }
+
+    /// Cells pasted (`pasted`): just under a table without a 集計行 they take it in, as typed ones do (テーブルの自動拡張, #303); its own step.
+    pub(crate) fn grow_table_for_paste(&mut self, pasted: CellRange, cx: &mut Context<Self>) {
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        let Some((index, rows)) = sheet.tables.iter().position(|t| t.totals_rows == 0 && pasted.first_row == t.range.last_row + 1 && (t.range.first_column..=t.range.last_column).contains(&pasted.first_column)).map(|i| (i, pasted.last_row - pasted.first_row + 1)) else { return };
+        self.append_table_rows(index, rows, true, cx);
     }
 
     /// 範囲に変換: the table around the selected cell taken off, its look

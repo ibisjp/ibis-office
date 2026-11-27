@@ -11,6 +11,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("pptx::k0034_audit_slideshow_ink_question_is_shared", ink_question),
         ("pptx::k0034_audit_slideshow_rehearsal_question_is_shared", rehearsal_question),
+        // #261: the primary buttons of the two questions work when they are clicked.
+        ("pptx::k0034_audit_slideshow_questions_primary_click", primary_click),
     ]
 }
 
@@ -31,7 +33,7 @@ fn draw(s: &mut Scenario) {
 
 /// Start the show with the pen, draw a stroke and press Esc: the question about the ink is open.
 fn ink_question_open(s: &mut Scenario) {
-    s.key("cmd-shift-enter");
+    s.key(if cfg!(target_os = "macos") { "cmd-shift-enter" } else { "f5" });
     assert!(s.with(|e, _| e.slideshow().is_some()));
     s.key("ctrl-p");
     draw(s);
@@ -85,5 +87,32 @@ fn rehearsal_question() {
     open(&mut s);
     s.key("enter");
     assert!(s.with(|e, _| e.slideshow().is_none()), "Enter presses the primary button and ends the show");
+    assert!(s.with(|e, _| e.presentation().show_properties.use_timings), "the timings are saved");
+}
+
+/// #261: a click on the primary button of each question does what it says and ends the show.
+fn primary_click() {
+    let _probe = buttons::Probe::new();
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let base = s.with(|e, _| e.slide().shapes.len());
+    ink_question_open(&mut s);
+    buttons::click(&mut s, "ink-dialog-keep");
+    s.settle();
+    assert!(s.with(|e, _| e.slideshow().is_none()), "a click on keep ends the show");
+    assert_eq!(s.with(|e, _| e.slide().shapes.len()), base + 1, "keep puts the stroke on the slide");
+    s.update(|e, window, cx| {
+        let mut props = e.presentation().show_properties.clone();
+        props.use_timings = false;
+        e.execute(vec![ibis_doc_model::Command::SetShowProperties { properties: props }], cx);
+        e.start_rehearsal(window, cx);
+    });
+    let slide_count = s.with(|e, _| e.presentation().slides.len());
+    for _ in 0..slide_count {
+        s.update(|e, window, cx| e.step_slideshow(true, window, cx));
+    }
+    s.settle();
+    buttons::click(&mut s, "rehearsal-dialog-save");
+    s.settle();
+    assert!(s.with(|e, _| e.slideshow().is_none()), "a click on the primary button ends the show");
     assert!(s.with(|e, _| e.presentation().show_properties.use_timings), "the timings are saved");
 }

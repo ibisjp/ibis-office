@@ -67,7 +67,7 @@ impl GlowEdit {
     }
     /// Nothing to write (every field showed "mixed" and was left empty).
     pub(super) fn is_empty(&self)->bool {self.radius==Typed::Untouched && self.rgb==Typed::Untouched && self.alpha==Typed::Untouched}
-    pub(super) fn color(&self,own:Color)->Color {Color {rgb:self.rgb.clone().or(own.rgb).unwrap_or(own.rgb),alpha:self.alpha.clone().or(own.alpha).unwrap_or(own.alpha)}}
+    pub(super) fn color(&self,own:Color)->Color {Color {rgb:self.rgb.clone().or(own.rgb).unwrap_or(own.rgb),alpha:self.alpha.clone().or(own.alpha).unwrap_or(own.alpha), theme: None }}
     pub(super) fn radius(&self,own:i64)->i64 {self.radius.clone().or(own).unwrap_or(own)}
 }
 

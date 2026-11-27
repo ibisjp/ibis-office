@@ -22,7 +22,10 @@ use crate::shell::editor::SlideEditor;
 
 /// The card's outline: PowerPoint's `a:ln w="3175"` in `ltGray`.
 fn card_stroke() -> Stroke {
-    Stroke::solid(Color::opaque(Rgb(0xD3_D3_D3)), 3175)
+    let mut stroke = Stroke::solid(Color::opaque(Rgb(0xD3_D3_D3)), 3175);
+    // PowerPoint writes no join for it, which is round.
+    stroke.join = ibis_doc_model::LineJoin::Round;
+    stroke
 }
 
 /// The width in pixels PowerPoint gives a card's picture: one for each point of the card's width.

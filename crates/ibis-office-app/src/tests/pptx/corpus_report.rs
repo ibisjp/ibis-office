@@ -122,7 +122,7 @@ fn render_slides_at(file: &str, label: &str, slides: &[usize], width: u32) -> Ve
         color: Default::default(),
         handout: None,
         frame: false,
-        handout_landscape: false,
+        handout_landscape: false, paper: None, fit_paper: true,
         notes_pages: false,
         outline_pages: false,
         notes_source: None,

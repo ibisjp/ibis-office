@@ -6,16 +6,16 @@
 // file (.res) made here and handed to the linker, so no resource compiler is
 // needed.
 
-/// The Windows version in version.txt (at the top of the repository).
+/// The Windows version in build-version.txt (at the top of the repository).
 fn windows_version() -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../version.txt");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../build-version.txt");
     println!("cargo:rerun-if-changed={}", path.display());
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     text.lines()
         .filter_map(|line| line.trim_end_matches('\r').split_once('\t'))
         .find(|(name, _)| name.trim() == "Windows")
         .map(|(_, version)| version.trim().to_string())
-        .unwrap_or_else(|| panic!("version.txt has no Windows line"))
+        .unwrap_or_else(|| panic!("build-version.txt has no Windows line"))
 }
 
 /// Append a resource with a numeric type and name to a .res file: its
@@ -68,7 +68,7 @@ fn push_version_resource(res: &mut Vec<u8>, version: &str, description: &str, fi
     let utf16 = |s: &str| -> Vec<u8> { s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect() };
     let string = |key: &str, value: &str| block(key, &utf16(value), value.encode_utf16().count() as u16 + 1, true, &[]);
 
-    let mut parts = version.split('.').map(|p| p.parse::<u16>().unwrap_or_else(|_| panic!("version.txt: {version} is not numbers")));
+    let mut parts = version.split('.').map(|p| p.parse::<u16>().unwrap_or_else(|_| panic!("build-version.txt: {version} is not numbers")));
     let mut part = || u32::from(parts.next().unwrap_or(0));
     let (ms, ls) = (part() << 16 | part(), part() << 16 | part());
     let mut fixed = Vec::new();

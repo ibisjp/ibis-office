@@ -59,6 +59,10 @@ pub(crate) const FLIP_FOCAL: f32 = 1.031;
 /// frames) and of 立方体 (the colours of the faces are not darkened up to 1 rad; the nearly edge-on face is 0.74).
 pub(crate) const DARKEST: f32 = 0.24;
 
+/// Where (in frames from the first frame the picture moves) and how long (frames) 回転 and 軌道's backdrop goes from the old slide's background to the new one's.
+const BACKDROP_START: f32 = -0.8;
+const BACKDROP_LENGTH: f32 = 61.6;
+
 /// The four effects of the cube family (PowerPoint's `p14:prism`): the cube seen from outside (立方体) or from inside (箱), with
 /// the slides as they are or with their contents alone turning over the slide's own background (回転 and 軌道).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +82,18 @@ impl Prism {
     /// Only the slides' shapes turn; their background stays.
     pub(crate) fn content_only(self) -> bool {
         matches!(self, Prism::Rotate | Prism::Orbit)
+    }
+
+    /// The share (0 to 1) of the new slide's own background in the backdrop of 回転 and 軌道 at `t` (0 to 1, linear in the transition's time): a
+    /// half cosine `(1 - cos(pi u)) / 2` of `u` = (frame - `BACKDROP_START`) / `BACKDROP_LENGTH` (frames at 30 a second: the backdrop goes from the old slide's
+    /// background to the new one's, as 観覧車's does). Fitted to the backdrop's grey at each frame of PowerPoint for Windows' video (`CreateVideo`, 2 s,
+    /// audit deck: a white slide into a black one; rotate/l frames 6 to 54, rms 0.004 of the brightness).
+    pub(crate) fn background_mix(self, t: f32) -> Option<f32> {
+        if !self.content_only() {
+            return None;
+        }
+        let u = ((t * 60.0 - BACKDROP_START) / BACKDROP_LENGTH).clamp(0.0, 1.0);
+        Some((1.0 - (std::f32::consts::PI * u).cos()) / 2.0)
     }
 }
 
@@ -187,8 +203,9 @@ pub(crate) fn prism_at(kind: Prism, motion: (f64, f64), angle: f32, w: f32, h: f
     }
     let eye = focal * (1.0 + back_off * (2.0 * angle).sin());
     [
-        card(Face::Old, axis, sign, angle, pivot_z, focal, eye, w, h, false),
-        card(Face::New, axis, sign, angle - std::f32::consts::FRAC_PI_2, pivot_z, focal, eye, w, h, false),
+        // Seen from outside, a face that turns away from the camera is not drawn (the cube's side is not seen before it turns toward it).
+        card(Face::Old, axis, sign, angle, pivot_z, focal, eye, w, h, !kind.inside()),
+        card(Face::New, axis, sign, angle - std::f32::consts::FRAC_PI_2, pivot_z, focal, eye, w, h, !kind.inside()),
     ]
 }
 
@@ -680,7 +697,7 @@ pub(crate) fn peel_off(motion: (f64, f64), t: f32, w: f32, h: f32) -> Vec<Card> 
 }
 
 /// The row of a table of (video frame, numbers) at `frame`, linearly between the rows (the first or last row outside them).
-fn row_at<const N: usize>(table: &[(f32, [f32; N])], frame: f32) -> [f32; N] {
+pub(crate) fn row_at<const N: usize>(table: &[(f32, [f32; N])], frame: f32) -> [f32; N] {
     let (first, last) = (table[0], table[table.len() - 1]);
     if frame <= first.0 {
         return first.1;
@@ -742,10 +759,8 @@ pub(crate) fn page_curl_double(motion: (f64, f64), t: f32, w: f32, h: f32) -> Ve
         let i = x as usize;
         angles[i] + (angles[i + 1] - angles[i]) * (x - i as f32)
     };
-    let mut front = Vec::with_capacity((COLUMNS + 1) * 2);
-    let mut back = Vec::with_capacity((COLUMNS + 1) * 2);
-    let (mut x, mut z) = (320.0_f32, 0.0_f32);
     let mut points = Vec::with_capacity(COLUMNS + 1);
+    let (mut x, mut z) = (320.0_f32, 0.0_f32);
     points.push((x, z));
     let mut faces_front = Vec::with_capacity(COLUMNS);
     for j in 0..COLUMNS {
@@ -755,31 +770,29 @@ pub(crate) fn page_curl_double(motion: (f64, f64), t: f32, w: f32, h: f32) -> Ve
         points.push((x, z));
         faces_front.push(a.cos() > 0.0);
     }
-    for (j, &(px, pz)) in points.iter().enumerate() {
-        let s = j as f32 * ds;
-        // The picture's own coordinates: the mirror image has the leaf on the other side.
-        let place = |mx: f32| if mirror { 640.0 - mx } else { mx };
-        for v in [0.0_f32, 1.0] {
-            let position = [(place(px) - 320.0) * k, (v * hh - hh / 2.0) * k, pz * k];
-            front.push(MeshVertex::new(position, [place(320.0 + s) / 640.0, v]));
-            back.push(MeshVertex::new(position, [place(320.0 - s) / 640.0, v]));
-        }
-    }
-    let (mut front_indices, mut back_indices) = (Vec::new(), Vec::new());
-    for (j, &is_front) in faces_front.iter().enumerate() {
-        let (tl, bl, tr, br) = ((j * 2) as u32, (j * 2 + 1) as u32, (j * 2 + 2) as u32, (j * 2 + 3) as u32);
-        let list = if is_front { &mut front_indices } else { &mut back_indices };
-        list.extend([tl, tr, bl, tr, br, bl]);
-    }
-    // The slide's halves that stay: the old one's far half, the new one's near half (the table's left option; mirrored for the other).
-    let mut cards = vec![half_sheet(Face::Old, !mirror, w, h), half_sheet(Face::New, mirror, w, h)];
+    // The picture's own coordinates: the mirror image has the leaf on the other side.
+    let place = |mx: f32| if mirror { 640.0 - mx } else { mx };
     let transform = Transform3D::perspective(ROLL_FOCAL * w).then(Transform3D::translate(w / 2.0, h / 2.0, 0.0));
-    for (face, vertices, indices) in [(Face::Old, front, front_indices), (Face::New, back, back_indices)] {
-        if !indices.is_empty() {
-            cards.push(Card { face, transform, cull_back: false, shade: 1.0, mesh: Some(Mesh { vertices: Arc::new(vertices), indices }), white: 0.0, opacity: 1.0 });
+    // The leaf is cut into its columns, each a card of its own (its front the old slide's picture, its back the new slide's), and all are
+    // drawn far to near by their depth (the camera is on the side of +z), with the slide's flat halves (depth 0): a leaf that bends over
+    // itself would otherwise show its back through its front, as one list of triangles drawn front list first does.
+    let mut drawn: Vec<(f32, Card)> = vec![(0.0, half_sheet(Face::Old, !mirror, w, h)), (0.0, half_sheet(Face::New, mirror, w, h))];
+    for (j, &is_front) in faces_front.iter().enumerate() {
+        let ((x0, z0), (x1, z1)) = (points[j], points[j + 1]);
+        let (s0, s1) = (j as f32 * ds, (j + 1) as f32 * ds);
+        let source = |s: f32| if is_front { place(320.0 + s) / 640.0 } else { place(320.0 - s) / 640.0 };
+        let mut vertices = Vec::with_capacity(4);
+        for (px, pz, s) in [(x0, z0, s0), (x1, z1, s1)] {
+            for v in [0.0_f32, 1.0] {
+                vertices.push(MeshVertex::new([(place(px) - 320.0) * k, (v * hh - hh / 2.0) * k, pz * k], [source(s), v]));
+            }
         }
+        // The vertices are (left top, left bottom, right top, right bottom).
+        let face = if is_front { Face::Old } else { Face::New };
+        drawn.push(((z0 + z1) / 2.0, Card { face, transform, cull_back: false, shade: 1.0, mesh: Some(Mesh { vertices: Arc::new(vertices), indices: vec![0, 2, 1, 2, 3, 1] }), white: 0.0, opacity: 1.0 }));
     }
-    cards
+    drawn.sort_by(|p, q| p.0.total_cmp(&q.0));
+    drawn.into_iter().map(|(_, c)| c).collect()
 }
 
 /// A 3 x 3 rotation (the turns about x, y, z applied in the order y, x, z, as `Pose` documents).
@@ -973,44 +986,9 @@ const AIRPLANE_CREASE: f32 = 80.0;
 /// How much darker a face turned edge-on is than one facing the viewer (0.2, 0.4 and 0.5 gave 0.0102, 0.0096 and 0.0098 over frames 3524 to 3562).
 const AIRPLANE_SHADE: f32 = 0.4;
 
-/// カーテン (`curtains`): the old slide's two halves are pleated cloth that gathers at the sides, leaning as it swings, with the new slide
-/// behind. `CURTAINS` rows are (frame, [inner edge at the top, inner edge at the bottom, outer edge at the top, outer edge at the bottom])
-/// of the left half in px of a 640 px slide; the right half is its mirror. The halves are the old slide's halves squeezed across (the
-/// pleats' shading is not drawn).
+/// カーテン (`curtains`): see `turn3d_cloth`.
 pub(crate) fn curtains(t: f32, w: f32, h: f32) -> Vec<Card> {
-    use super::turn3d_tracks::CURTAINS;
-    let frame = 12.0 + t.clamp(0.0, 1.0) * 60.0;
-    let mut cards = vec![pose_card(Face::New, [0.0; 6], 1.0, w, h)];
-    if frame >= CURTAINS[CURTAINS.len() - 1].0 {
-        return cards;
-    }
-    let [lt, lb, ot, ob] = if frame < CURTAINS[0].0 { [320.0, 320.0, 0.0, 0.0] } else { row_at(CURTAINS, frame) };
-    let k = w / 640.0;
-    const N: usize = 8;
-    let transform = Transform3D::perspective(ROLL_FOCAL * w).then(Transform3D::translate(w / 2.0, h / 2.0, 0.0));
-    for right in [false, true] {
-        let mut vertices = Vec::with_capacity((N + 1) * (N + 1));
-        for j in 0..=N {
-            let v = j as f32 / N as f32;
-            let (xin, xo) = (lt + (lb - lt) * v, ot + (ob - ot) * v);
-            for i in 0..=N {
-                let u = i as f32 / N as f32;
-                let x = xo + (xin - xo) * u;
-                let (px, tu) = if right { (640.0 - x, 1.0 - u * 0.5) } else { (x, u * 0.5) };
-                vertices.push(MeshVertex::new([(px - 320.0) * k, (v - 0.5) * h, 0.0], [tu, v]));
-            }
-        }
-        let mut indices = Vec::new();
-        for j in 0..N {
-            for i in 0..N {
-                let id = |a: usize, b: usize| (b * (N + 1) + a) as u32;
-                let (tl, tr, bl, br) = (id(i, j), id(i + 1, j), id(i, j + 1), id(i + 1, j + 1));
-                indices.extend([tl, tr, bl, tr, br, bl]);
-            }
-        }
-        cards.push(Card { face: Face::Old, transform, cull_back: false, shade: 1.0, mesh: Some(Mesh { vertices: Arc::new(vertices), indices }), white: 0.0, opacity: 1.0 });
-    }
-    cards
+    crate::turn3d_cloth::curtains(t, w, h)
 }
 
 #[cfg(test)]
@@ -1058,6 +1036,38 @@ mod tests {
         let [old, _] = cube_at((-1.0, 0.0), 0.51, 640.0, 360.0);
         let (l, r) = (corner(&old, 20.0, 20.0).unwrap(), corner(&old, 300.0, 20.0).unwrap());
         assert!(r.0 > l.0 && r.0 - l.0 < 280.0, "{l:?} {r:?}");
+    }
+
+    #[test]
+    fn the_backdrop_of_rotate_and_orbit_goes_from_the_old_background_to_the_new_on_a_half_cosine() {
+        for kind in [Prism::Rotate, Prism::Orbit] {
+            assert!(kind.background_mix(0.0).unwrap() < 0.001);
+            assert!((kind.background_mix(0.5).unwrap() - 0.5).abs() < 0.01);
+            assert!(kind.background_mix(1.0).unwrap() > 0.999);
+            let (a, b) = (kind.background_mix(0.3).unwrap(), kind.background_mix(0.7).unwrap());
+            assert!(a < 0.5 && b > 0.5, "{a} {b}");
+        }
+        assert_eq!(Prism::Cube.background_mix(0.5), None);
+        assert_eq!(Prism::Box.background_mix(0.5), None);
+    }
+
+    #[test]
+    fn the_side_of_a_cube_seen_from_outside_is_not_drawn_before_it_turns_toward_the_camera() {
+        // The projected quad's signed area: the face turned toward the camera has one sign; the cards cull the other (`cull_back`).
+        let area = |c: &Card| {
+            let pts: Vec<_> = [(0.0, 0.0), (640.0, 0.0), (640.0, 360.0), (0.0, 360.0)].iter().filter_map(|&(x, y)| c.transform.project(x, y, 0.0)).collect();
+            (0..pts.len()).map(|i| pts[i].0 * pts[(i + 1) % pts.len()].1 - pts[(i + 1) % pts.len()].0 * pts[i].1).sum::<f32>()
+        };
+        for kind in [Prism::Cube, Prism::Rotate] {
+            for motion in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+                let front = area(&prism(kind, motion, 0.5, 640.0, 360.0)[0]);
+                let [old, new] = prism(kind, motion, 0.02, 640.0, 360.0);
+                assert!(old.cull_back && new.cull_back);
+                assert!(area(&new) * front < 0.0, "{kind:?} {motion:?}: the side faces away at the start");
+                let new_late = prism(kind, motion, 0.8, 640.0, 360.0)[1].clone();
+                assert!(area(&new_late) * front > 0.0, "{kind:?} {motion:?}: the side faces the camera late");
+            }
+        }
     }
 
     #[test]
@@ -1145,6 +1155,28 @@ mod tests {
         assert!(end.iter().all(|c| c.mesh.is_none()), "the old slide is gone");
     }
 
+    /// ページめくり（片面） is its own fitted sheet (`PAGE_CURL_SINGLE`), whatever the double leaf does: at the fitted frames the sheet's
+    /// leading edge is where the table says (#88: 0.0032 / 0.0044 against PowerPoint's video; a change in `page_curl_double` must not move it).
+    #[test]
+    fn the_single_page_curl_follows_its_fitted_rows() {
+        use crate::turn3d_tracks::PAGE_CURL_SINGLE;
+        for &(frame, shift, lift, power) in &[PAGE_CURL_SINGLE[4], PAGE_CURL_SINGLE[9], PAGE_CURL_SINGLE[13]] {
+            let t = (frame - 12.0) / 60.0;
+            let cards = page_curl_single((1.0, 0.0), t, 640.0, 360.0);
+            assert_eq!(cards.len(), 2, "the new slide under one sheet of the old one (frame {frame})");
+            assert!(cards[0].mesh.is_none() && cards[1].mesh.is_some());
+            let v = &cards[1].mesh.as_ref().unwrap().vertices;
+            // The sheet starts at the shift (x of the first column, the slide's centre at 320) and ends at the lift x 1 (u = 1).
+            assert!((v[0].position[0] - (shift - 320.0)).abs() < 0.01, "frame {frame}: {:?}", v[0].position);
+            assert!((v[v.len() - 1].position[2] - lift).abs() < 0.01 * lift.max(1.0), "frame {frame}: height {}", v[v.len() - 1].position[2]);
+            assert!(power > 1.0);
+            // The mirror image has the same sheet on the other side.
+            let m = page_curl_single((-1.0, 0.0), t, 640.0, 360.0);
+            let mv = &m[1].mesh.as_ref().unwrap().vertices;
+            assert!((mv[0].position[0] + v[0].position[0]).abs() < 0.01);
+        }
+    }
+
     #[test]
     fn a_rolled_page_is_flat_before_the_roll_and_rises_round_it() {
         let (r, c) = (50.0_f32, 300.0_f32);
@@ -1213,22 +1245,18 @@ mod tests {
 
     #[test]
     fn curtains_gather_at_the_sides_and_leave_the_new_slide() {
-        let reach = |c: &Card, right: bool| {
-            let xs = c.mesh.as_ref().unwrap().vertices.iter().map(|v| v.position[0] + 320.0);
-            if right { xs.fold(f32::MAX, f32::min) } else { xs.fold(f32::MIN, f32::max) }
+        // The halves are the cards of their shade bands, the left half's first (the cloth's vertices are shared by the bands).
+        let halves = |cards: &[Card]| -> (Vec<f32>, Vec<f32>) {
+            let old: Vec<&Card> = cards.iter().filter(|c| c.face == Face::Old).collect();
+            let half = old.len() / 2;
+            let xs = |cs: &[&Card]| cs.iter().flat_map(|c| c.mesh.as_ref().unwrap().vertices.iter().map(|v| v.position[0] + 320.0)).collect::<Vec<f32>>();
+            (xs(&old[..half]), xs(&old[half..]))
         };
         let start = curtains(0.0, 640.0, 360.0);
-        assert_eq!(start.len(), 3, "the new slide under the two halves");
-        assert_eq!(start[0].face, Face::New);
-        assert!((reach(&start[1], false) - 320.0).abs() < 0.5 && (reach(&start[2], true) - 320.0).abs() < 0.5);
-        // In the middle the halves are squeezed toward the sides and are mirror images.
-        let mid = curtains(0.5, 640.0, 360.0);
-        let (l, r) = (reach(&mid[1], false), reach(&mid[2], true));
-        assert!(l < 260.0 && (l + r - 640.0).abs() < 0.5, "{l} {r}");
+        assert_eq!(start[0].face, Face::New, "the new slide under the two halves");
+        let (l, r) = halves(&start);
+        assert!((l.iter().cloned().fold(f32::MIN, f32::max) - 320.0).abs() < 0.5 && (r.iter().cloned().fold(f32::MAX, f32::min) - 320.0).abs() < 0.5);
         assert_eq!(curtains(1.0, 640.0, 360.0).len(), 1, "gone at the end");
-        // The mesh's texture points stay on the old slide's own half.
-        let left = start[1].mesh.as_ref().unwrap().vertices.iter().map(|v| v.uv[0]).fold(0.0_f32, f32::max);
-        assert!((left - 0.5).abs() < 1e-5);
     }
 
     #[test]

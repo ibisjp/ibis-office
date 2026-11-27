@@ -37,7 +37,14 @@ impl SlideEditor {
         let (stem, _) = self.name_parts();
         let title = if stem.is_empty() { "Presentation".to_string() } else { stem.clone() };
         let english = crate::shell::i18n::language() == crate::shell::i18n::Language::English;
-        let html = match page_for(self.presentation(), &title, english) {
+        let page = page_for(self.presentation(), &title, english);
+        // The browser makes the page itself, with the pictures (below): here it only asks whether there is a page.
+        #[cfg(target_family = "wasm")]
+        if let Err(message) = page {
+            return self.report(Err(message), cx);
+        }
+        #[cfg(not(target_family = "wasm"))]
+        let html = match page {
             Ok(html) => html,
             Err(message) => return self.report(Err(message), cx),
         };
@@ -48,22 +55,33 @@ impl SlideEditor {
             let picked = cx.prompt_for_new_path(&directory, Some(&name));
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(path))) = picked.await else { return };
-                this.update(cx, |this, cx| {
-                    let result = std::fs::write(&path, html)
-                        .map(|()| crate::shell::i18n::format("pptx.html-exported", &[("path", &path.display())]).to_string())
-                        .map_err(|e| crate::shell::i18n::format("pptx.html-export-failed", &[("error", &e)]).to_string());
-                    this.report(result, cx);
-                })
-                .ok();
+                // The page with its charts and SmartArt as pictures (`--export html`, #208); without the program, the page as it is made here (their places framed).
+                let job = this.update(cx, |this, _| this.write_html_with_pictures(path.clone(), None)).ok().and_then(Result::ok);
+                let result = match job {
+                    Some(job) => cx.background_executor().spawn(async move { job() }).await.map(|written| crate::shell::i18n::format("pptx.html-exported", &[("path", &written.display())]).to_string()),
+                    None => std::fs::write(&path, html).map(|()| crate::shell::i18n::format("pptx.html-exported", &[("path", &path.display())]).to_string()).map_err(|e| e.to_string()),
+                }
+                .map_err(|e| crate::shell::i18n::format("pptx.html-export-failed", &[("error", &e)]).to_string());
+                this.update(cx, |this, cx| this.report(result, cx)).ok();
             })
             .detach();
         }
         #[cfg(target_family = "wasm")]
         {
-            // A host that keeps the files takes the export in its file window; else it is downloaded.
-            if !self.browser_export(name.clone(), "text/html;charset=utf-8", html.into_bytes(), window, cx) {
-                self.report(Ok(crate::shell::i18n::format("pptx.html-exported", &[("path", &name)]).to_string()), cx);
-            }
+            // The charts and SmartArt come as pictures drawn in this window into textures (`shell::html_raster`, #208).
+            let presentation = self.presentation().clone();
+            let (title, lang) = (title.clone(), if english { "en" } else { "ja" });
+            self.html_with_pictures(
+                move |raster| ibis_formats::slides_html::slides_to_html_with(&presentation, &title, lang, &labels(), raster).unwrap_or_default(),
+                move |this, html, window, cx| {
+                    // A host that keeps the files takes the export in its file window; else it is downloaded.
+                    if !this.browser_export(name.clone(), "text/html;charset=utf-8", html.into_bytes(), window, cx) {
+                        this.report(Ok(crate::shell::i18n::format("pptx.html-exported", &[("path", &name)]).to_string()), cx);
+                    }
+                },
+                window,
+                cx,
+            );
         }
     }
 }

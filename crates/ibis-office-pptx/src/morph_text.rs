@@ -130,10 +130,20 @@ pub(crate) enum Move {
 
 /// Which tokens move, which fade out and which fade in.
 pub(crate) fn plan(old: Vec<Token>, new: Vec<Token>) -> Vec<Move> {
+    // Each word (character) of the new text takes the first one of the same text in the old text that is not taken yet, whatever their order:
+    // PowerPoint moves "Morph" to where "Morph" is even when the words are in another order (the frames of the by-word morph of
+    // "Morph moves each word" to "word each moves Morph": every word travels, none fades). A common subsequence would keep the order and
+    // fade the words it cannot keep.
     let pairs = {
-        let a: Vec<&str> = old.iter().map(|t| t.text.as_str()).collect();
-        let b: Vec<&str> = new.iter().map(|t| t.text.as_str()).collect();
-        common(&a, &b)
+        let mut free = vec![true; old.len()];
+        let mut pairs = Vec::new();
+        for (j, t) in new.iter().enumerate() {
+            if let Some(i) = (0..old.len()).find(|&i| free[i] && old[i].text == t.text) {
+                free[i] = false;
+                pairs.push((i, j));
+            }
+        }
+        pairs
     };
     let mut out = Vec::with_capacity(old.len() + new.len());
     let (mut taken_old, mut taken_new) = (vec![false; old.len()], vec![false; new.len()]);
@@ -184,6 +194,15 @@ pub(crate) fn at(m: &Move, progress: f32) -> (Token, f32) {
             let l = |x: f32, y: f32| x + (y - x) * s;
             let mut now = b.clone();
             (now.x, now.y, now.width, now.height) = (l(a.x, b.x), l(a.y, b.y), l(a.width, b.width), l(a.height, b.height));
+            // A word whose size changes grows or shrinks on the way (its line height goes from the old height to the new).
+            if b.height > 0.0 && (now.height - b.height).abs() > 1e-3 {
+                let k = now.height / b.height;
+                for run in &mut now.runs {
+                    if let Some(size) = run.style.font_size {
+                        run.style.font_size = Some(((size as f32 * k).round() as u32).max(1));
+                    }
+                }
+            }
             (now, 1.0)
         }
         Move::Out(a) => (a.clone(), (1.0 - (progress - OUT.0) / (OUT.1 - OUT.0)).clamp(0.0, 1.0)),

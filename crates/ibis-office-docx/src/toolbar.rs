@@ -1314,6 +1314,8 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.read-only-recommended", |this, _, cx| this.toggle_read_only_recommended(cx));
     menus.connect("docx.inspect-document", |this, window, cx| this.open_doc_inspect_panel(window, cx));
     menus.connect("review.compatibility-check", |this, window, cx| this.open_doc_compatibility_panel(window, cx));
+    menus.connect("review.pii-check", |this, _, cx| this.pii_check(cx));
+    menus.connect("insert.medical-image", |this, window, cx| this.insert_medical_image(window, cx));
     menus.connect("docx.print-settings", |this, window, cx| this.open_doc_print_panel(window, cx));
     menus.connect("docx.options.print.update-fields", |this, _, cx| this.toggle_update_fields_before_printing(cx));
     menus.connect("docx.options.print.update-links", |this, _, cx| this.toggle_update_links_before_printing(cx));
@@ -1750,6 +1752,8 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.view.marks.paragraph", |this, _, cx| this.toggle_show_paragraph_marks(cx));
     menus.connect("docx.view.marks.line-breaks", |this, _, cx| this.toggle_show_line_breaks(cx));
     menus.connect("docx.view.marks.hidden", |this, _, cx| this.toggle_show_hidden_text(cx));
+    menus.connect("docx.view.marks.optional-hyphens", |this, _, cx| this.toggle_show_optional_hyphens(cx));
+    menus.connect("docx.view.marks.anchors", |this, _, cx| this.toggle_show_object_anchors(cx));
     menus.connect("docx.picture.border.none", |this, _, cx| this.clear_picture_border(cx));
     for &(_label, w) in &super::picture_panel::PICTURE_BORDER_WIDTHS {
         let menu_id = match w {
@@ -1849,6 +1853,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         menus.connect(id, move |this, _, cx| this.set_picture_soft_edge(soft, cx));
     }
     menus.connect("docx.selection-pane", |this, _, cx| this.open_selection_pane(cx));
+    menus.connect("docx.show-form-fill", |this, window, cx| this.open_form_fill(window, cx));
     menus.connect("docx.navigation-pane", |this, _, cx| {
         this.outline_open = !this.outline_open;
         cx.notify();
@@ -1869,6 +1874,9 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
                 cx.notify();
             }).into());
     }
+    menus.items_mut(MenuId::View).push(MenuItem::tr("docx.show-form-fill")
+        .icon("edit_note")
+        .on(|this, window, cx| this.open_form_fill(window, cx)).into());
     menus.items_mut(MenuId::View).push(MenuItem::tr("docx.selection-pane")
         .icon("layers")
         .on(|this, _, cx| this.open_selection_pane(cx)).into());
@@ -1930,6 +1938,14 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         MenuItem::tr("docx.view.marks.hidden")
             .checked(_editor.doc_prefs().formatting_marks_options.show_hidden_text)
             .on(|this, _, cx| this.toggle_show_hidden_text(cx))
+            .into(),
+        MenuItem::tr("docx.view.marks.optional-hyphens")
+            .checked(_editor.doc_prefs().formatting_marks_options.show_optional_hyphens)
+            .on(|this, _, cx| this.toggle_show_optional_hyphens(cx))
+            .into(),
+        MenuItem::tr("docx.view.marks.anchors")
+            .checked(_editor.doc_prefs().formatting_marks_options.show_object_anchors)
+            .on(|this, _, cx| this.toggle_show_object_anchors(cx))
             .into(),
     ];
     menus.items_mut(MenuId::View).push(crate::shell::chrome::Submenu::tr("docx.view.marks-options", "notes", marks_subitems).into());
@@ -3145,6 +3161,8 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.check-errors").icon("fact_check").on(|this, _, cx| { this.check_merge_errors(cx); }).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("review.accessibility-check").icon("accessibility").on(|this, _, cx| this.open_accessibility_panel(cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.inspect-document").icon("find_in_page").on(|this, window, cx| this.open_doc_inspect_panel(window, cx)).into());
+        menus.items_mut(MenuId::Tools).push(crate::shell::pii_check::pii_check_item().into());
+        menus.items_mut(MenuId::Tools).push(crate::shell::dicom_dialog::insert_medical_image_item().into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("review.compatibility-check").icon("rule").on(|this, window, cx| this.open_doc_compatibility_panel(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.print-settings").icon("tune").on(|this, window, cx| this.open_doc_print_panel(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.reference.source-manager").icon("manage_accounts").on(|this, window, cx| this.open_source_manager_panel(window, cx)).into());
@@ -3562,7 +3580,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.section.page-start-10", |this, _, cx| this.set_page_number_start(Some(10), cx));
     menus.connect("docx.section.page-start-custom", |this, window, cx| this.open_page_setup_panel(window, cx));
     menus.connect("docx.section.show-document-text", |this, _, cx| this.toggle_show_document_text(cx));
-    menus.connect("docx.page.doc-grid", |this, window, cx| this.open_page_setup_panel(window, cx));
+    menus.connect("docx.page.doc-grid", |this, window, cx| this.open_page_setup_tab(crate::page_setup::TAB_GRID, window, cx));
     menus.connect("docx.page.multiple-pages.normal", |this, _, cx| this.set_multiple_pages(ibis_doc_model::MultiplePages::Normal, None, cx));
     menus.connect("docx.page.multiple-pages.mirror-margins", |this, _, cx| this.set_multiple_pages(ibis_doc_model::MultiplePages::MirrorMargins, None, cx));
     menus.connect("docx.page.multiple-pages.book-fold", |this, _, cx| {
@@ -4608,7 +4626,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             ];
             crate::shell::chrome::Submenu::tr("docx.page.multiple-pages", "auto_stories", mp_menu).into()
         },
-        MenuItem::tr("docx.page.doc-grid").on(|this, window, cx| this.open_page_setup_panel(window, cx)).into(),
+        MenuItem::tr("docx.page.doc-grid").on(|this, window, cx| this.open_page_setup_tab(crate::page_setup::TAB_GRID, window, cx)).into(),
         MenuItem::tr("docx.page.setup").on(|this, window, cx| this.open_page_setup_panel(window, cx)).into(),
         MenuItem::tr("docx.watermark").on(|this, window, cx| this.open_watermark_panel(window, cx)).into(),
         {

@@ -5,12 +5,14 @@
 //! in `protocol.rs` alone (2026-07-28 is the main one, 2025-11-25 is answered too); the tools, their arguments and their results are the catalog's.
 
 mod cli;
+mod http;
 mod protocol;
 mod stdio;
 
-/// The version of the app this server is of (version.txt).
+/// The version of the app this server is of (build-version.txt).
 pub const VERSION: &str = env!("IBIS_VERSION");
 
 pub use cli::run_from_args;
+pub use http::{HttpConfig, HttpServer, Stopper};
 pub use protocol::Server;
 pub use stdio::serve;

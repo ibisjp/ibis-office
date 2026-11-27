@@ -9,7 +9,7 @@
 //! its Manifest) is what the signature says, and whether the signature value is a valid signature of `SignedInfo` by the key of the
 //! certificate the signature carries.
 //!
-//! What it does not tell: whether the certificate can be trusted (no chain, no revocation, no validity period, no policy), whether
+//! What it does not tell: whether the certificate can be trusted (it hands the certificates to the caller; the operating system judges the chain), whether
 //! there is a time stamp, whether the signature covers the whole document (a part the signature does not list is not reported),
 //! and so whether the signature is "valid" in the sense of a signing law. A result of [`Status::Consistent`] means only that the
 //! numbers in the signature agree with the file. Nothing is fetched: a reference to anything outside the package is reported as
@@ -130,6 +130,11 @@ pub struct SignatureReport {
     pub malformed: Option<Malformed>,
     /// The subject name of the certificate, as it is written there (not checked to be anybody).
     pub signer: Option<String>,
+    /// The DER of every certificate the signature carries (`X509Certificate`), in the order of the file; the first is the signer's.
+    /// Whether they can be trusted is for the operating system to say (see the shell's `signature_trust`); nothing here judges it.
+    pub certificates: Vec<Vec<u8>>,
+    /// The signing time the signature states (`mdssi:SignatureTime`), as written. Shown only; no check uses it.
+    pub signing_time: Option<String>,
     /// The signature value against `SignedInfo` (None when malformed).
     pub signature_value: Option<Check>,
     pub references: Vec<ReferenceReport>,
@@ -234,8 +239,8 @@ pub fn inspect(package: &Package) -> Inspection {
 
 fn inspect_signature(package: &Package, part: &str) -> SignatureReport {
     match analyse(package, part) {
-        Err(m) => SignatureReport { part: part.to_string(), status: Status::Malformed, malformed: Some(m), signer: None, signature_value: None, references: Vec::new() },
-        Ok((signer, value, references)) => {
+        Err(m) => SignatureReport { part: part.to_string(), status: Status::Malformed, malformed: Some(m), signer: None, certificates: Vec::new(), signing_time: None, signature_value: None, references: Vec::new() },
+        Ok((signer, value, references, certificates, signing_time)) => {
             let mut status = Status::Consistent;
             for check in std::iter::once(&value).chain(references.iter().map(|r| &r.check)) {
                 status = status.max(match check {
@@ -245,12 +250,12 @@ fn inspect_signature(package: &Package, part: &str) -> SignatureReport {
                     Check::Mismatch | Check::PartMissing => Status::Mismatch,
                 });
             }
-            SignatureReport { part: part.to_string(), status, malformed: None, signer, signature_value: Some(value), references }
+            SignatureReport { part: part.to_string(), status, malformed: None, signer, certificates, signing_time, signature_value: Some(value), references }
         }
     }
 }
 
-fn analyse(package: &Package, part: &str) -> Result<(Option<String>, Check, Vec<ReferenceReport>), Malformed> {
+fn analyse(package: &Package, part: &str) -> Result<(Option<String>, Check, Vec<ReferenceReport>, Vec<Vec<u8>>, Option<String>), Malformed> {
     let bytes = package.read(part).map_err(|_| Malformed::Unreadable)?;
     let doc = Document::parse(&bytes).map_err(|_| Malformed::Xml)?;
     let root = doc.root_element().ok_or(Malformed::NotSignature)?;
@@ -282,7 +287,15 @@ fn analyse(package: &Package, part: &str) -> Result<(Option<String>, Check, Vec<
         }
     }
     let (signer, value) = check_signature_value(&doc, root, signed_info, &signature_value);
-    Ok((signer, value, references))
+    let certificates = certificate_ders(&doc, root);
+    let signing_time = doc.descendants(root).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "SignatureTime").and_then(|t| doc.child(t, "Value")).map(|v| doc.text(v).trim().to_string()).filter(|t| !t.is_empty());
+    Ok((signer, value, references, certificates, signing_time))
+}
+
+/// The DER of the certificates in `KeyInfo`, in the order written (those that are not base64 are left out).
+fn certificate_ders(doc: &Document, root: NodeId) -> Vec<Vec<u8>> {
+    let Some(key_info) = doc.child(root, "KeyInfo") else { return Vec::new() };
+    doc.descendants(key_info).into_iter().filter(|&n| doc.is_element(n) && doc.local_name(n) == "X509Certificate").filter_map(|n| crate::base64::decode(&doc.text(n))).collect()
 }
 
 fn find_by_id(doc: &Document, root: NodeId, id: &str) -> Option<NodeId> {

@@ -309,6 +309,11 @@ fn parse_section(s: &str) -> Section {
                 section.tokens.push(Token::General);
                 i += 7;
             }
+            // The Japanese Excel's name of General: `G/標準` (the code it stores in the file is `General`).
+            'G' | 'g' if chars[i..].iter().take(4).collect::<String>().eq_ignore_ascii_case("G/標準") => {
+                section.tokens.push(Token::General);
+                i += 4;
+            }
             _ if starts_with_ci(i, "am/pm") => {
                 let style = if chars[i] == 'a' { AmPm::Lower } else { AmPm::Upper };
                 section.tokens.push(Token::Date(DatePart::AmPm(style)));

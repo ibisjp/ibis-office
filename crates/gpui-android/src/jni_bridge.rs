@@ -20,9 +20,47 @@ pub enum ImeBridgeEvent {
     Composing(String),
     Backspace,
     Enter,
+    /// The keyboard finished the composing text (`finishComposingText`): it stays, as the text, and stops being composed (not emptied).
+    FinishComposing,
+}
+
+/// The soft keyboard now (K0064): how much of the window's bottom it covers (logical pixels, dp), and how long it takes to move (seconds).
+/// On Android it is always across the window's bottom (`Docked`); a floating one is not told (it covers no edge, so it is shown no toolbar).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyboardKind {
+    Docked,
+    DockedWithHideKey,
+    Floating,
+    Hardware,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KeyboardInfo {
+    pub height: f32,
+    pub kind: KeyboardKind,
+    pub duration: f32,
+}
+
+impl KeyboardInfo {
+    pub const HIDDEN: KeyboardInfo = KeyboardInfo { height: 0.0, kind: KeyboardKind::Docked, duration: 0.0 };
+}
+
+/// The soft keyboard as the activity last told (`WindowInsets`' ime in `IbisActivity.java`).
+/// The window's safe area (left, top, right, bottom, dp): how far the app keeps its content in from each edge of the window (the system bars, the display cutout and the
+/// gesture grip: `shell::safe_area::compute`). The window's surface is the whole screen (the activity draws to it directly, so a margin on its view does nothing),
+/// and the app lays itself out inside this.
+static SAFE_AREA_DP: Mutex<[f32; 4]> = Mutex::new([0.0; 4]);
+
+pub fn safe_area() -> [f32; 4] {
+    *SAFE_AREA_DP.lock()
+}
+
+pub fn keyboard() -> KeyboardInfo {
+    BRIDGE.get().map_or(KeyboardInfo::HIDDEN, |state| *state.keyboard.lock())
 }
 
 struct BridgeState {
+    keyboard: Mutex<KeyboardInfo>,
     vm: JavaVM,
     activity: GlobalRef,
     waker: AndroidAppWaker,
@@ -72,9 +110,24 @@ pub fn init(app: &AndroidApp) {
                     fn_ptr: native_on_ime_composing as *mut std::ffi::c_void,
                 },
                 NativeMethod {
+                    name: "nativeOnImeFinishComposing".into(),
+                    sig: "()V".into(),
+                    fn_ptr: native_on_ime_finish_composing as *mut std::ffi::c_void,
+                },
+                NativeMethod {
+                    name: "nativeSafeArea".into(),
+                    sig: "([IF)[F".into(),
+                    fn_ptr: native_safe_area as *mut std::ffi::c_void,
+                },
+                NativeMethod {
                     name: "nativeOnImeBackspace".into(),
                     sig: "()V".into(),
                     fn_ptr: native_on_ime_backspace as *mut std::ffi::c_void,
+                },
+                NativeMethod {
+                    name: "nativeOnKeyboardChanged".into(),
+                    sig: "(FIF)V".into(),
+                    fn_ptr: native_on_keyboard_changed as *mut std::ffi::c_void,
                 },
                 NativeMethod {
                     name: "nativeOnImeEnter".into(),
@@ -91,6 +144,7 @@ pub fn init(app: &AndroidApp) {
         global
     };
     let state = Arc::new(BridgeState {
+        keyboard: Mutex::new(KeyboardInfo::HIDDEN),
         vm,
         activity: activity_ref,
         waker: app.create_waker(),
@@ -333,9 +387,61 @@ extern "system" fn native_on_ime_backspace(_env: JNIEnv<'_>, _class: JClass<'_>)
     }
 }
 
+extern "system" fn native_on_ime_finish_composing(_env: JNIEnv<'_>, _class: JClass<'_>) {
+    if let Some(state) = BRIDGE.get() {
+        state.ime_queue.lock().push_back(ImeBridgeEvent::FinishComposing);
+        state.waker.wake();
+    }
+}
+
+/// The app's way to work out the safe area (`ibis_office_shell::safe_area::compute`): the raw insets (13 pixels) and the density in, the margins (left, top, right, bottom, pixels)
+/// and the keyboard's height (dp) out. Set once at the start (`set_safe_area_fn`).
+pub type SafeAreaFn = fn(&[i32; 13], f32) -> [f32; 5];
+static SAFE_AREA: OnceLock<SafeAreaFn> = OnceLock::new();
+
+pub fn set_safe_area_fn(f: SafeAreaFn) {
+    let _ = SAFE_AREA.set(f);
+}
+
+extern "system" fn native_safe_area<'a>(mut env: JNIEnv<'a>, _class: JClass<'a>, raw: jni::objects::JIntArray<'a>, density: f32) -> jni::sys::jfloatArray {
+    let mut buffer = [0i32; 13];
+    if !matches!(env.get_array_length(&raw), Ok(13)) || env.get_int_array_region(&raw, 0, &mut buffer).is_err() {
+        return std::ptr::null_mut();
+    }
+    let Some(compute) = SAFE_AREA.get() else { return std::ptr::null_mut() };
+    let out = compute(&buffer, density);
+    let density = if density > 0.0 { density } else { 1.0 };
+    *SAFE_AREA_DP.lock() = [out[0] / density, out[1] / density, out[2] / density, out[3] / density];
+    if let Some(state) = BRIDGE.get() {
+        state.waker.wake();
+    }
+    match env.new_float_array(5) {
+        Ok(array) => {
+            if env.set_float_array_region(&array, 0, &out).is_err() {
+                return std::ptr::null_mut();
+            }
+            array.into_raw()
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 extern "system" fn native_on_ime_enter(_env: JNIEnv<'_>, _class: JClass<'_>) {
     if let Some(state) = BRIDGE.get() {
         state.ime_queue.lock().push_back(ImeBridgeEvent::Enter);
+        state.waker.wake();
+    }
+}
+
+extern "system" fn native_on_keyboard_changed(_env: JNIEnv<'_>, _class: JClass<'_>, height_dp: f32, kind: i32, duration: f32) {
+    if let Some(state) = BRIDGE.get() {
+        let kind = match kind {
+            1 => KeyboardKind::Floating,
+            2 => KeyboardKind::Hardware,
+            3 => KeyboardKind::DockedWithHideKey,
+            _ => KeyboardKind::Docked,
+        };
+        *state.keyboard.lock() = KeyboardInfo { height: height_dp.max(0.0), kind, duration: duration.max(0.0) };
         state.waker.wake();
     }
 }

@@ -475,6 +475,8 @@ impl SlideEditor {
                     MenuEntry::Separator,
                     MenuItem::tr("pptx.snap-to-grid").checked(self.is_pptx_snap_to_grid_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_grid(cx)).into(),
                     MenuItem::tr("pptx.snap-to-shape").checked(self.is_pptx_snap_to_shape_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_shape(cx)).into(),
+                    MenuEntry::Separator,
+                    MenuItem::tr("pptx.grid-guides.settings").icon("tune").on(|e, w, cx| e.open_grid_guides_panel(w, cx)).into(),
                 ]).into(),
                 Submenu::tr("pptx.background", "wallpaper", crate::chrome::background_menu(self)).into(),
                 Submenu::tr("pptx.theme.palette-selected", "palette", crate::chrome::theme_palette_selected_items(self)).into(),
@@ -682,7 +684,7 @@ impl SlideEditor {
                 ("pptx.shadow.diagonal", Some((2_700_000, 0))),
                 ("pptx.shadow.soft", Some((2_700_000, 50_800))),
             ].into_iter().map(|(id, value)| {
-                let shadow = value.map(|(direction, blur)| ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128 }, blur, 50_800, direction));
+                let shadow = value.map(|(direction, blur)| ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 128, theme: None }, blur, 50_800, direction));
                 MenuItem::tr(id).on(move |e, _, cx| e.set_shape_shadow(shadow, cx)).into()
             }).collect();
             if has_auto {
@@ -709,9 +711,9 @@ impl SlideEditor {
         if has_auto {
             let mut glow_items: Vec<MenuEntry> = [
                 ("pptx.glow.none", None),
-                ("pptx.glow.blue5", Some((ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0x4472C4), alpha: 128 }, 63_500))),
-                ("pptx.glow.blue10", Some((ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0x4472C4), alpha: 128 }, 127_000))),
-                ("pptx.glow.yellow10", Some((ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0xFFC000), alpha: 160 }, 127_000))),
+                ("pptx.glow.blue5", Some((ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0x4472C4), alpha: 128, theme: None }, 63_500))),
+                ("pptx.glow.blue10", Some((ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0x4472C4), alpha: 128, theme: None }, 127_000))),
+                ("pptx.glow.yellow10", Some((ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0xFFC000), alpha: 160, theme: None }, 127_000))),
             ].into_iter().map(|(id, value)| MenuItem::tr(id).on(move |e, _, cx| e.set_shape_glow(value, cx)).into()).collect();
             glow_items.push(MenuEntry::Separator);
             glow_items.push(MenuItem::tr("pptx.glow.custom").on(|e, w, cx| e.open_glow_panel(w, cx)).into());
@@ -764,7 +766,7 @@ impl SlideEditor {
             entries.push(Submenu::tr("pptx.picture.color", "palette", crate::chrome::picture_color_items(true)).into());
             entries.push(Submenu::tr("pptx.picture.correction", "tune", crate::chrome::picture_correction_items(self, true)).into());
             entries.push(Submenu::tr("pptx.picture.artistic-effect", "auto_fix_high", crate::chrome::picture_artistic_effect_items(true)).into());
-            #[cfg(all(target_os = "macos", feature = "export"))]
+            #[cfg(all(any(target_os = "macos", windows), feature = "export"))]
             entries.push(MenuItem::tr("pptx.picture.compress").icon("image").on(|e, w, cx| e.open_compress_panel(w, cx)).into());
             entries.push(MenuItem::tr("pptx.picture.reset-colors")
                 .icon("restart_alt")
@@ -835,8 +837,8 @@ impl SlideEditor {
             MenuItem::tr("pptx.frame.settings").icon("straighten").on(|e, w, cx| e.open_frame_panel(w, cx)).into(),
             MenuItem::tr("pptx.alt-text").icon("accessibility").on(|e, w, cx| e.open_alt_text_panel(w, cx)).into(),
         ]);
-        if self.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Auto(_) | ibis_doc_model::ShapeKind::Line(_))) {
-            entries.push(MenuItem::tr("pptx.default-shape").icon("bookmark").disabled(!matches!(self.selected_shapes().as_slice(), [s] if matches!(s.kind, ibis_doc_model::ShapeKind::Auto(_) | ibis_doc_model::ShapeKind::Line(_)))).on(|e, _, cx| e.set_object_default(cx)).into());
+        if self.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Auto(_) | ibis_doc_model::ShapeKind::Line(_) | ibis_doc_model::ShapeKind::TextBox(_))) {
+            entries.push(MenuItem::tr("pptx.default-shape").icon("bookmark").disabled(!matches!(self.selected_shapes().as_slice(), [s] if matches!(s.kind, ibis_doc_model::ShapeKind::Auto(_) | ibis_doc_model::ShapeKind::Line(_) | ibis_doc_model::ShapeKind::TextBox(_)))).on(|e, _, cx| e.set_object_default(cx)).into());
         }
         if self.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Picture(_))) {
             entries.push(MenuItem::tr("pptx.format-picture").icon("image").on(|e, w, cx| e.open_crop_panel(w, cx)).into());

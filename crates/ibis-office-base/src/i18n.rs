@@ -175,7 +175,7 @@ pub fn lookup_words(key: &str) -> Option<SharedString> {
 /// The id whose Japanese words are `words` exactly (the first by id), for a table that must keep ids and not words (`toolbar_defaults.rs`).
 pub fn key_of_japanese(words: &str) -> Option<String> {
     let (ja, _) = tables();
-    let mut found: Vec<&str> = ja.iter().filter(|(_, v)| **v == words).map(|(k, _)| *k).collect();
+    let mut found: Vec<&str> = ja.iter().filter(|(_, v)| **v == words || localize_keys(v, false) == words).map(|(k, _)| *k).collect();
     found.sort();
     found.first().map(|k| k.to_string())
 }

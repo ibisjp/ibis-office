@@ -18,7 +18,10 @@ encoding_rs = "0.8"
 pure_jpegls = "2.1"
 jxl-oxide = { version = "0.12", default-features = false }
 dicom-object = { version = "0.10.1", default-features = false, features = ["deflate"] }
-serde_json = { version = "1", features = ["arbitrary_precision"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
+sha2 = "0.10"
+# YAML form definitions and records (#270; MIT, libyaml port). Parsed into serde_json::Value.
+serde-saphyr = "2.2"
 # Ogg Vorbis decoder (MIT OR Apache-2.0, pure Rust) for the transition sounds the apps ship (transition_sounds.rs).
 lewton = "0.10"
 
@@ -38,3 +41,7 @@ path = "src/bin/geometry.rs"
 [[bin]]
 name = "ibis-calc-check"
 path = "src/bin/calc_check.rs"
+
+[[bin]]
+name = "ibis-lawtext-5set"
+path = "src/bin/lawtext_5set.rs"

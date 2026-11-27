@@ -4,7 +4,7 @@
 //! issues #215 (the wheel of 開始・終了 leaves stripes and steps), #216 (zoom, grow and turn lay the text out again while they play),
 //! #217 (turn: the shape vanishes where it is seen from behind, the text is squeezed both ways). Frames are read as pixels.
 use crate::shell::scenario::Scenario;
-use crate::slideshow::SlideshowExt;
+use crate::ext::*;
 use ibis_doc_model::{AnimationClass, Color, Command, Fill, Rgb};
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {

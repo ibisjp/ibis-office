@@ -30,6 +30,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::layout_grid::lines_in_a_cell_off_the_grid_are_1_3_times_the_size_apart", lines_in_a_cell_off_the_grid_are_1_3_times_the_size_apart),
         ("docx::layout_grid::ivs_selector_takes_no_room", ivs_selector_takes_no_room),
         ("docx::layout_grid::a_yu_line_on_a_grid_is_1_673_em_high_and_takes_the_grids_that_hold_it", a_yu_line_on_a_grid_is_1_673_em_high_and_takes_the_grids_that_hold_it),
+        ("docx::layout_grid::a_line_of_a_picture_on_a_grid_is_the_pictures_height_rounded_up_to_whole_grids", a_line_of_a_picture_on_a_grid_is_the_pictures_height_rounded_up_to_whole_grids),
         ("docx::layout_grid::a_multiple_on_a_grid_is_the_larger_of_the_grids_the_line_takes_and_the_grid_times_it", a_multiple_on_a_grid_is_the_larger_of_the_grids_the_line_takes_and_the_grid_times_it),
     ]
 }
@@ -45,6 +46,9 @@ pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
         ("docx::layout_grid::a_justified_line_squeezes_its_full_width_spaces", a_justified_line_squeezes_its_full_width_spaces),
         ("docx::layout_grid::below_mode_15_a_justified_line_squeezes_only_a_closing_bracket", below_mode_15_a_justified_line_squeezes_only_a_closing_bracket),
         ("docx::layout_grid::below_mode_15_a_line_squeezes_by_one_stop_s_half_at_most", below_mode_15_a_line_squeezes_by_one_stop_s_half_at_most),
+        ("docx::layout_grid::below_mode_15_a_character_grid_line_is_whole_cells_long", below_mode_15_a_character_grid_line_is_whole_cells_long),
+        ("docx::layout_grid::snap_to_chars_a_character_takes_whole_cells_and_stands_in_the_middle", snap_to_chars_a_character_takes_whole_cells_and_stands_in_the_middle),
+        ("docx::layout_grid::a_vertical_or_columned_character_grid_line_is_whole_cells_long", a_vertical_or_columned_character_grid_line_is_whole_cells_long),
         ("docx::layout_grid::a_proportional_face_squeezes_no_stop", a_proportional_face_squeezes_no_stop),
         ("docx::layout_grid::an_opening_bracket_that_starts_a_line_keeps_its_half_em", an_opening_bracket_that_starts_a_line_keeps_its_half_em),
     ]
@@ -376,6 +380,143 @@ fn below_mode_15_a_line_squeezes_by_one_stop_s_half_at_most() {
     assert_eq!(chars_per_line_all("squeeze-compat11-mincho12-cell-chargrid-probe.docx"), mincho12, "12 pt, character grid, in a cell");
 }
 
+/// The first line of each page (a page a section of its own width) of a document of one paragraph of kanji, in characters.
+fn first_line_of_each_page(file: &str) -> Vec<usize> {
+    laid_out(file)
+        .pages
+        .iter()
+        .map(|page| {
+            let mut lines: Vec<(f32, usize)> = Vec::new();
+            for item in &page.items {
+                if let Item::Text { y, text, .. } = item {
+                    match lines.iter_mut().find(|(ly, _)| (ly - y).abs() < 0.5) {
+                        Some(line) => line.1 += text.chars().count(),
+                        None => lines.push((*y, text.chars().count())),
+                    }
+                }
+            }
+            lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+            lines[0].1
+        })
+        .collect()
+}
+
+/// Below mode 15 a line of a `linesAndChars` grid is `floor(W / pitch) * pitch` long, the pitch the Normal style's size plus the added pitch, whatever the size of the
+/// text (Windows Word 16.0.20527, ＭＳ 明朝 12 pt kanji, one page a section of its own width, 121 widths of 380 to 440 pt: `chargrid-cells-*-probe` of the same generator, the
+/// number of characters of the first line, each document of 5 to 7 widths here: 12 pt text on 14 pt cells keeps 29 cells, 406 pt, and 33 characters in 414.45 pt). In mode 15
+/// the grid does not cut the line.
+#[cfg_attr(windows, test)]
+fn below_mode_15_a_character_grid_line_is_whole_cells_long() {
+    // (the Normal style 14 pt; 9 pt; 10.5 pt and 1 pt added; 10.5 pt with 14 pt text; a left indent; Normal 12 pt over 10.5 pt in the defaults; mode 15)
+    assert_eq!(first_line_of_each_page("chargrid-cells-b14-s12.docx"), [31, 32, 33, 35, 36], "14 pt grid");
+    assert_eq!(first_line_of_each_page("chargrid-cells-b9-s12.docx"), [32, 33, 33, 34, 35], "9 pt grid");
+    assert_eq!(first_line_of_each_page("chargrid-cells-b105-s12-cs4096.docx"), [29, 30, 31, 32, 33], "10.5 pt grid, 1 pt added");
+    assert_eq!(first_line_of_each_page("chargrid-cells-b105-s14.docx"), [27, 28, 29, 30], "14 pt text on a 10.5 pt grid");
+    assert_eq!(first_line_of_each_page("chargrid-cells-indent-b105-s12.docx"), [29, 30, 31, 32, 33], "a left indent of 24 pt");
+    assert_eq!(first_line_of_each_page("chargrid-cells-normal-b105-s12.docx"), [31, 33, 34, 35], "the Normal style's size, not the defaults'");
+    assert_eq!(first_line_of_each_page("chargrid-cells-compat15-b105-s12.docx"), [31, 32, 33, 35], "mode 15");
+    // The stops squeeze to make the line the cells' length (Word's lines of `squeeze-compat11-mincho12-chargrid-probe.docx` with the Normal style 9 pt: 35 characters, 414 pt, 5.5 pt
+    // squeezed; 14 pt: 34 characters in 406 pt where there are stops to squeeze, 33 in the line of kanji only; the last line's count is without the space the PDF ends it with).
+    assert_eq!(&chars_per_line_all("chargrid-cells-squeeze-b9.docx")[..8], &[35, 35, 34, 14, 35, 35, 34, 15], "9 pt grid, stops");
+    assert_eq!(&chars_per_line_all("chargrid-cells-squeeze-b14.docx")[..8], &[34, 34, 33, 17, 34, 34, 33, 18], "14 pt grid, stops");
+}
+
+/// The characters of the first line of the first page with where they stand (the glyph's left edge).
+fn first_line_positions(file: &str) -> Vec<(char, f32)> {
+    let pages = laid_out(file);
+    let page = &pages.pages[0];
+    let y0 = page.items.iter().filter_map(|i| if let Item::Text { y, .. } = i { Some(*y) } else { None }).fold(f32::MAX, f32::min);
+    let mut out: Vec<(char, f32)> = Vec::new();
+    for item in &page.items {
+        if let Item::Text { x, y, text, offsets, .. } = item
+            && (y - y0).abs() < 0.5
+        {
+            out.extend(text.chars().enumerate().map(|(k, c)| (c, x + offsets.get(k).copied().unwrap_or(0.0))));
+        }
+    }
+    out.sort_by(|a, b| a.1.total_cmp(&b.1));
+    out
+}
+
+/// The number of characters of the first column (vertical text: the one at the right) of each page.
+fn first_vertical_column_of_each_page(file: &str) -> Vec<usize> {
+    laid_out(file)
+        .pages
+        .iter()
+        .map(|page| {
+            let mut columns: Vec<(f32, usize)> = Vec::new();
+            for item in &page.items {
+                let (x, n) = match item {
+                    Item::Text { x, text, .. } | Item::Turned { x, text, .. } | Item::Scaled { x, text, .. } => (*x, text.chars().count()),
+                    _ => continue,
+                };
+                match columns.iter_mut().find(|(cx, _)| (cx - x).abs() < 3.0) {
+                    Some(column) => column.1 += n,
+                    None => columns.push((x, n)),
+                }
+            }
+            columns.sort_by(|a, b| b.0.total_cmp(&a.0));
+            columns[0].1
+        })
+        .collect()
+}
+
+/// The number of characters of the first line's left column, a page of each of `widths` (the text's width, 2 columns).
+fn left_column_of_each_page(file: &str, widths: &[f32]) -> Vec<usize> {
+    laid_out(file)
+        .pages
+        .iter()
+        .zip(widths)
+        .map(|(page, w)| {
+            let mut lines: Vec<(f32, usize)> = Vec::new();
+            for item in &page.items {
+                if let Item::Text { x, y, text, .. } = item
+                    && *x <= 90.4 + w / 2.0
+                {
+                    match lines.iter_mut().find(|(ly, _)| (ly - y).abs() < 0.5) {
+                        Some(line) => line.1 += text.chars().count(),
+                        None => lines.push((*y, text.chars().count())),
+                    }
+                }
+            }
+            lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+            lines[0].1
+        })
+        .collect()
+}
+
+/// A section of `snapToChars` sets each character on whole cells of the Normal style's size plus the added pitch, in the middle of them, and a run of Latin letters, digits and
+/// spaces as one thing (Windows Word 16.0.20527, ＭＳ 明朝: 16 documents of 4 grids x 4 text sizes, 61 widths each, and 6 of a grid with 1 pt, 2 pt and -0.5 pt added: a
+/// character is `ceil(advance / P)` cells, a line `floor(W / (cells * P))` characters; the positions below are Word's PDFs' of the first line, the glyph's left edge).
+#[cfg_attr(windows, test)]
+fn snap_to_chars_a_character_takes_whole_cells_and_stands_in_the_middle() {
+    // (12 pt kanji on a 10.5 pt grid: 2 cells, 21 pt; 14 pt text on a 12 pt grid: 24 pt; 1 pt added: P is 11.5 pt, 12 pt kanji take 2 cells, 23 pt)
+    assert_eq!(first_line_of_each_page("chargrid-snap-b105-s12.docx"), [18, 18, 19, 19, 20], "12 pt on a 10.5 pt grid");
+    assert_eq!(first_line_of_each_page("chargrid-snap-b12-s14.docx"), [15, 15, 16, 16, 17, 18], "14 pt on a 12 pt grid");
+    assert_eq!(first_line_of_each_page("chargrid-snap-b105-s12-cs4096.docx"), [16, 16, 17, 17, 18, 19], "12 pt on a 10.5 pt grid, 1 pt added");
+    let near = |at: &[(char, f32)], k: usize, c: char, x: f32| assert!(at[k].0 == c && (at[k].1 - x).abs() < 0.35, "{} of the line: {:?}, Word {c} {x}", k, at[k]);
+    // 漢字、漢字。ABC漢字（漢字）abc 漢字 12345 ー漢字ｱｲｳ…: 漢 is 4.5 pt into its 21 pt, ABC (18 pt) 1.5 pt into 2 cells, `abc ` (24 pt) 3.75 pt into 3, ` 12345 ` (42 pt) 4 cells
+    let at = first_line_positions("chargrid-snap-mixed-b105-s12.docx");
+    assert_eq!(at.len(), 30);
+    for (k, c, x) in [(0, '漢', 94.9), (5, '。', 199.9), (6, 'A', 218.1), (9, '漢', 242.0), (15, 'a', 367.3), (19, '漢', 399.6), (21, ' ', 437.1), (22, '1', 443.1), (28, 'ー', 483.6), (29, '漢', 504.7)] {
+        near(&at, k, c, x);
+    }
+    // (9 pt text on a 12 pt grid: a half-width kana is a cell of its own, ｱ at 382.2, ｲ 394.2, ｳ 406.2)
+    let at = first_line_positions("chargrid-snap-mixed-b12-s9.docx");
+    assert_eq!(at.len(), 49, "(Word's PDF has the space the line ends with as a 50th)");
+    for (k, c, x) in [(0, '漢', 91.9), (6, 'A', 167.7), (15, 'a', 261.5), (21, ' ', 308.7), (31, 'ｱ', 382.2), (33, 'ｳ', 406.2), (36, 'H', 443.7), (46, 'd', 488.7), (47, '漢', 500.0)] {
+        near(&at, k, c, x);
+    }
+}
+
+/// A `linesAndChars` line is `floor(W / P) * P` long in a vertical section and in a column too, W the length of the line (Windows Word 16.0.20527, ＭＳ 明朝 12 pt on
+/// 10.5 pt and 14 pt cells; `tbRl` pages of 61 lengths and 2 columns of 61 widths, 21 pt apart).
+#[cfg_attr(windows, test)]
+fn a_vertical_or_columned_character_grid_line_is_whole_cells_long() {
+    assert_eq!(first_vertical_column_of_each_page("chargrid-cells-vertical-b105-s12.docx"), [31, 31, 32, 32, 33, 33, 34, 34, 35], "vertical, 10.5 pt cells");
+    assert_eq!(left_column_of_each_page("chargrid-cells-columns-b14-s12.docx", &[380.0, 384.0, 385.0, 412.0, 413.0]), [14, 14, 15, 15, 16], "2 columns, 14 pt cells");
+}
+
 /// Which closing characters hang past the edge (Word's PDFs of `hang-line-end-closers-compat14-probe.docx` and `…compat15-probe.docx`: 20
 /// full-width characters fill a 210 pt line, then one of ） 」 』 】 〕 〉 》 ］ ｝ 、 。 ， ． ’ ” ー ぁ っ, 18 paragraphs justified and 18 left
 /// aligned). The first line has 21 characters when it hangs, 19 when the character goes down with the one before it, 20 when the character may
@@ -677,6 +818,31 @@ fn a_multiple_on_a_grid_is_the_larger_of_the_grids_the_line_takes_and_the_grid_t
             let (size, m): (f32, u32) = (size.parse().expect("size"), m.parse().expect("multiple"));
             let expected = want(size, m);
             assert!((pitch - expected).abs() < 0.15, "{file}: {size} pt at {m}/240 lines is {pitch} pt apart; Word {expected}");
+        }
+    }
+}
+
+
+/// GitHub issue #208: a line that an inline picture makes on a line grid (18 pt, `w:docGrid type="lines"`, 11 pt text of 1.079 lines or single spacing) is the picture's height
+/// rounded up to whole grids, and one exactly k grids high is k grids. Word's PDFs (`grid-inline-picture-{a,b,c}.pdf`, made by `scripts/corpus/office_truth_win.ps1`):
+/// the distance between "Text<i>" and "Text<i+1>", which holds a line of the text, the picture's line, and two paragraph spaces of 8 pt.
+#[cfg_attr(windows, test)]
+fn a_line_of_a_picture_on_a_grid_is_the_pictures_height_rounded_up_to_whole_grids() {
+    // (file, [(i, the picture's height, Word's distance from "Text<i>" to "Text<i + 1>")])
+    let cases: [(&str, &[(usize, f32, f32)]); 3] = [
+        ("grid-inline-picture-a.docx", &[(0, 30.0, 87.96), (1, 60.0, 124.11), (2, 100.0, 159.98), (3, 150.0, 213.99)]),
+        ("grid-inline-picture-b.docx", &[(0, 36.0, 87.96), (1, 54.0, 106.11), (2, 72.0, 123.96), (3, 90.0, 141.98), (4, 72.01, 124.11)]),
+        ("grid-inline-picture-c.docx", &[(0, 36.0, 87.96), (1, 54.0, 106.11), (2, 72.0, 123.96), (3, 90.0, 141.98), (4, 72.01, 124.11)]),
+    ];
+    for (file, expected) in cases {
+        let pages = laid_out(file);
+        let y_of = |word: &str| -> (usize, f32) {
+            pages.pages.iter().enumerate().find_map(|(n, page)| page.items.iter().find_map(|item| if let Item::Text { y, text, .. } = item && text.trim() == word { Some((n, *y)) } else { None })).unwrap_or_else(|| panic!("{file}: {word} is drawn"))
+        };
+        for &(i, height, word) in expected {
+            let (a, b) = (y_of(&format!("Text{i}")), y_of(&format!("Text{}", i + 1)));
+            assert_eq!(a.0, b.0, "{file}: Text{i} and the next on one page");
+            assert!((b.1 - a.1 - word).abs() < 0.15, "{file}: a picture of {height} pt: {} against Word {word}", b.1 - a.1);
         }
     }
 }

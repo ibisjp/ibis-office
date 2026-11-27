@@ -12,6 +12,8 @@ pub struct Loaded {
     pub source: std::sync::Arc<ibis_formats::Source>,
     /// The password a protected file was opened with: saving protects it again.
     pub password: Option<String>,
+    pub jtd_original: Option<Vec<u8>>,
+    pub jtd_gallery: bool,
     pub(crate) csv_stream: Option<std::sync::mpsc::Receiver<ibis_formats::CsvProgressiveChunk>>,
 }
 
@@ -51,45 +53,16 @@ fn read_file_unguarded(path: &std::path::Path, password: Option<&str>) -> Result
     timing::mark_read_start();
     let read_t0 = crate::clock::Instant::now();
     let mut data = std::fs::read(path).map_err(|e| e.to_string())?;
-    if path.extension().and_then(|e| e.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("pdf") || ext.eq_ignore_ascii_case("ofd") || ext.eq_ignore_ascii_case("xps") || ext.eq_ignore_ascii_case("oxps")) || data.starts_with(b"%PDF-") || ibis_ofd::is_ofd(&data) || ibis_xps::is_xps(&data) {
-        let raw: std::sync::Arc<[u8]> = data.into();
-        let page_boxes: Vec<(f32, f32)> = if ibis_ofd::is_ofd(&raw) {
-            let ofd = ibis_ofd::OfdContainer::from_bytes(raw.clone()).map_err(|e| e.to_string())?;
-            ofd.page_infos()
-                .into_iter()
-                .map(|p| (p.crop_box.width(), p.crop_box.height()))
-                .collect()
-        } else if ibis_xps::is_xps(&raw) {
-            let xps = ibis_xps::XpsContainer::from_bytes(raw.clone()).map_err(|e| e.to_string())?;
-            xps.page_infos()
-                .into_iter()
-                .map(|p| (p.crop_box.width(), p.crop_box.height()))
-                .collect()
-        } else {
-            let mut container = ibis_pdf::PdfContainer::from_bytes(raw.clone()).map_err(|e| e.to_string())?;
-            ibis_pdf::scene::collect_pages(&mut container)
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .map(|p| (p.crop_box.width(), p.crop_box.height()))
-                .collect()
-        };
-        let first_size = page_boxes
-            .first()
-            .map(|&(w, h)| ibis_doc_model::EmuSize::new((w as i64) * ibis_doc_model::EMU_PER_POINT, (h as i64) * ibis_doc_model::EMU_PER_POINT))
-            .unwrap_or_else(|| ibis_doc_model::EmuSize::new(595 * ibis_doc_model::EMU_PER_POINT, 842 * ibis_doc_model::EMU_PER_POINT));
-        let mut presentation = ibis_doc_model::Presentation::empty(first_size);
-        for (w, h) in &page_boxes {
-            let mut slide = ibis_doc_model::Slide::new(presentation.new_slide_id());
-            slide.size = Some(ibis_doc_model::EmuSize::new(
-                (*w as i64) * ibis_doc_model::EMU_PER_POINT,
-                (*h as i64) * ibis_doc_model::EMU_PER_POINT,
-            ));
-            presentation.slides.push(slide);
-        }
-        presentation.pdf_bytes = Some(raw);
+    if path.extension().and_then(|e| e.to_str()).is_some_and(ibis_jtd::is_extension) || ibis_jtd::is_jtd(&data) {
+        let (presentation, jtd_gallery) = crate::jtd_preview::read(&data)?;
         let blank = ibis_formats::blank_file(ibis_formats::Kind::Document).map_err(|e| e.to_string())?;
         let source = ibis_formats::open(blank).map_err(|e| e.to_string())?.source;
-        return Ok(Loaded { presentation, source: std::sync::Arc::new(source), password: None, csv_stream: None });
+        crate::render::preload::Preload::start_for_next(&presentation);
+        return Ok(Loaded { presentation, source: std::sync::Arc::new(source), password: None, csv_stream: None, jtd_original: Some(data), jtd_gallery });
+    }
+    if crate::fixed_layout::is_fixed_layout(path.extension().and_then(|e| e.to_str()), &data) {
+        let opened = crate::fixed_layout::open_fixed_layout(data.into())?;
+        return Ok(Loaded { presentation: opened.presentation, source: std::sync::Arc::new(opened.source), password: None, csv_stream: None, jtd_original: None, jtd_gallery: false });
     }
     let read_fs_ms = read_t0.elapsed().as_secs_f64() * 1000.0;
     timing::mark("read");
@@ -103,6 +76,8 @@ fn read_file_unguarded(path: &std::path::Path, password: Option<&str>) -> Result
     // An old binary file (.xls, .ppt, .doc): read by its content, not by its extension.
     let is_legacy_binary = ibis_formats::is_legacy_binary(&data);
     let external_document_format = ibis_formats::docx_convert::DocxConvertFormat::from_path(path);
+    // A DPC E/F or RECEIPTC file is a plain text file by its name (EF....txt): taken by what is in it, a sheet, not the text of a document.
+    let external_document_format = external_document_format.filter(|f| *f != ibis_formats::docx_convert::DocxConvertFormat::Txt || !(ibis_formats::dpc::is_dpc_ef(&data) || ibis_formats::uke::is_uke(&data)));
     let open_result = if let Some(law_md) = ibis_formats::lawtext::path_input_to_markdown(path, &data).map_err(|e| {
         note_open_failed(path);
         e.to_string()
@@ -140,7 +115,7 @@ fn read_file_unguarded(path: &std::path::Path, password: Option<&str>) -> Result
     let total_file_ms = read_t0.elapsed().as_secs_f64() * 1000.0;
     eprintln!("ibisOffice timing: read_file total: {total_file_ms:.1} ms (fs::read: {read_fs_ms:.1} ms, open: {open_ms:.1} ms)");
     crate::render::preload::Preload::start_for_next(&opened.presentation);
-    Ok(Loaded { presentation: opened.presentation, source: std::sync::Arc::new(opened.source), password: used, csv_stream })
+    Ok(Loaded { presentation: opened.presentation, source: std::sync::Arc::new(opened.source), password: used, csv_stream, jtd_original: None, jtd_gallery: false })
 }
 
 /// Tell every format that the file at `path` could not be parsed (in the order of their registration, as they were told

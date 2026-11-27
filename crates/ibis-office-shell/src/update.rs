@@ -554,11 +554,40 @@ fn installed_copy() -> Result<PathBuf, String> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let app = exe.parent().map(Path::to_path_buf).ok_or("no folder")?;
     let parent = app.parent().ok_or("no parent folder")?;
+    probe_writable(parent, &app)?;
+    Ok(app)
+}
+
+/// Whether the update can do what it needs to do. Windows (`swap::install_files`): a backup *folder* `<app>.update-backup` is made beside the
+/// app folder (so `parent` must allow making a folder, not a file: a standard user can make a folder in `C:\` but not a file, #268) and the
+/// files inside the app folder are replaced (so `app` must allow writing a file). macOS and Linux: a copy is made beside the app, so a file
+/// is written in `parent`.
+#[cfg(windows)]
+fn probe_writable(parent: &Path, app: &Path) -> Result<(), String> {
+    let dir = parent.join(format!(".ibis-update-probe-{}", std::process::id()));
+    match std::fs::create_dir(&dir) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir(&dir);
+        }
+        Err(err) => return Err(format!("{} is not writable (a folder cannot be made in it): {err}", parent.display())),
+    }
+    let file = app.join(format!(".ibis-update-probe-{}", std::process::id()));
+    match std::fs::write(&file, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&file);
+            Ok(())
+        }
+        Err(err) => Err(format!("{} is not writable: {err}", app.display())),
+    }
+}
+
+#[cfg(not(windows))]
+fn probe_writable(parent: &Path, _app: &Path) -> Result<(), String> {
     let probe = parent.join(format!(".ibis-update-probe-{}", std::process::id()));
     match std::fs::write(&probe, b"") {
         Ok(()) => {
             let _ = std::fs::remove_file(&probe);
-            Ok(app)
+            Ok(())
         }
         Err(err) => Err(format!("{} is not writable: {err}", parent.display())),
     }

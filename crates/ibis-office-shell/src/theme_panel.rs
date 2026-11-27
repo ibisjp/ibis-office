@@ -39,11 +39,26 @@ pub struct ThemePalettePreset {
     pub colors: [(&'static str, Rgb); 12],
 }
 
-pub const THEME_PALETTES: [ThemePalettePreset; 7] = [
+pub const THEME_PALETTES: [ThemePalettePreset; 8] = [
     ThemePalettePreset {
         id: "office",
         label_key: "pptx.theme.palette.office",
         selected_action_id: "pptx.theme.palette-selected.office",
+        // The Microsoft 365 default "Office" (2023): tasks/doc/requests/2026-11-24-290-office-colour-scheme-result.md (clrScheme of a new presentation, PowerPoint 16.0.20625).
+        colors: [
+            ("dk1", Rgb(0x000000)), ("lt1", Rgb(0xffffff)),
+            ("dk2", Rgb(0x0e2841)), ("lt2", Rgb(0xe8e8e8)),
+            ("accent1", Rgb(0x156082)), ("accent2", Rgb(0xe97132)),
+            ("accent3", Rgb(0x196b24)), ("accent4", Rgb(0x0f9ed5)),
+            ("accent5", Rgb(0xa02b93)), ("accent6", Rgb(0x4ea72e)),
+            ("hlink", Rgb(0x467886)), ("folHlink", Rgb(0x96607d)),
+        ],
+    },
+    // Office 2013 - 2022: the colours "Office" had before Microsoft 365's 2023 theme (#290).
+    ThemePalettePreset {
+        id: "office_2013_2022",
+        label_key: "pptx.theme.palette.office_2013_2022",
+        selected_action_id: "pptx.theme.palette-selected.office_2013_2022",
         colors: [
             ("dk1", Rgb(0x000000)), ("lt1", Rgb(0xffffff)),
             ("dk2", Rgb(0x44546a)), ("lt2", Rgb(0xe7e6e6)),

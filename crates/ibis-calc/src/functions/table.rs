@@ -237,6 +237,8 @@ pub static FUNCTIONS: &[FunctionInfo] = &[
     FunctionInfo { name: "HYPERLINK", prefix: "", min_args: 1, max_args: 2, volatile: false },
     FunctionInfo { name: "HYPGEOM.DIST", prefix: "_xlfn.", min_args: 5, max_args: 5, volatile: false },
     FunctionInfo { name: "HYPGEOMDIST", prefix: "", min_args: 4, max_args: 4, volatile: false },
+    FunctionInfo { name: "IBIS.FIELDMATCH", prefix: "_xlfn.", min_args: 3, max_args: 5, volatile: false },
+    FunctionInfo { name: "IBIS.RECORDMATCH", prefix: "_xlfn.", min_args: 1, max_args: 255, volatile: false },
     FunctionInfo { name: "IF", prefix: "", min_args: 2, max_args: 3, volatile: false },
     FunctionInfo { name: "IFERROR", prefix: "", min_args: 2, max_args: 2, volatile: false },
     FunctionInfo { name: "IFNA", prefix: "_xlfn.", min_args: 2, max_args: 2, volatile: false },

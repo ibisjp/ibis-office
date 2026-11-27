@@ -18,6 +18,12 @@ use ibis_doc_model::{CellRange, SlideId, cell_name, sheet_command::Axis};
 
 use crate::shell::icons::Material;
 use super::sheet_tab_scroll::{TAB_BUTTON_WIDTH, reveal_offset};
+
+/// The sheet tabs' exception to K0073 (a finger held on the spot is a right click at 500 ms, within 8 px): a finger held on a tab lifts it at 500 ms, the menu comes
+/// 500 ms later (1000 ms in all) if the tab has not been moved, and a move beyond the slop in between carries the tab (K0079).
+const FINGER_MENU_AFTER_LIFT: std::time::Duration = std::time::Duration::from_millis(500);
+/// How far the finger may move after the lift and still be "not moved" (gpui's `touch_slop`, the one K0073 uses).
+const FINGER_SLOP: f32 = 8.;
 use super::sheet_tab_drag;
 use crate::shell::editor::{SlideEditor, SlideLayout, Tool, WorkspaceContent, sheet_of};
 
@@ -39,6 +45,10 @@ actions!(
         GoTo,
         /// Open テーブルの作成 (Excel's ⌘T).
         InsertTable,
+        /// グループ化 of the selected rows or columns (Excel's Alt+Shift+→; ⌘+Shift+K on a Mac).
+        GroupLines,
+        /// グループ解除 of the selected rows or columns (Excel's Alt+Shift+←; ⌘+Shift+J on a Mac).
+        UngroupLines,
         /// Select the cell at the edge of the data region above (Excel's Ctrl+↑).
         JumpCellUp,
         /// Select the cell at the edge of the data region below.
@@ -210,8 +220,7 @@ pub fn spilled_ghost_formula_on(sheet: &ibis_doc_model::Sheet, row: u32, column:
             if anchor_cell.value == ibis_doc_model::CellValue::Error(ibis_doc_model::CellError::Spill) {
                 continue;
             }
-            let formula = anchor_cell.formula.as_deref()?;
-            return Some(format!("={}", sheet.formula_shown(anchor.0, anchor.1, formula)));
+            return sheet.shown_formula(anchor_cell);
         }
     }
     None
@@ -447,8 +456,8 @@ impl SlideEditor {
                 format!("{{=TABLE({},{})}}", name(t.row_input), name(t.column_input))
             }
             (None, Some((_, sheet)), Some((column, row))) => {
-                let content = sheet.cell(row, column).map(|cell| match &cell.formula {
-                    Some(formula) => format!("={}", sheet.formula_shown(row, column, formula)),
+                let content = sheet.cell(row, column).map(|cell| match sheet.shown_formula(cell) {
+                    Some(formula) => formula,
                     // A number as Excel's bar shows it (a date or time as a date or time, a percentage with %; #199).
                     None => match &cell.value {
                         ibis_doc_model::CellValue::Number(n) => ibis_calc::input::number_edit_text(*n, &sheet.styles[cell.style as usize].number_format, self.presentation().workbook.as_ref().is_some_and(|w| w.date1904)),
@@ -526,6 +535,14 @@ impl SlideEditor {
                             )
                             .child(Input::new(&self.wb().jump.name_box).small()),
                     )
+                    .child({
+                        let cell = self.wb().jump.name_box_bounds.clone();
+                        canvas(|_, _, _| {}, move |bounds, _, _, _| {
+                            cell.set(Some(bounds));
+                            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+                            crate::shell::scenario::button_probe::record_bounds("formula-bar-name-box", bounds);
+                        }).absolute().size_full()
+                    })
                     .child(
                         div()
                             .absolute()
@@ -666,7 +683,7 @@ impl SlideEditor {
                                                                 // lines are brought up where they would pass the row's clip (the bar is `overflow_hidden`), whatever the typeface (K0044).
                                                                 let (ascent, descent) = shaped.as_ref().map_or((0.0, 0.0), |s| (f32::from(s.ascent), f32::from(s.descent)));
                                                                 let height = f32::from(bounds.size.height);
-                                                                let baseline = crate::render::ime_text::underline_baseline_within((height + ascent - descent) / 2.0, height, f32::from(size) / k, k);
+                                                                let baseline = crate::render::ime_text::underline_baseline_within((height + ascent - descent) / 2.0, height, f32::from(size) / k, k, *style);
                                                                 crate::render::ime_text::paint_span(window, point(bounds.origin.x + x0, bounds.origin.y), k, *style, f32::from(size) / k, f32::from(x1 - x0), baseline, fg);
                                                             }
                                                         }
@@ -732,7 +749,9 @@ impl SlideEditor {
                     })),
             )
 ;
-        div().flex().flex_col().flex_shrink_0().child(bar).when(expanded,|d|d.child(self.formula_bar_splitter(cx)))
+        // (Under the toolbar at the window's bottom, K0089, the bar grows upward and has no splitter below it.)
+        let splitter = expanded && !crate::shell::narrow_layout::bars_at_bottom(self, window);
+        div().flex().flex_col().flex_shrink_0().child(bar).when(splitter,|d|d.child(self.formula_bar_splitter(cx)))
     }
 
     fn request_sheet_tab_reveal(&mut self, id: SlideId, cx: &mut Context<Self>) {
@@ -761,6 +780,99 @@ impl SlideEditor {
         let drag = sheet_tab_drag::TabDrag::press(id, press, &tabs, f32::from(tab.left()) + offset, (f32::from(view.left()), f32::from(view.right())), locked);
         self.wb_mut().tab_drag = Some(drag);
         self.focus_handle.focus(window, cx);
+    }
+
+    /// A finger has been held on the sheet tabs for 500 ms (K0079; the window's long press, `LongPressEvent`): on a tab it lifts the tab (the drop shadow: the
+    /// drag is `active`), and 500 ms more without moving opens the tab's menu; moved before that, it carries the tab along the strip. This is the tabs'
+    /// exception to K0073's rule (a long press is a right click at 500 ms): returns whether a tab took it, so that the window does not make it a right click.
+    pub(crate) fn finger_holds_tab(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.is_workbook() || self.wb().jump.renaming.is_some() {
+            return false;
+        }
+        let scroll = self.wb().tab_scroll.clone();
+        let (view, offset) = (scroll.bounds(), f32::from(scroll.offset().x));
+        if !view.contains(&position) {
+            return false;
+        }
+        let slides: Vec<SlideId> = self.presentation().slides.iter().map(|s| s.id).collect();
+        let Some((index, id)) = slides.iter().copied().enumerate().find(|(i, _)| {
+            scroll.bounds_for_item(*i).is_some_and(|b| {
+                let (left, right) = (f32::from(b.left()) + offset, f32::from(b.right()) + offset);
+                (left..right).contains(&f32::from(position.x)) && position.y >= b.top() && position.y <= b.bottom()
+            })
+        }) else {
+            return false;
+        };
+        let tabs: Vec<(SlideId, f32)> = slides.iter().enumerate().filter_map(|(i, id)| scroll.bounds_for_item(i).map(|b| (*id, f32::from(b.size.width)))).collect();
+        if tabs.len() != slides.len() {
+            return false;
+        }
+        let Some(tab) = scroll.bounds_for_item(index) else { return false };
+        let locked = self.workbook_structure_locked();
+        let press = (f32::from(position.x), f32::from(position.y));
+        let mut drag = sheet_tab_drag::TabDrag::press(id, press, &tabs, f32::from(tab.left()) + offset, (f32::from(view.left()), f32::from(view.right())), locked);
+        drag.active = true;
+        drag.finger = true;
+        // 500 ms more (the finger holds 1000 ms in all): if the tab has not been moved the menu comes.
+        drag.hold = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(FINGER_MENU_AFTER_LIFT).await;
+            this.update_in(cx, |this, window, cx| this.finger_tab_menu(id, position, window, cx)).ok();
+        }));
+        self.wb_mut().tab_drag = Some(drag);
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+        true
+    }
+
+    /// 1000 ms and the finger has not moved the lifted tab: its menu, as a right click on it opens it.
+    fn finger_tab_menu(&mut self, id: SlideId, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let holding = self.wb().tab_drag.as_ref().is_some_and(|d| d.finger && !d.carrying && d.id == id);
+        if !holding {
+            return;
+        }
+        self.wb_mut().tab_drag = None;
+        let event = MouseDownEvent { button: MouseButton::Right, position, modifiers: Modifiers::default(), click_count: 1, first_mouse: false };
+        self.on_tab_right_down(id, &event, window, cx);
+        cx.notify();
+    }
+
+    /// The finger that holds a tab moved to `position`: within the touch slop nothing changes; beyond it the tab is carried (a locked workbook refuses, as the mouse's
+    /// drag does).
+    pub(crate) fn finger_tab_moved(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some((press, carrying, locked)) = self.wb().tab_drag.as_ref().filter(|d| d.finger).map(|d| (d.press, d.carrying, d.locked)) else { return };
+        if !carrying {
+            let (dx, dy) = (f32::from(position.x) - press.0, f32::from(position.y) - press.1);
+            if (dx * dx + dy * dy).sqrt() <= FINGER_SLOP {
+                return;
+            }
+            if locked {
+                self.wb_mut().tab_drag = None;
+                self.workbook_protection_refuses(cx);
+                cx.notify();
+                return;
+            }
+            if let Some(drag) = self.wb_mut().tab_drag.as_mut() {
+                drag.carrying = true;
+                drag.hold = None;
+            }
+        }
+        // The tab keeps its height (the mouse's drag does the same): only the finger's x counts.
+        self.tab_drag_moved(&MouseMoveEvent { position, pressed_button: Some(MouseButton::Left), modifiers: Modifiers::default() }, cx);
+    }
+
+    /// The finger that held a tab lifted: the tab is dropped where it is (one step), or, lifted and not moved, it is just chosen as a tap chooses it.
+    pub(crate) fn finger_tab_lifted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.wb().tab_drag.as_ref().is_some_and(|d| d.finger) {
+            self.tab_drag_released(window, cx);
+        }
+    }
+
+    /// The hold was taken back (a second finger, K0065): the tab is put down where it was.
+    pub(crate) fn finger_tab_cancelled(&mut self, cx: &mut Context<Self>) {
+        if self.wb().tab_drag.as_ref().is_some_and(|d| d.finger) {
+            self.wb_mut().tab_drag = None;
+            cx.notify();
+        }
     }
 
     /// The pointer moved while the button is down on a tab. Whether the drag took the event.
@@ -981,12 +1093,16 @@ impl SlideEditor {
         let left = button("sheet-tabs-left", "arrow_left").on_click(cx.listener(move |_, _, _, cx| left_step(-1.0, cx)));
         let right = button("sheet-tabs-right", "arrow_right").on_click(cx.listener(move |_, _, _, cx| right_step(1.0, cx)));
         let make_add = |id: &'static str| {
-            button(id, "add").on_click(cx.listener(|this, _, window, cx| {
+            let add = button(id, "add").on_click(cx.listener(|this, _, window, cx| {
                 this.insert_sheet(window, cx);
                 // The new tab shows.
                 this.request_sheet_tab_reveal(this.current_slide, cx);
                 this.focus_handle.focus(window, cx);
-            }))
+            }));
+            // The scenario tests (K0085) read where the + is drawn, frame by frame.
+            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+            let add = crate::shell::scenario::button_probe::observe_control(add, id.into());
+            add
         };
         let editor = cx.entity().downgrade();
         let trigger = Button::new("sheet-list")
@@ -1015,16 +1131,24 @@ impl SlideEditor {
         };
         let scroll_bounds = scroll.bounds();
 
-        let is_plus_fixed = if let (Some(last_tab), true) = (last_tab_bounds, scroll_bounds.size.width > px(0.)) {
+        // The + is inline when the tabs and the + together fit the strip as it is *with the + inline*, and fixed otherwise. The strip's bounds are the
+        // last frame's, and the + being fixed takes `FIXED_PLUS_WIDTH` from them: so the width the strip has with the + inline is got back by adding that
+        // when the last frame drew it fixed. The decision then depends on the tabs and the window only, not on its own last answer: it cannot swing from
+        // one frame to the next (K0085: at an iPhone's width with the right pane open the strip is left with no width). Before there is a layout, the
+        // last answer stands (or, with none, the count of tabs).
+        const FIXED_PLUS_WIDTH: f32 = TAB_BUTTON_WIDTH + 1.0;
+        // The bar's room (the workspace's width) at which the 2 arrows, the list, the + and a strip of 40 pt do not fit.
+        let narrow_bar = self.workspace_bounds.is_some_and(|b| f32::from(b.size.width) < 4.0 * TAB_BUTTON_WIDTH + 2.0 + 40.0);
+        let was_fixed = self.wb().tab_plus_fixed.get();
+        let is_plus_fixed = if let (Some(last_tab), Some(was_fixed)) = (last_tab_bounds, was_fixed) {
             // Right edge of the last tab from the content origin.
             let tabs_right = last_tab.right() - scroll_bounds.left() - scroll.offset().x;
-            // Check if inline + button (28px) fits within the scroll viewport width.
-            let fits_inline = (tabs_right + px(TAB_BUTTON_WIDTH)) <= scroll_bounds.size.width;
-            !fits_inline || scroll.max_offset().x > px(0.5) || scroll.offset().x < px(-0.5)
+            let inline_width = scroll_bounds.size.width + if was_fixed { px(FIXED_PLUS_WIDTH) } else { px(0.) };
+            (tabs_right + px(TAB_BUTTON_WIDTH)) > inline_width
         } else {
-            // Fallback for initial render before bounds are laid out.
-            slide_count > 14
+            was_fixed.unwrap_or(slide_count > 14)
         };
+        self.wb().tab_plus_fixed.set(Some(is_plus_fixed));
 
         let mut tab_elements: Vec<AnyElement> = tabs.map(|t| t.into_any_element()).collect();
         if !is_plus_fixed {
@@ -1047,8 +1171,9 @@ impl SlideEditor {
             .bg(theme.title_bar)
             .border_t_1()
             .border_color(border)
-            .child(left)
-            .child(right)
+            // Where the window leaves the tab bar too little room (an iPhone's width with the right pane open: about 100 pt), the arrows are left out so that the
+            // strip keeps some width and the + is not pushed under the pane (K0085). The room is the window's, not the strip's: it does not depend on this layout.
+            .when(!narrow_bar, |d| d.child(left).child(right))
             .child(list)
             .child(div().w(px(1.)).h_full().flex_shrink_0().bg(border))
             .child(
@@ -1076,6 +1201,21 @@ impl SlideEditor {
                                 let mut took = false;
                                 let _ = moved.update(cx, |this, cx| took = this.tab_drag_moved(event, cx));
                                 if took { cx.stop_propagation(); }
+                            });
+                            // The window's long press (a finger held 500 ms): on a tab it is the tabs' own (K0079), not K0073's right click.
+                            let long = editor.clone();
+                            window.on_mouse_event(move |event: &LongPressEvent, phase, window, cx| {
+                                if phase != DispatchPhase::Capture { return; }
+                                let _ = long.update(cx, |this, cx| match event.phase {
+                                    TouchPhase::Started => {
+                                        if this.finger_holds_tab(event.start_position, window, cx) {
+                                            window.prevent_default();
+                                        }
+                                    }
+                                    TouchPhase::Moved => this.finger_tab_moved(event.position, cx),
+                                    TouchPhase::Ended => this.finger_tab_lifted(window, cx),
+                                    TouchPhase::Cancelled => this.finger_tab_cancelled(cx),
+                                });
                             });
                             let released = editor.clone();
                             window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
@@ -1125,29 +1265,24 @@ impl SlideEditor {
         let (shape, sheet) = self.current_sheet()?;
         let show_headings = sheet.headings;
         let scale = content.scale;
-        let to_px = |origin: Pixels, at: i64, offset: i64| f32::from(origin) + ((at + offset) as f32 * scale).round();
-        let mut xs: Vec<f32> = sheet.column_offsets().into_iter().map(|o| to_px(content.slide_origin.x, shape.frame.x, o)).collect();
-        let mut ys: Vec<f32> = sheet.row_offsets().into_iter().map(|o| to_px(content.slide_origin.y, shape.frame.y, o)).collect();
-        let target_right_px = to_px(content.slide_origin.x, shape.frame.x, 0) + f32::from(content.size.width) + 2000.0;
-        let target_bottom_px = to_px(content.slide_origin.y, shape.frame.y, 0) + f32::from(content.size.height) + 2000.0;
-        let last_column_emu: i64 = sheet.columns.iter().sum();
-        let last_row_emu: i64 = sheet.rows.iter().sum();
-        let mut cur_x = *xs.last().unwrap_or(&0.0);
-        let mut col_count = sheet.columns.len();
-        while cur_x < target_right_px && col_count < 16_384 {
-            let extra = (col_count + 1 - sheet.columns.len()) as i64 * sheet.default_column;
-            cur_x = to_px(content.slide_origin.x, shape.frame.x, last_column_emu + extra);
-            xs.push(cur_x);
-            col_count += 1;
-        }
-        let mut cur_y = *ys.last().unwrap_or(&0.0);
-        let mut row_count = sheet.rows.len();
-        while cur_y < target_bottom_px && row_count < 1_048_576 {
-            let extra = (row_count + 1 - sheet.rows.len()) as i64 * sheet.default_row;
-            cur_y = to_px(content.slide_origin.y, shape.frame.y, last_row_emu + extra);
-            ys.push(cur_y);
-            row_count += 1;
-        }
+        // 限られたグリッド表示 (#273): the headers stop where the grid does.
+        let (col_cap, row_cap) = if crate::shell::settings_dialog::limited_grid() {
+            let (c, r) = super::limited_grid::extent(sheet, self.selected_range());
+            (c as usize, r as usize)
+        } else {
+            (16_384, 1_048_576)
+        };
+        let (xs, ys, hidden_columns, hidden_rows) = cached_sheet_headers(
+            sheet,
+            scale,
+            f32::from(content.slide_origin.x),
+            f32::from(content.slide_origin.y),
+            shape.frame.x,
+            shape.frame.y,
+            f32::from(content.size.width),
+            f32::from(content.size.height),
+            (col_cap, row_cap),
+        );
         let range = self.selected_range().filter(|_| self.selection.is_none() || self.sheet_range_pick_active());
         let all_selected = range.is_some_and(|r| {
             r.first_column == 0
@@ -1157,21 +1292,22 @@ impl SlideEditor {
         });
         let scroll = self.workspace_scroll.clone();
         let font = font(cx.theme().font_family.clone());
-        let (head_w, head_h) = (px(row_header_width(sheet)), px(COLUMN_HEADER_HEIGHT));
+        let (head_w, head_h) = (px(row_header_width(sheet)), px(crate::shell::sheet_metrics::column_header_height(sheet)));
         // Frozen columns and rows stay put; the others scroll past them.
         let (frozen_columns, frozen_rows) = sheet.frozen.unwrap_or((0, 0));
         let split = self.frozen_split(content).unwrap_or((None, None));
         // Split panes (表示 > 分割) scroll on their own, all the lines in each.
         let (pane_shift, main_lead, all_lines) = (self.pane_shift(), self.main_pane_lead(), self.split_panes().is_some());
         let (split_x, split_y) = (split.0.map_or(head_w, px), split.1.map_or(head_h, px));
+        // The outline of grouped rows and columns (GitHub issue #291): its strips lie at the left of the row headers and above the column headers.
+        let (outline_w, outline_h) = (crate::shell::sheet_metrics::outline_width(sheet), crate::shell::sheet_metrics::outline_height(sheet));
+        let (gw, gh) = (px(outline_w), px(outline_h));
+        let outline_sheet = (outline_w > 0.0 || outline_h > 0.0).then(|| sheet.clone());
         let geometry = self.wb().header_geometry.clone();
         if !show_headings {
             *geometry.borrow_mut() = Default::default();
         }
         let paint_geometry = geometry.clone();
-        // Hidden columns and rows: where a run of them starts, the headers' line is drawn green and 2 px wide (Excel's own mark is a doubled line).
-        let hidden_columns: Vec<bool> = sheet.columns.iter().map(|&w| w == 0).collect();
-        let hidden_rows: Vec<bool> = sheet.rows.iter().map(|&h| h == 0).collect();
         let drag = self.wb().header_drag;
         let (primary, bg_color) = (cx.theme().primary, cx.theme().background);
         let extra_shape_frames: Vec<AnyElement> = self
@@ -1215,10 +1351,17 @@ impl SlideEditor {
             let offset = scroll.offset();
             let o = bounds.origin;
             let geometry = paint_geometry.clone();
-            *geometry.borrow_mut() = super::headers::HeaderGeometry { scale, origin: (f32::from(o.x), f32::from(o.y)), row_header_width: f32::from(head_w), ..Default::default() };
+            *geometry.borrow_mut() = super::headers::HeaderGeometry { scale, origin: (f32::from(o.x), f32::from(o.y)), row_header_width: f32::from(head_w), outline: (outline_w, outline_h), ..Default::default() };
+            // The column headers start below the outline's strip, the row headers right of it.
+            let (col_top, col_h, row_left, row_w) = (o.y + gh, head_h - gh, o.x + gw, head_w - gw);
             let (background, line, text, selected, green) =
                 (rgb(HEADER_BACKGROUND), rgb(HEADER_LINE), rgb(HEADER_TEXT), rgb(HEADER_SELECTED), rgb(SELECTION_COLOR));
+            let ts_gen = (std::sync::Arc::as_ptr(window.text_system()) as usize as u64)
+                ^ crate::render::shape_view::fonts_generation().wrapping_mul(0xA24B_AED4_963E_E407);
             let label = |window: &mut Window, cx: &mut App, s: String, color: Rgba, x: Pixels, y: Pixels, w: Pixels, h: Pixels| {
+                if w < px(1.) || h < px(1.) {
+                    return;
+                }
                 let run = TextRun {
                     len: s.len(),
                     font: font.clone(),
@@ -1227,10 +1370,33 @@ impl SlideEditor {
                     underline: None,
                     strikethrough: None,
                 };
-                let shaped = window.text_system().shape_line(s.into(), px(HEADER_FONT_SIZE), &[run], None);
-                if w < px(1.) || h < px(1.) {
-                    return;
-                }
+                let shaped = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    ts_gen.hash(&mut hasher);
+                    s.hash(&mut hasher);
+                    font.hash(&mut hasher);
+                    let key = hasher.finish();
+                    if let Some(cached) = HEADER_SHAPES.with(|c| {
+                        c.borrow()
+                            .get(&key)
+                            .filter(|l| l.text.as_ref() == s)
+                            .cloned()
+                    }) {
+                        cached.restyled(std::slice::from_ref(&run))
+                    } else {
+                        let line = window.text_system().shape_line(s.into(), px(HEADER_FONT_SIZE), std::slice::from_ref(&run), None);
+                        let rc = std::rc::Rc::new(line);
+                        HEADER_SHAPES.with(|c| {
+                            let mut map = c.borrow_mut();
+                            if map.len() >= 4096 {
+                                map.clear();
+                            }
+                            map.insert(key, rc.clone());
+                        });
+                        rc.restyled(std::slice::from_ref(&run))
+                    }
+                };
                 // A label that fits is centred; one that does not starts at
                 // the header's left and is cut off at its edges.
                 let fits = shaped.width <= w - px(2.);
@@ -1253,7 +1419,7 @@ impl SlideEditor {
                         }
                         let (left, right) = (o.x + shift + px(pair[0]), o.x + shift + px(pair[1]));
                         if hidden_columns.get(column) == Some(&true) && (column == 0 || hidden_columns.get(column - 1) != Some(&true)) {
-                            hidden_marks.push(Bounds::new(point(left - px(1.), o.y), size(px(2.), head_h)));
+                            hidden_marks.push(Bounds::new(point(left - px(1.), col_top), size(px(2.), col_h)));
                         }
                         if right >= strip.left() && left <= strip.right() {
                             geometry.borrow_mut().columns.push((column as u32, f32::from(left), f32::from(right)));
@@ -1266,23 +1432,23 @@ impl SlideEditor {
                         }
                         let is_selected =
                             range.is_some_and(|r| (r.first_column..=r.last_column).contains(&(column as u32)));
-                        let cell = Bounds::new(point(left, o.y), size(right - left, head_h));
+                        let cell = Bounds::new(point(left, col_top), size(right - left, col_h));
                         if is_selected {
                             window.paint_quad(fill(cell, selected));
                             window.paint_quad(fill(Bounds::new(point(left, o.y + head_h - px(2.)), size(right - left, px(2.))), green));
                         }
-                        window.paint_quad(fill(Bounds::new(point(right - px(1.), o.y), size(px(1.), head_h)), line));
+                        window.paint_quad(fill(Bounds::new(point(right - px(1.), col_top), size(px(1.), col_h)), line));
                         let color = if is_selected { green } else { text };
-                        label(window, cx, column_letters(column as u32), color, left, o.y, right - left, head_h);
+                        label(window, cx, column_letters(column as u32), color, left, col_top, right - left, col_h);
                     }
                     for mark in hidden_marks {
                         window.paint_quad(fill(mark, green));
                     }
                 });
             };
-            let frozen_strip = Bounds::new(point(o.x + head_w, o.y), size(split_x - head_w, head_h));
+            let frozen_strip = Bounds::new(point(o.x + head_w, col_top), size(split_x - head_w, col_h));
             columns(window, cx, frozen_strip, pane_shift.x, true);
-            let strip = Bounds::new(point(o.x + split_x, o.y), size(bounds.size.width - split_x, head_h));
+            let strip = Bounds::new(point(o.x + split_x, col_top), size(bounds.size.width - split_x, col_h));
             columns(window, cx, strip, offset.x + main_lead.x, false);
             window.paint_quad(fill(Bounds::new(point(o.x, o.y + head_h - px(1.)), size(bounds.size.width, px(1.))), line));
 
@@ -1297,7 +1463,7 @@ impl SlideEditor {
                         }
                         let (top, bottom) = (o.y + shift + px(pair[0]), o.y + shift + px(pair[1]));
                         if hidden_rows.get(row) == Some(&true) && (row == 0 || hidden_rows.get(row - 1) != Some(&true)) {
-                            hidden_marks.push(Bounds::new(point(o.x, top - px(1.)), size(head_w, px(2.))));
+                            hidden_marks.push(Bounds::new(point(row_left, top - px(1.)), size(row_w, px(2.))));
                         }
                         if bottom >= strip.top() && top <= strip.bottom() {
                             geometry.borrow_mut().rows.push((row as u32, f32::from(top), f32::from(bottom)));
@@ -1309,29 +1475,29 @@ impl SlideEditor {
                             break;
                         }
                         let is_selected = range.is_some_and(|r| (r.first_row..=r.last_row).contains(&(row as u32)));
-                        let cell = Bounds::new(point(o.x, top), size(head_w, bottom - top));
+                        let cell = Bounds::new(point(row_left, top), size(row_w, bottom - top));
                         if is_selected {
                             window.paint_quad(fill(cell, selected));
                             window.paint_quad(fill(Bounds::new(point(o.x + head_w - px(2.), top), size(px(2.), bottom - top)), green));
                         }
-                        window.paint_quad(fill(Bounds::new(point(o.x, bottom - px(1.)), size(head_w, px(1.))), line));
+                        window.paint_quad(fill(Bounds::new(point(row_left, bottom - px(1.)), size(row_w, px(1.))), line));
                         let color = if is_selected { green } else { text };
-                        label(window, cx, (row + 1).to_string(), color, o.x, top, head_w, bottom - top);
+                        label(window, cx, (row + 1).to_string(), color, row_left, top, row_w, bottom - top);
                     }
                     for mark in hidden_marks {
                         window.paint_quad(fill(mark, green));
                     }
                 });
             };
-            let frozen_strip = Bounds::new(point(o.x, o.y + head_h), size(head_w, split_y - head_h));
+            let frozen_strip = Bounds::new(point(row_left, o.y + head_h), size(row_w, split_y - head_h));
             rows(window, cx, frozen_strip, pane_shift.y, true);
-            let strip = Bounds::new(point(o.x, o.y + split_y), size(head_w, bounds.size.height - split_y));
+            let strip = Bounds::new(point(row_left, o.y + split_y), size(row_w, bounds.size.height - split_y));
             rows(window, cx, strip, offset.y + main_lead.y, false);
             window.paint_quad(fill(Bounds::new(point(o.x + head_w - px(1.), o.y), size(px(1.), bounds.size.height)), line));
 
             // The corner where they meet (the Select All button: a right-angled triangle in its bottom-right corner).
             window.paint_quad(fill(
-                Bounds::new(o, size(head_w - px(1.), head_h - px(1.))),
+                Bounds::new(point(row_left, col_top), size(row_w - px(1.), col_h - px(1.))),
                 if all_selected { selected } else { background },
             ));
             let (tx1, ty1) = (o.x + head_w - px(4.), o.y + head_h - px(4.));
@@ -1342,6 +1508,19 @@ impl SlideEditor {
                 true,
             ) {
                 window.paint_path(tri, if all_selected { green } else { rgb(0xb8b8b8) });
+            }
+
+            // The outline of the grouped rows and columns: lines, − / + buttons and the level buttons.
+            if let Some(sheet) = &outline_sheet {
+                let (rows, columns) = {
+                    let g = geometry.borrow();
+                    (g.rows.clone(), g.columns.clone())
+                };
+                // The strips of the outline are white in Excel (not the headers' grey); its buttons are grey on them (measured in Excel 16.0, 100% and 200%).
+                window.paint_quad(fill(Bounds::new(o, size(bounds.size.width, gh)), white()));
+                window.paint_quad(fill(Bounds::new(point(o.x, o.y + gh), size(gw, (bounds.size.height - gh).max(px(0.)))), white()));
+                let buttons = super::outline_gutter::paint(window, cx, sheet, o, (outline_w, outline_h), (f32::from(head_w), f32::from(head_h)), &rows, &columns, &label);
+                geometry.borrow_mut().outline_buttons = buttons;
             }
 
             // A line being dragged: where the column or row will end, across the sheet.
@@ -1391,10 +1570,10 @@ impl SlideEditor {
                             div()
                                 .id("column-headers")
                                 .absolute()
-                                .top_0()
+                                .top(gh)
                                 .left(head_w)
                                 .right_0()
-                                .h(head_h)
+                                .h(head_h - gh)
                                 .block_mouse_except_scroll()
                                 .when(drag_columns, |d| d.cursor(CursorStyle::ResizeLeftRight))
                                 .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| this.on_header_down(Axis::Columns, e, window, cx)))
@@ -1414,9 +1593,9 @@ impl SlideEditor {
                                 .id("row-headers")
                                 .absolute()
                                 .top(head_h)
-                                .left_0()
+                                .left(gw)
                                 .bottom_0()
-                                .w(head_w)
+                                .w(head_w - gw)
                                 .block_mouse_except_scroll()
                                 .when(drag_rows, |d| d.cursor(CursorStyle::ResizeUpDown))
                                 .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| this.on_header_down(Axis::Rows, e, window, cx)))
@@ -1431,15 +1610,32 @@ impl SlideEditor {
                                 }))
                                 .on_mouse_down(MouseButton::Right, cx.listener(|this, e: &MouseDownEvent, window, cx| this.on_header_right_down(Axis::Rows, e, window, cx))),
                         )
+                        // The outline's strips (GitHub issue #291): the buttons there group and ungroup; the rest of the strips takes the pointer from the sheet.
+                        .when(outline_w > 0.0 || outline_h > 0.0, |d| {
+                            let strip = |id: &'static str| {
+                                div()
+                                    .id(id)
+                                    .absolute()
+                                    .block_mouse_except_scroll()
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        this.on_outline_down(e, cx);
+                                    }))
+                                    .on_mouse_move(cx.listener(Self::on_pointer_move))
+                                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_pointer_up))
+                            };
+                            d.child(strip("outline-top").top_0().left_0().w_full().h(gh))
+                                .child(strip("outline-left").top(gh).left_0().bottom_0().w(gw))
+                        })
                         // The corner (Select All button) selects every cell of the sheet on click.
                         .child(
                             div()
                                 .id("header-corner")
                                 .absolute()
-                                .top_0()
-                                .left_0()
-                                .w(head_w)
-                                .h(head_h)
+                                .top(gh)
+                                .left(gw)
+                                .w(head_w - gw)
+                                .h(head_h - gh)
                                 .block_mouse_except_scroll()
                                 .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| this.on_header_corner_down(e, window, cx)))
                                 .on_mouse_move(cx.listener(Self::on_pointer_move))
@@ -1535,7 +1731,8 @@ impl SlideEditor {
                 .map(|suffix| (suffix, self.resources.font(&ibis_doc_model::TextStyle { font: Some(effective_font.to_string()), ..Default::default() })));
             let selection = e.selection().map(|r| (super::cell_edit::byte_at(&e.text, r.start), super::cell_edit::byte_at(&e.text, r.end)));
             let caret = e.caret_byte();
-            let cell_caret = crate::shell::caret::color_over(style.fill, ibis_doc_model::Rgb::WHITE);
+            let drawn_fill = super::sheet_view::drawn_fill(sheet, default_style, e.row, e.column);
+            let cell_caret = crate::shell::caret::color_over(drawn_fill, ibis_doc_model::Rgb::WHITE);
             let marked_underlines = e.marked_underlines();
             let marked_size_pt = style.font_size as f32 / 100.0;
             // The displayed line the caret is on (where two lines meet, the one it was put on).
@@ -1711,7 +1908,7 @@ impl SlideEditor {
         let Some((_, sheet)) = self.current_sheet() else { return (0.0, 0.0) };
         let (columns, rows) = sheet.frozen.or_else(|| self.split_panes().map(|p| p.at)).unwrap_or((0, 0));
         let (split_x, split_y) = self.frozen_split(content).unwrap_or((None, None));
-        let (head_w, head_h) = if sheet.headings { (row_header_width(sheet), COLUMN_HEADER_HEIGHT) } else { (0.0, 0.0) };
+        let (head_w, head_h) = if sheet.headings { (row_header_width(sheet), crate::shell::sheet_metrics::column_header_height(sheet)) } else { (0.0, 0.0) };
         let (first_row, first_column) = sheet.merge_at(row, column).map_or((row, column), |m| (m.first_row, m.first_column));
         (
             if split_x.is_some() && first_column >= columns { split_x.unwrap_or(head_w) } else { head_w },
@@ -2161,6 +2358,24 @@ impl SlideEditor {
                     let (l, tp, r, b) = (x(t.first_column), y(t.first_row), x(t.last_column + 1), y(t.last_row + 1));
                     div().absolute().left(px(l - x0 - 2.0)).top(px(tp - y0 - 2.0)).w(px(r - l + 2.0)).h(px(b - tp + 2.0)).border_2().border_color(green)
                 }))
+                // The range a table's handle dragged would give it (#303).
+                .children(self.sheet_state().and_then(|s| s.table_resize).map(|(_, t)| {
+                    let (l, tp, r, b) = (x(t.first_column), y(t.first_row), x(t.last_column + 1), y(t.last_row + 1));
+                    div().absolute().left(px(l - x0 - 1.0)).top(px(tp - y0 - 1.0)).w(px(r - l + 1.0)).h(px(b - tp + 1.0)).border_2().border_color(green)
+                }))
+                // The handle at the bottom-right corner of the table the cell is in (#303): drag it to give the table more rows or columns.
+                .children(self.table_at_selection().and_then(|i| self.current_sheet().and_then(|(_, s)| s.tables.get(i).map(|t| t.range))).filter(|_| !editing_here && !self.sheet_range_pick_active()).map(|t| {
+                    let (rx, by) = (x(t.last_column + 1), y(t.last_row + 1));
+                    div()
+                        .id("table-resize-handle")
+                        .absolute()
+                        .left(px(rx - x0 - 7.))
+                        .top(px(by - y0 - 7.))
+                        .size(px(9.))
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .on_mouse_down(MouseButton::Left, cx.listener(Self::on_table_handle_down))
+                        .child(div().absolute().right(px(0.)).bottom(px(0.)).size(px(7.)).bg(rgb(0x595959)).border_1().border_color(white()))
+                }))
                 .children(self.sheet_range_pick_handles(x1-x0,y1-y0))
                 .when(!editing_here && !self.sheet_range_pick_active(), |d| {
                     d.child(
@@ -2322,6 +2537,18 @@ impl SlideEditor {
         }
     }
 
+    /// Press on a table's resize handle (#303): the drag shows the range the table would have, and the button let go gives it.
+    pub(crate) fn on_table_handle_down(&mut self, _event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.commit_edit(window, cx);
+        self.commit_cell_edit(cx);
+        self.focus_handle.focus(window, cx);
+        let Some(index) = self.table_at_selection() else { return };
+        let Some(range) = self.current_sheet().and_then(|(_, s)| s.tables.get(index).map(|t| t.range)) else { return };
+        self.wb_mut().table_resize = Some((index, range));
+        cx.notify();
+    }
+
     /// Press on the fill handle at the selection's corner: dragging it
     /// selects a range from the selected cell, or double-clicking fills down
     /// to the end of adjacent data.
@@ -2356,7 +2583,7 @@ impl SlideEditor {
         let (columns, rows) = sheet.frozen.or_else(|| self.split_panes().map(|p| p.at))?;
         let at = |offsets: Vec<i64>, i: u32| offsets[(i as usize).min(offsets.len() - 1)];
         let head_w = if sheet.headings { row_header_width(sheet) } else { 0.0 };
-        let head_h = if sheet.headings { COLUMN_HEADER_HEIGHT } else { 0.0 };
+        let head_h = if sheet.headings { crate::shell::sheet_metrics::column_header_height(sheet) } else { 0.0 };
         let x = (columns > 0).then(|| {
             (f32::from(content.slide_origin.x) + (shape.frame.x + at(sheet.column_offsets(), columns)) as f32 * content.scale)
                 .max(head_w)
@@ -2519,7 +2746,7 @@ impl SlideEditor {
     }
 
     /// For the scenarios: the window box (left, top, right, bottom) of the hyperlink text drawn in the cell.
-    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
     pub fn link_text_window_box(&self, column: u32, row: u32) -> Option<(f32, f32, f32, f32)> {
         let (shape, sheet) = self.current_sheet()?;
         let (frozen_columns, frozen_rows) = sheet.frozen.unwrap_or((0, 0));
@@ -2532,7 +2759,7 @@ impl SlideEditor {
     }
 
     /// For the scenarios: the window position of the middle of the check box drawn in the cell.
-    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
     pub(crate) fn checkbox_window_center(&self, column: u32, row: u32) -> Option<(f32, f32)> {
         let (shape, sheet) = self.current_sheet()?;
         let (frozen_columns, frozen_rows) = sheet.frozen.unwrap_or((0, 0));
@@ -2822,10 +3049,27 @@ impl SlideEditor {
         if self.completion_accept(cx) {
             return;
         }
-        let Some((column, _)) = self.current_cell() else { return };
+        let Some((column, row)) = self.current_cell() else { return };
         let start = self.wb().tab_start.filter(|t| Some(t.1) == self.current_cell()).map_or(column, |t| t.0);
+        // The bottom-right cell of a table (above its 集計行): Tab adds a row to the table and goes to its first cell (#303).
+        let last_cell_of = self.current_sheet().and_then(|(_, sheet)| {
+            let single = self.selected_ranges().len() <= 1 && self.selected_range().is_none_or(|r| r.first_row == r.last_row && r.first_column == r.last_column);
+            sheet.tables.iter().position(|t| single && column == t.range.last_column && row == t.range.last_row - t.totals_rows && row >= t.range.first_row + t.header_rows)
+        });
         self.commit_cell_edit(cx);
         if self.cell_edit().is_some() { return; }
+        if let Some(index) = last_cell_of && !self.is_read_only() {
+            let first = self.current_sheet().and_then(|(_, s)| s.tables.get(index).map(|t| t.range.first_column));
+            if let Some(first) = first && self.append_table_rows(index, 1, false, cx) {
+                self.set_selection(Vec::new());
+                self.set_cell(first, row + 1);
+                self.scroll_cell_into_view();
+                let here = self.current_cell();
+                self.wb_mut().tab_start = here.map(|h| (first, h));
+                cx.notify();
+                return;
+            }
+        }
         self.move_cell(1, 0, window, cx);
         let here = self.current_cell();
         self.wb_mut().tab_start = here.map(|h| (start, h));
@@ -2944,7 +3188,12 @@ impl SlideEditor {
                 let percent = zoom.map(|z| (z * 100.0).round() as u16).filter(|&z| z != 100);
                 if sheet.zoom != percent {
                     let slide = self.current_slide;
+                    // A zoom is not a change of the workbook for Excel (its Saved stays true, measured on Windows, #291 W1): the document stays clean.
+                    let was_dirty = self.document.is_dirty();
                     let _ = self.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetZoom { sheet: slide, zoom: percent })]);
+                    if !was_dirty {
+                        self.document.mark_clean();
+                    }
                 }
             }
         }
@@ -3042,7 +3291,7 @@ impl SlideEditor {
         let (split_x, split_y) = self.frozen_split(content).unwrap_or((None, None));
         let split_panes = self.split_panes();
         let head_w = if sheet.headings { row_header_width(sheet) } else { 0.0 };
-        let head_h = if sheet.headings { COLUMN_HEADER_HEIGHT } else { 0.0 };
+        let head_h = if sheet.headings { crate::shell::sheet_metrics::column_header_height(sheet) } else { 0.0 };
         let default_column = sheet.default_column;
         let default_row = sheet.default_row;
         let frame_x = shape.frame.x;
@@ -3286,6 +3535,8 @@ pub struct CellJump {
     /// What the name box was last set to show (the selection), so it is set
     /// again only when that changes.
     name_box_shown: String,
+    /// Where the name box was drawn last (a finger on it is going to type: the soft keyboard the ⌄ closed comes back, `tap_on_text_field`).
+    pub(crate) name_box_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     /// The press under way put the keys in the name box: its release
     /// selects the reference, to be typed over, as in Excel (after the
     /// press has put the caret where it was).
@@ -3344,6 +3595,7 @@ impl CellJump {
         Self {
             name_box,
             name_box_shown: String::new(),
+            name_box_bounds: Default::default(),
             select_on_release: false,
             goto_input,
             goto_open: false,
@@ -3541,6 +3793,8 @@ impl SlideEditor {
     pub(crate) fn cell_jump_actions(d: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
         d.on_action(cx.listener(|this, _: &GoTo, window, cx| this.open_goto(window, cx)))
             .on_action(cx.listener(|this, _: &InsertTable, window, cx| this.open_table_dialog(window, cx)))
+            .on_action(cx.listener(|this, _: &GroupLines, _, cx| this.group_lines(true, cx)))
+            .on_action(cx.listener(|this, _: &UngroupLines, _, cx| this.group_lines(false, cx)))
             .on_action(cx.listener(|this, _: &JumpCellUp, _, cx| this.jump(Jump::Edge(0, -1), false, cx)))
             .on_action(cx.listener(|this, _: &JumpCellDown, _, cx| this.jump(Jump::Edge(0, 1), false, cx)))
             .on_action(cx.listener(|this, _: &JumpCellLeft, _, cx| this.jump(Jump::Edge(-1, 0), false, cx)))
@@ -4076,6 +4330,9 @@ impl SlideEditor {
             if state.tab_drag.take().is_some() {
                 cancelled = true;
             }
+            if state.table_resize.take().is_some() {
+                cancelled = true;
+            }
             if let Some(drag) = state.deselect_drag.take() {
                 restore_ranges = Some(drag.base_ranges);
                 cancelled = true;
@@ -4338,4 +4595,141 @@ mod tests {
             vec![(expected_range, true)]
         );
     }
+
+    #[test]
+    fn header_cache_tracks_in_place_sheet_mutations_and_release() {
+        let mut sheet = std::sync::Arc::new(ibis_doc_model::Sheet {
+            columns: vec![914_400, 914_400, 914_400],
+            rows: vec![254_000, 254_000],
+            ..Default::default()
+        });
+        super::clear_header_cache();
+        let (xs1, ys1, hidden_c1, hidden_r1) =
+            super::cached_sheet_headers(&sheet, 1.0 / 9_525.0, 0.0, 0.0, 0, 0, 800.0, 600.0, (16_384, 1_048_576));
+        assert_eq!(std::sync::Arc::strong_count(&sheet), 1, "header cache must not force full-sheet copy-on-write");
+        assert_eq!(&hidden_c1[..3], &[false, false, false]);
+        assert_eq!(&hidden_r1[..2], &[false, false]);
+        let col1_before = xs1[1];
+
+        // Even without calling release_layouts(), Arc::make_mut disassociates Weak<Sheet>
+        // so the cache automatically invalidates on the next lookup.
+        {
+            let s = std::sync::Arc::make_mut(&mut sheet);
+            s.columns[0] = 1_828_800;
+            s.columns[1] = 0;
+        }
+        let (xs2, _, hidden_c2, _) =
+            super::cached_sheet_headers(&sheet, 1.0 / 9_525.0, 0.0, 0.0, 0, 0, 800.0, 600.0, (16_384, 1_048_576));
+        assert!(xs2[1] > col1_before, "widened column must invalidate header cache");
+        assert_eq!(&hidden_c2[..3], &[false, true, false]);
+
+        // After release_layouts() clears HEADER_CACHE, Arc::make_mut mutates in place at the same address;
+        // the next lookup must still observe the updated row height and hidden flag.
+        crate::sheet_view::release_layouts();
+        let ptr_before = std::sync::Arc::as_ptr(&sheet);
+        {
+            let s = std::sync::Arc::make_mut(&mut sheet);
+            s.rows[0] = 0;
+        }
+        assert_eq!(std::sync::Arc::as_ptr(&sheet), ptr_before);
+        let (_, ys3, _, hidden_r3) =
+            super::cached_sheet_headers(&sheet, 1.0 / 9_525.0, 0.0, 0.0, 0, 0, 800.0, 600.0, (16_384, 1_048_576));
+        assert_eq!(&hidden_r3[..2], &[true, false]);
+        assert!(ys3[1] < ys1[1], "hidden row must reflect updated geometry after release_layouts()");
+        super::clear_header_cache();
+    }
+}
+
+type HeaderCacheKey = (u32, u32, u32, i64, i64, u32, u32, usize, usize);
+type HeaderCacheVal = (
+    std::sync::Arc<Vec<f32>>,
+    std::sync::Arc<Vec<f32>>,
+    std::sync::Arc<Vec<bool>>,
+    std::sync::Arc<Vec<bool>>,
+);
+
+thread_local! {
+    static HEADER_CACHE: std::cell::RefCell<Option<(std::sync::Weak<ibis_doc_model::Sheet>, HeaderCacheKey, HeaderCacheVal)>> =
+        const { std::cell::RefCell::new(None) };
+    static HEADER_SHAPES: std::cell::RefCell<std::collections::HashMap<u64, std::rc::Rc<ShapedLine>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Drop cached sheet header geometry and shaped header labels. Called from
+/// `sheet_view::release_layouts()` so caches stay in sync with layout clears.
+pub(crate) fn clear_header_cache() {
+    HEADER_CACHE.with(|cell| *cell.borrow_mut() = None);
+    HEADER_SHAPES.with(|cell| cell.borrow_mut().clear());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cached_sheet_headers(
+    sheet: &std::sync::Arc<ibis_doc_model::Sheet>,
+    scale: f32,
+    origin_x: f32,
+    origin_y: f32,
+    frame_x: i64,
+    frame_y: i64,
+    view_w: f32,
+    view_h: f32,
+    (col_cap, row_cap): (usize, usize),
+) -> HeaderCacheVal {
+    let cache_key: HeaderCacheKey = (
+        scale.to_bits(),
+        origin_x.to_bits(),
+        origin_y.to_bits(),
+        frame_x,
+        frame_y,
+        view_w.to_bits(),
+        view_h.to_bits(),
+        col_cap,
+        row_cap,
+    );
+    HEADER_CACHE.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        if let Some((cached_weak, k, v)) = guard.as_ref()
+            && *k == cache_key
+            && cached_weak.upgrade().is_some_and(|cached_sheet| std::sync::Arc::ptr_eq(&cached_sheet, sheet))
+        {
+            return v.clone();
+        }
+        let to_px = |origin: f32, at: i64, offset: i64| origin + ((at + offset) as f32 * scale).round();
+        let mut xs: Vec<f32> = sheet.column_offsets().into_iter().map(|o| to_px(origin_x, frame_x, o)).collect();
+        let mut ys: Vec<f32> = sheet.row_offsets().into_iter().map(|o| to_px(origin_y, frame_y, o)).collect();
+        let target_right_px = to_px(origin_x, frame_x, 0) + view_w + 2000.0;
+        let target_bottom_px = to_px(origin_y, frame_y, 0) + view_h + 2000.0;
+        let last_column_emu: i64 = sheet.columns.iter().sum();
+        let last_row_emu: i64 = sheet.rows.iter().sum();
+        let mut cur_x = *xs.last().unwrap_or(&0.0);
+        let mut col_count = sheet.columns.len();
+        while cur_x < target_right_px && col_count < col_cap {
+            let extra = (col_count + 1 - sheet.columns.len()) as i64 * sheet.default_column;
+            cur_x = to_px(origin_x, frame_x, last_column_emu + extra);
+            xs.push(cur_x);
+            col_count += 1;
+        }
+        let mut cur_y = *ys.last().unwrap_or(&0.0);
+        let mut row_count = sheet.rows.len();
+        while cur_y < target_bottom_px && row_count < row_cap {
+            let extra = (row_count + 1 - sheet.rows.len()) as i64 * sheet.default_row;
+            cur_y = to_px(origin_y, frame_y, last_row_emu + extra);
+            ys.push(cur_y);
+            row_count += 1;
+        }
+        if col_cap < 16_384 {
+            xs.truncate(col_cap + 1);
+            ys.truncate(row_cap + 1);
+        }
+        // Hidden columns and rows: where a run of them starts, the headers' line is drawn green and 2 px wide (Excel's own mark is a doubled line).
+        let hidden_columns: Vec<bool> = sheet.columns.iter().map(|&w| w == 0).collect();
+        let hidden_rows: Vec<bool> = sheet.rows.iter().map(|&h| h == 0).collect();
+        let val = (
+            std::sync::Arc::new(xs),
+            std::sync::Arc::new(ys),
+            std::sync::Arc::new(hidden_columns),
+            std::sync::Arc::new(hidden_rows),
+        );
+        *guard = Some((std::sync::Arc::downgrade(sheet), cache_key, val.clone()));
+        val
+    })
 }

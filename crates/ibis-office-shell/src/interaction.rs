@@ -66,15 +66,7 @@ pub fn corners(frame: EmuRect, rotation: i32) -> [P; 4] {
 
 /// The box a shape takes on the slide, rotation included.
 pub fn bounds(shape: &Shape) -> EmuRect {
-    let pts = corners(shape.frame, shape.rotation);
-    let (mut l, mut t, mut r, mut b) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    for p in pts {
-        l = l.min(p.x);
-        t = t.min(p.y);
-        r = r.max(p.x);
-        b = b.max(p.y);
-    }
-    EmuRect::new(l.round() as i64, t.round() as i64, (r - l).round() as i64, (b - t).round() as i64)
+    shape.bounds()
 }
 
 /// Whether `p` hits `shape`; `slop` is how near (EMU) counts for a line.
@@ -246,9 +238,6 @@ pub fn drawn_frame(a: EmuPoint, b: EmuPoint, square: bool) -> EmuRect {
     EmuRect { width: r.width.max(MIN_SIDE), height: r.height.max(MIN_SIDE), ..r }
 }
 
-/// The default grid spacing in slide EMU (0.5 cm = 180 000 EMU).
-pub const GRID_INTERVAL: i64 = 180_000;
-
 /// Snap an EMU coordinate to the nearest grid line.
 pub fn snap_coord(coord: i64, interval: i64) -> i64 {
     if interval <= 0 {
@@ -267,6 +256,11 @@ pub fn snap_delta_to_grid(origin: EmuPoint, dx: i64, dy: i64, interval: i64) -> 
     let target_x = snap_coord(origin.x + dx, interval);
     let target_y = snap_coord(origin.y + dy, interval);
     (target_x - origin.x, target_y - origin.y)
+}
+
+/// `snap_delta_to_grid` with a spacing for each direction.
+pub fn snap_delta_to_grid_xy(origin: EmuPoint, dx: i64, dy: i64, interval_x: i64, interval_y: i64) -> (i64, i64) {
+    (snap_coord(origin.x + dx, interval_x) - origin.x, snap_coord(origin.y + dy, interval_y) - origin.y)
 }
 
 /// An alignment guide line displayed when shapes snap to edges/centers.

@@ -116,7 +116,7 @@ fn color(rgb_field:&Entity<InputState>,opacity_field:&Entity<InputState>,cx:&App
     if hex.len()!=6 || !hex.bytes().all(|c|c.is_ascii_hexdigit()) {return None;}
     let rgb=Rgb(u32::from_str_radix(hex,16).ok()?);let opacity:f64=opacity_field.read(cx).value().trim().parse().ok()?;
     if !opacity.is_finite() || !(0. ..=100.).contains(&opacity) {return None;}
-    Some(Color {rgb,alpha:(opacity*255./100.).round() as u8})
+    Some(Color {rgb,alpha:(opacity*255./100.).round() as u8, theme: None })
 }
 
 fn row(stop:GradientStop,window:&mut Window,cx:&mut Context<SlideEditor>)->Row {

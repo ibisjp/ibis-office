@@ -81,19 +81,46 @@ impl SlideEditor {
         items.push(MenuItem::tr("slideshow.settings").icon("settings").on(|e, w, c| e.open_show_panel(w, c)).into());
         let theme_border = rgb(0x747775);
         let caret_editor = editor.clone();
+        if icon_only {
+            // The round button (K0082): the play icon alone, no ▾; it starts the show as the pill's left half does.
+            let side = crate::shell::narrow_layout::SLIDESHOW_ROUND_WIDTH;
+            return div()
+                .id("slideshow")
+                .flex_none()
+                .size(px(side))
+                .rounded(px(side / 2.))
+                .border_1()
+                .border_color(theme_border)
+                .bg(crate::shell::palette::white())
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(disabled, |d| d.opacity(0.5))
+                .cursor_pointer()
+                .hover(|s| s.bg(crate::shell::palette::shade(0.0, 0.04)))
+                .child(icon("play_arrow", 18.0, rgb(ICON).into()))
+                .when(!disabled, |d| d.on_click(listener(editor, &start)))
+                .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text("_shell.play-from-current-slide")).build(window, cx))
+                .into_any_element();
+        }
+        let pill_width = self.slideshow_pill_width.clone();
         h_flex()
+            .relative()
             .h(px(30.))
+            .flex_none()
             .rounded(px(15.))
             .border_1()
             .border_color(theme_border)
             .bg(crate::shell::palette::white())
             .when(disabled, |d| d.opacity(0.5))
+            // What the pill is wide as it is drawn: the room the title row keeps for it (`narrow_layout::slideshow_is_round`).
+            .child(canvas(|_, _, _| {}, move |bounds, _, _, _| pill_width.set(f32::from(bounds.size.width))).absolute().top_0().left_0().size_full())
             .child(
                 div()
                     .id("slideshow")
                     .h_full()
-                    .pl(px(if icon_only { 8. } else { 10. }))
-                    .pr(px(if icon_only { 6. } else { 8. }))
+                    .pl(px(10.))
+                    .pr(px(8.))
                     .flex()
                     .items_center()
                     .gap(px(6.))
@@ -103,7 +130,7 @@ impl SlideEditor {
                     .cursor_pointer()
                     .hover(|s| s.bg(crate::shell::palette::shade(0.0, 0.04)))
                     .child(icon("slideshow", 18.0, rgb(ICON).into()))
-                    .when(!icon_only, |d| d.child(crate::shell::i18n::text("_shell.slide-show")))
+                    .child(crate::shell::i18n::text("_shell.slide-show"))
                     .when(!disabled, |d| d.on_click(listener(editor, &start)))
                     .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text("_shell.play-from-current-slide")).build(window, cx)),
             )

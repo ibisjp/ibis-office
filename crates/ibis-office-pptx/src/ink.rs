@@ -108,14 +108,14 @@ impl InkEffect {
     pub(crate) fn glow(&self) -> Option<(Color, i64)> {
         match self {
             Self::None => None,
-            Self::Rainbow => Some((Color { rgb: Rgb(0xFFCC00), alpha: 160 }, 38_100)),
-            Self::Galaxy => Some((Color { rgb: Rgb(0xD980FA), alpha: 160 }, 38_100)),
-            Self::Lava => Some((Color { rgb: Rgb(0xFF5722), alpha: 160 }, 38_100)),
-            Self::Ocean => Some((Color { rgb: Rgb(0x48D1CC), alpha: 160 }, 38_100)),
-            Self::RoseGold => Some((Color { rgb: Rgb(0xE8A598), alpha: 160 }, 38_100)),
-            Self::Gold => Some((Color { rgb: Rgb(0xFFD700), alpha: 160 }, 38_100)),
-            Self::Silver => Some((Color { rgb: Rgb(0xCFD8DC), alpha: 160 }, 38_100)),
-            Self::Bronze => Some((Color { rgb: Rgb(0xCD7F32), alpha: 160 }, 38_100)),
+            Self::Rainbow => Some((Color { rgb: Rgb(0xFFCC00), alpha: 160, theme: None }, 38_100)),
+            Self::Galaxy => Some((Color { rgb: Rgb(0xD980FA), alpha: 160, theme: None }, 38_100)),
+            Self::Lava => Some((Color { rgb: Rgb(0xFF5722), alpha: 160, theme: None }, 38_100)),
+            Self::Ocean => Some((Color { rgb: Rgb(0x48D1CC), alpha: 160, theme: None }, 38_100)),
+            Self::RoseGold => Some((Color { rgb: Rgb(0xE8A598), alpha: 160, theme: None }, 38_100)),
+            Self::Gold => Some((Color { rgb: Rgb(0xFFD700), alpha: 160, theme: None }, 38_100)),
+            Self::Silver => Some((Color { rgb: Rgb(0xCFD8DC), alpha: 160, theme: None }, 38_100)),
+            Self::Bronze => Some((Color { rgb: Rgb(0xCD7F32), alpha: 160, theme: None }, 38_100)),
         }
     }
 }

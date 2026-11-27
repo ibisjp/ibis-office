@@ -1,0 +1,14 @@
+[package]
+name = "ibis-xdw-read"
+description = "Read-only DocuWorks container and page decoder"
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+delharc = { version = "0.8", default-features = false }
+ibis-pdf = { path = "../ibis-pdf" }
+image = { version = "0.25", default-features = false, features = ["jpeg", "bmp"] }
+encoding_rs = "0.8"
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }

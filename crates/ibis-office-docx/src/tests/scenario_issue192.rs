@@ -26,6 +26,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::issue192_border_run_moves_whole_to_the_next_line_when_no_character_fits", border_run_moves_whole_to_the_next_line_when_no_character_fits),
         ("docx::issue192_multiple_line_of_ms_mincho_keeps_the_baseline_and_adds_the_lines_below", multiple_line_of_ms_mincho_keeps_the_baseline_and_adds_the_lines_below),
         ("docx::issue192_border_box_of_a_script_run_is_the_full_size_box_on_the_line_baseline", border_box_of_a_script_run_is_the_full_size_box_on_the_line_baseline),
+        ("docx::issue192_border_grows_the_line_above_and_below_by_its_room", border_grows_the_line_above_and_below_by_its_room),
+        ("docx::issue192_underline_of_an_east_asian_typeface_is_seven_tenths_of_its_win_descent_and_half_a_point_down", underline_of_an_east_asian_typeface_is_seven_tenths_of_its_win_descent_and_half_a_point_down),
         ("docx::issue192_dump", dump),
     ]
 }
@@ -138,6 +140,36 @@ fn border_takes_room_and_its_box_is_the_lines_box_grown_by_the_border() {
     near(bottom - base_f, 4.44, 0.25, "S6f: the double box's bottom");
 }
 
+/// Item 2, the line: a line with a bordered run has the border's room `W` more above and below (Word's PDFs, ＭＳ 明朝 10.5 pt; the room above the text, from the marker's baseline, and
+/// the room below, to the next marker's, against the paragraph without the border: S6a 0.62 and 0.36, S6c 4.44 and 4.56, S6d 2.88 and 3.15, S6f 1.44 and 1.56; 游ゴシック S6g 0.45
+/// and 0.50).
+fn border_grows_the_line_above_and_below_by_its_room() {
+    let bdr = |kind: &str, sz: u32, space: u32| format!(r#"<w:bdr w:val="{kind}" w:sz="{sz}" w:space="{space}" w:color="auto"/>"#);
+    let yu = r#"<w:rFonts w:ascii="游ゴシック" w:hAnsi="游ゴシック" w:eastAsia="游ゴシック"/>"#;
+    let mut body = String::new();
+    body += &scene("S6h", "", "");
+    body += &scene("S6a", "", &bdr("single", 4, 0));
+    body += &scene("S6c", "", &bdr("single", 4, 4));
+    body += &scene("S6d", "", &bdr("single", 24, 0));
+    body += &scene("S6f", "", &bdr("double", 4, 0));
+    body += &scene("S6g", "", &format!("{yu}{}", bdr("single", 4, 0)));
+    body += &scene("S6i", "", yu);
+    body += &scene("S6end", "", "");
+    let pg = pages_of(&make("border-line", &body));
+    let above = |marker: &str| {
+        let (m, _) = at(&pg, marker);
+        pg.pages[0].items.iter().find_map(|it| if let Item::Text { y, text, .. } = it && *y > m && text.starts_with("あいう") { Some(*y - m) } else { None }).unwrap()
+    };
+    let below = |marker: &str, next: &str| at(&pg, next).0 - at(&pg, marker).0 - above(marker);
+    let (c_above, c_below) = (above("#S6h"), below("#S6h", "#S6a"));
+    for (m, next, a, b) in [("#S6a", "#S6c", 0.62, 0.36), ("#S6c", "#S6d", 4.44, 4.56), ("#S6d", "#S6f", 2.88, 3.15), ("#S6f", "#S6g", 1.44, 1.56)] {
+        near(above(m) - c_above, a, 0.25, &format!("{m}: the room above"));
+        near(below(m, next) - c_below, b, 0.25, &format!("{m}: the room below"));
+    }
+    near(above("#S6g") - above("#S6i"), 0.45, 0.25, "S6g: the room above");
+    near(below("#S6g", "#S6i") - below("#S6i", "#S6end"), 0.50, 0.25, "S6g: the room below");
+}
+
 /// One paragraph of runs (`rpr`, text), each with its properties, alone on the page; the rectangles drawn (y, h, x, w) and the first baseline.
 fn runs_page(name: &str, runs: &[(&str, &str)]) -> (f32, Vec<(f32, f32, f32, f32)>) {
     let mut body = String::from("<w:p>");
@@ -147,7 +179,7 @@ fn runs_page(name: &str, runs: &[(&str, &str)]) -> (f32, Vec<(f32, f32, f32, f32
     body += "</w:p>";
     let pg = pages_of(&make(name, &body));
     let rects = pg.pages[0].items.iter().filter_map(|it| if let Item::Rect { x, y, w, h, .. } = it { Some((*y, *h, *x, *w)) } else { None }).collect();
-    let base = pg.pages[0].items.iter().find_map(|it| if let Item::Text { y, .. } = it { Some(*y) } else { None }).expect("a text item");
+    let base = pg.pages[0].items.iter().find_map(|it| match it { Item::Text { y, .. } | Item::Scaled { y, .. } => Some(*y), _ => None }).unwrap_or_else(|| panic!("a text item: {:?}", pg.pages[0].items.iter().map(|i| std::mem::discriminant(i)).count()));
     (base, rects)
 }
 
@@ -173,6 +205,24 @@ fn underline_of_an_east_asian_typeface_is_a_twentieth_of_the_size_thick() {
     let (_, rects) = runs_page("underline-mincho", &[(&format!(r#"{MINCHO_24}<w:u w:val="single"/>"#), "あい")]);
     assert_eq!(rects.len(), 1, "{rects:?}");
     near(rects[0].1, 1.2, 0.25, "ＭＳ 明朝 24 pt: its thickness");
+}
+
+/// An East Asian typeface's underline: the top is `0.7 usWinDescent` and half a point below the baseline (a measured value the user allowed, implimentationRule.md; Word's PDFs of
+/// 「あいう」 underlined, the top below the baseline, 8 typefaces at 10.5, 14, 24 and 48 pt, 32 points). The PDF's steps are 0.12 pt.
+fn underline_of_an_east_asian_typeface_is_seven_tenths_of_its_win_descent_and_half_a_point_down() {
+    let cases = [
+        ("ＭＳ 明朝", [1.44, 1.80, 2.88, 5.16]), ("ＭＳ ゴシック", [1.44, 1.80, 2.88, 5.16]), ("ＭＳ Ｐ明朝", [1.44, 1.80, 2.88, 5.16]),
+        ("游ゴシック", [2.76, 3.48, 5.52, 10.68]), ("游明朝", [2.64, 3.36, 5.40, 10.32]), ("メイリオ", [3.72, 4.80, 7.92, 15.24]),
+        ("BIZ UDゴシック", [1.44, 1.68, 2.52, 4.56]), ("BIZ UD明朝 Medium", [1.44, 1.68, 2.52, 4.56]),
+    ];
+    for (i, (face, tops)) in cases.into_iter().enumerate() {
+        for (j, (half_points, top)) in [21, 28, 48, 96].into_iter().zip(tops).enumerate() {
+            let rpr = format!(r#"<w:rFonts w:ascii="{face}" w:hAnsi="{face}" w:eastAsia="{face}" w:cs="{face}"/><w:sz w:val="{half_points}"/><w:u w:val="single"/>"#);
+            let (base, rects) = runs_page(&format!("underline-ea-{i}-{j}"), &[(&rpr, "あいう")]);
+            assert_eq!(rects.len(), 1, "{face}: {rects:?}");
+            near(rects[0].0 - base, top, 0.25, &format!("{face} {half_points}: the line's top below the baseline"));
+        }
+    }
 }
 
 /// Runs that follow one another with the same underline are one line, its thickness the mean of theirs weighted by the advances (Word's XPS: ＭＳ 明朝 10.5 pt 「あいう」 and 24 pt

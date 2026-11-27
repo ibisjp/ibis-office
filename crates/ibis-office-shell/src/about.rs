@@ -88,8 +88,8 @@ fn about_body(cx: &App) -> Div {
         .when(update_available(), |d| {
             d.child(div().id("about-update").text_color(gpui_kit::rgb(UPDATE_LINK_COLOR)).cursor_pointer().child(i18n::text("about.update-available")).on_click(|_, _, cx| offer_update_again(cx)))
         })
-        .child(div().id("about-powered").mt_3().text_color(theme.link).underline().cursor_pointer().child(POWERED_BY).on_click(|_, _, cx| crate::external::open_url(PROJECT_URL, cx)))
-        .child(div().id("about-url").text_size(px(12.)).text_color(theme.link).cursor_pointer().child(PROJECT_URL).on_click(|_, _, cx| crate::external::open_url(PROJECT_URL, cx)))
+        .child(probed_link(div().id("about-powered").mt_3().text_color(theme.link).underline().cursor_pointer().child(POWERED_BY).on_click(|_, _, cx| crate::external::open_url(PROJECT_URL, cx)), "about-powered"))
+        .child(probed_link(div().id("about-url").text_size(px(12.)).text_color(theme.link).cursor_pointer().child(PROJECT_URL).on_click(|_, _, cx| crate::external::open_url(PROJECT_URL, cx)), "about-url"))
         .child(div().mt_3().text_size(px(12.)).text_color(theme.muted_foreground).child("Copyright (c) ibis inc."))
         .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(i18n::text("about.license")))
 }
@@ -114,4 +114,11 @@ pub(crate) fn render_modal(on_close: impl Fn(&ClickEvent, &mut Window, &mut App)
             .child(about_body(cx).py_6())
             .child(crate::chrome::action_bar_host(footer.access_scope(crate::access_key::Scope::MessageBox))),
     )
+}
+
+/// The scenario tests (K0087) find a link by where it is drawn; otherwise the link as it is.
+fn probed_link(link: gpui_kit::Stateful<gpui_kit::Div>, _id: &'static str) -> gpui_kit::Stateful<gpui_kit::Div> {
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+    let link = crate::scenario::button_probe::observe_control(link, _id.into());
+    link
 }

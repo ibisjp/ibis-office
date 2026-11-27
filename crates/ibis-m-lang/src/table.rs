@@ -70,10 +70,11 @@ pub(crate) fn count_arg(v: &Value) -> Result<usize, MError> {
 pub fn scalar_text_in(v: &Value, c: Culture) -> Option<String> {
     Some(match v {
         Value::Text(s) => s.to_string(),
-        Value::Number(n) => culture::number_text(*n),
+        Value::Number(n) => culture::number_text_in(*n, c),
         Value::Logical(b) => (if *b { "true" } else { "false" }).to_string(),
         Value::Date(d) => culture::date_text(*d, c),
         Value::DateTime(d, s) => culture::datetime_text(*d, *s, c),
+        Value::DateTimeZone(d, s, o) => format!("{} {}", culture::datetime_text(*d, *s, c), crate::lib_zone::offset_text(*o, true)),
         Value::Time(s) => culture::time_text(*s, c),
         Value::Duration(s) => culture::duration_text(*s),
         _ => return None,
@@ -85,19 +86,20 @@ pub fn scalar_text(v: &Value) -> Option<String> {
     scalar_text_in(v, Culture::Ja)
 }
 
-/// The rank of a value's type in an order of mixed values: null, time, date, datetime, duration, number, logical, text (measured in Excel:
-/// `Table.Sort`, `List.Sort`, `Value.Compare`). A datetimezone, between datetime and duration, is not a value of this interpreter.
+/// The rank of a value's type in an order of mixed values: null, time, date, datetime, datetimezone, duration, number, logical, text (measured in Excel:
+/// `Table.Sort`, `List.Sort`, `Value.Compare`).
 fn type_rank(v: &Value) -> u8 {
     match v {
         Value::Null => 0,
         Value::Time(_) => 1,
         Value::Date(_) => 2,
         Value::DateTime(..) => 3,
-        Value::Duration(_) => 4,
-        Value::Number(_) => 5,
-        Value::Logical(_) => 6,
-        Value::Text(_) => 7,
-        _ => 8,
+        Value::DateTimeZone(..) => 4,
+        Value::Duration(_) => 5,
+        Value::Number(_) => 6,
+        Value::Logical(_) => 7,
+        Value::Text(_) => 8,
+        _ => 9,
     }
 }
 
@@ -117,7 +119,8 @@ pub(crate) fn order(it: &Interp, a: &Value, b: &Value) -> Ordering {
 /// A value of a column as the type asks (`Table.TransformColumnTypes`), by the rules Excel gave (the request, sections 5 and 8): a whole
 /// number is rounded half to even, a text is read as a number the way `culture::parse_number` says (the empty text is null), a currency
 /// has four decimals; a value that cannot be is a failed cell, not a failed table.
-pub fn convert_value(v: &Value, t: &TypeSpec, c: Culture) -> Value {
+/// `offset`: the local offset from UTC in minutes (a value made a datetimezone without an offset of its own gets it).
+pub fn convert_value(v: &Value, t: &TypeSpec, c: Culture, offset: i32) -> Value {
     let fail = |reason: &str, msg: String, v: &Value| {
         let mut e = if reason == "DataFormat.Error" { MError::format(msg) } else { MError::expr(msg) };
         e.detail = v.clone();
@@ -141,7 +144,7 @@ pub fn convert_value(v: &Value, t: &TypeSpec, c: Culture) -> Value {
             let n = match v {
                 Value::Number(n) => *n,
                 Value::Logical(b) => f64::from(*b),
-                Value::Text(s) => match culture::parse_number(s) {
+                Value::Text(s) => match culture::parse_number_in(s, c) {
                     Some(n) => n,
                     None => return bad("Number", v),
                 },
@@ -178,23 +181,27 @@ pub fn convert_value(v: &Value, t: &TypeSpec, c: Culture) -> Value {
         },
         Ty::Date => match v {
             Value::Date(_) => v.clone(),
-            Value::DateTime(d, _) => Value::Date(*d),
+            Value::DateTime(d, _) | Value::DateTimeZone(d, ..) => Value::Date(*d),
             // A number is a serial: days since 1899-12-30 (`Date.From(46343)`).
             Value::Number(n) => Value::Date(serial_epoch() + n.floor() as i64),
-            Value::Text(s) => culture::parse_date(s).map(Value::Date).unwrap_or_else(|| bad("Date", v)),
+            Value::Text(s) => culture::parse_date_in(s, c, true).map(Value::Date).unwrap_or_else(|| bad("Date", v)),
             _ => bad("Date", v),
         },
-        Ty::DateTime | Ty::DateTimeZone => match v {
+        Ty::DateTimeZone => crate::lib_zone::to_zone(v, offset).unwrap_or_else(|| bad("DateTimeZone", v)),
+        Ty::DateTime => match v {
             Value::DateTime(..) => v.clone(),
+            // The clock time as written (no offset taken off); a text ending in Z is UTC, made the local time.
+            Value::DateTimeZone(d, s, _) => Value::DateTime(*d, *s),
+            Value::Text(s) if crate::lib_zone::ends_in_z(s) => crate::lib_zone::to_zone(v, offset).map(|z| crate::lib_zone::local_of(&z, offset)).unwrap_or_else(|| bad("DateTime", v)),
             Value::Date(d) => Value::DateTime(*d, 0.0),
             Value::Number(n) => Value::DateTime(serial_epoch() + n.floor() as i64, ((n - n.floor()) * 86400.0 * 1000.0).round() / 1000.0),
-            Value::Text(s) => culture::parse_datetime(s).map(|(d, secs)| Value::DateTime(d, secs)).unwrap_or_else(|| bad("DateTime", v)),
+            Value::Text(s) => culture::parse_datetime_in(s, c).map(|(d, secs)| Value::DateTime(d, secs)).unwrap_or_else(|| bad("DateTime", v)),
             _ => bad("DateTime", v),
         },
         // A number is a part of a day (0 up to, not including, 1); a date or a duration is not a time.
         Ty::Time => match v {
             Value::Time(_) => v.clone(),
-            Value::DateTime(_, s) => Value::Time(*s),
+            Value::DateTime(_, s) | Value::DateTimeZone(_, s, _) => Value::Time(*s),
             Value::Number(n) if (0.0..1.0).contains(n) => Value::Time(((n - n.floor()) * 86400.0 * 1000.0).round() / 1000.0),
             Value::Text(s) => culture::parse_time(s, c).map(Value::Time).unwrap_or_else(|| fail("Expression.Error", "The input could not be parsed as a Time.".into(), v)),
             _ => bad("Time", v),
@@ -309,6 +316,17 @@ pub fn register(l: &mut HashMap<&'static str, Value>) {
             }
         }
         Ok(make(cols, t.types.clone(), t.rows.clone()))
+    });
+    // The order Excel sorts mixed values in, as -1, 0 or 1 (a table, list or record is not one of them: those are an error of the comparison).
+    reg(l, "Value.Compare", 2, 3, |it, a| {
+        if [&a[0], &a[1]].iter().any(|v| matches!(v, Value::List(_) | Value::Record(_) | Value::Table(_))) {
+            return Err(MError::expr("The operator < cannot be applied to these values."));
+        }
+        Ok(Value::Number(match order(it, &a[0], &a[1]) {
+            Ordering::Less => -1.0,
+            Ordering::Equal => 0.0,
+            Ordering::Greater => 1.0,
+        }))
     });
     reg(l, "Table.Sort", 2, 2, |it, a| {
         let t = tbl(&a[0])?;
@@ -450,7 +468,7 @@ pub fn register(l: &mut HashMap<&'static str, Value>) {
                 Err(e) if matches!(e.kind, crate::error::ErrKind::Raised) => Value::Failed(Rc::new(e)),
                 Err(e) => return Err(e),
             };
-            r.push(if matches!(ty.ty, Ty::Any) { v } else { convert_value(&v, &ty, it.culture()) });
+            r.push(if matches!(ty.ty, Ty::Any) { v } else { convert_value(&v, &ty, it.culture(), it.utc_offset()) });
             rows.push(r);
         }
         let mut cols = t.columns.clone();
@@ -501,7 +519,7 @@ pub fn register(l: &mut HashMap<&'static str, Value>) {
             if let Some(Value::Type(ts)) = s.get(2) {
                 types[i] = ts.clone();
                 for r in &mut rows {
-                    r[i] = convert_value(&r[i], ts, it.culture());
+                    r[i] = convert_value(&r[i], ts, it.culture(), it.utc_offset());
                 }
             }
         }

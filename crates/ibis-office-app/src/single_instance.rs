@@ -10,13 +10,15 @@
 //!
 //! * Linux (X11 and Wayland alike): a Unix domain socket `instance.sock` in `$XDG_RUNTIME_DIR` (the user's own directory, mode 0700), else in
 //!   `~/.cache/ibisOffice`.
-//! * Windows: a TCP port on the loopback address, written with a token to `instance.port` in `%LOCALAPPDATA%\ibisOffice` (a named pipe needs a crate or
-//!   unsafe code; the token keeps other users' programs, and web pages, from sending requests).
+//! * Windows: the way of Windows programs (#239): a named mutex tells the first process from a second, the first has a hidden message-only window, and the second finds it
+//!   with `FindWindowEx` and sends the same lines in a `WM_COPYDATA` message (no port, no secret).
 //!
 //! A request is lines, ended by `END`: `OPEN <absolute path>` or `NEW` (a new window). The running process answers `OK`. A second start that finds no
 //! answer (no endpoint, a socket nobody listens on after a crash, a process that hangs) starts as the one process and makes the endpoint again.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::BufRead;
+#[cfg(not(windows))]
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -164,68 +166,143 @@ mod endpoint {
 
 #[cfg(windows)]
 mod endpoint {
+    //! The way of Windows programs (#239, the user: "FindWindow"): a named mutex tells the first process from a second; the first makes a hidden window that only receives messages
+    //! (`HWND_MESSAGE`, of a window class of its own); the second finds it with `FindWindowEx` and hands over what it was asked with `WM_COPYDATA`, the same lines as the other
+    //! systems' sockets carry (`encode`, `read_request`). No port, no file with a secret: a message window is reached only by the processes of the same session and the same
+    //! integrity level.
     use super::*;
-    use std::net::{Ipv4Addr, TcpListener, TcpStream};
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::DataExchange::COPYDATASTRUCT;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowExW, GetMessageW, GetWindowThreadProcessId, HWND_MESSAGE, MSG, RegisterClassW, SMTO_ABORTIFHUNG,
+        SendMessageTimeoutW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COPYDATA, WNDCLASSW,
+    };
+    use windows::core::PCWSTR;
 
-    fn port_file(dir: &Path) -> PathBuf {
-        dir.join("instance.port")
+    /// What `COPYDATASTRUCT::dwData` says of a message of ours (another program's `WM_COPYDATA` is not read).
+    const MAGIC: usize = 0x4942_4953; // "IBIS"
+
+    type Deliver = Box<dyn Fn(Vec<Request>) + Send>;
+
+    /// The handlers of the message windows of this process, by window (a test makes several).
+    fn handlers() -> &'static Mutex<HashMap<isize, Deliver>> {
+        static HANDLERS: OnceLock<Mutex<HashMap<isize, Deliver>>> = OnceLock::new();
+        HANDLERS.get_or_init(Default::default)
     }
 
-    fn read_port(dir: &Path) -> Option<(u16, String)> {
-        let text = std::fs::read_to_string(port_file(dir)).ok()?;
-        let mut parts = text.split_whitespace();
-        Some((parts.next()?.parse().ok()?, parts.next()?.to_string()))
+    /// The names of this user's endpoint, from the directory it is for (the same for the processes of one user; another directory, as a test's, has its own).
+    fn key(dir: &Path) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        dir.to_string_lossy().to_lowercase().hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
     }
 
-    pub(super) fn send(dir: &Path, requests: &[Request]) -> bool {
-        let Some((port, token)) = read_port(dir) else { return false };
-        let Ok(mut stream) = TcpStream::connect_timeout(&(Ipv4Addr::LOCALHOST, port).into(), ANSWER_WAIT) else { return false };
-        stream.set_read_timeout(Some(ANSWER_WAIT)).ok();
-        stream.set_write_timeout(Some(ANSWER_WAIT)).ok();
-        if stream.write_all(format!("TOKEN {token}\n{}", encode(requests)).as_bytes()).is_err() {
-            return false;
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn class_name(dir: &Path) -> Vec<u16> {
+        wide(&format!("ibisOffice.SingleInstance.{}", key(dir)))
+    }
+
+    extern "system" fn window_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if message == WM_COPYDATA {
+            // SAFETY: for `WM_COPYDATA` the system gives in `lparam` a `COPYDATASTRUCT` that lives while the message is handled, whose `lpData` holds `cbData` bytes.
+            let requests = unsafe {
+                let data = &*(lparam.0 as *const COPYDATASTRUCT);
+                (data.dwData == MAGIC && !data.lpData.is_null()).then(|| std::slice::from_raw_parts(data.lpData as *const u8, data.cbData as usize))
+            }
+            .and_then(|bytes| read_request(std::io::Cursor::new(bytes), None));
+            return match requests {
+                Some(requests) => {
+                    if let Some(deliver) = handlers().lock().unwrap_or_else(|e| e.into_inner()).get(&(window.0 as isize)) {
+                        deliver(requests);
+                    }
+                    LRESULT(1)
+                }
+                None => LRESULT(0),
+            };
         }
-        let mut answer = String::new();
-        BufReader::new(stream).read_line(&mut answer).is_ok() && answer.trim() == "OK"
+        // SAFETY: the default handling of a message of a window of this process.
+        unsafe { DefWindowProcW(window, message, wparam, lparam) }
+    }
+
+    fn find(dir: &Path) -> Option<HWND> {
+        let class = class_name(dir);
+        // SAFETY: `class` is a NUL-terminated wide string that outlives the call.
+        unsafe { FindWindowExW(Some(HWND_MESSAGE), None, PCWSTR(class.as_ptr()), PCWSTR::null()).ok() }
+    }
+
+    /// Hand the requests to the running process's message window; `true` when it answered.
+    pub(super) fn send(dir: &Path, requests: &[Request]) -> bool {
+        let Some(window) = find(dir) else { return false };
+        let text = encode(requests);
+        let data = COPYDATASTRUCT { dwData: MAGIC, cbData: text.len() as u32, lpData: text.as_ptr() as *mut _ };
+        let mut answer = 0usize;
+        // SAFETY: `data` and `text` live through the call, which waits for the answer (or `ANSWER_WAIT`); a hung process is not waited for.
+        unsafe {
+            // The process that opens the files may come to the front (the second start has the right to give: it was just started by the user).
+            let mut process = 0u32;
+            GetWindowThreadProcessId(window, Some(&mut process));
+            let _ = AllowSetForegroundWindow(process);
+            SendMessageTimeoutW(window, WM_COPYDATA, WPARAM(0), LPARAM(&data as *const _ as isize), SMTO_ABORTIFHUNG, ANSWER_WAIT.as_millis() as u32, Some(&mut answer));
+        }
+        answer == 1
     }
 
     pub(super) fn serve(dir: &Path, deliver: impl Fn(Vec<Request>) + Send + 'static) -> std::io::Result<()> {
-        std::fs::create_dir_all(dir)?;
-        // A port file left by a process that died: nobody answers on it.
-        if let Some((port, _)) = read_port(dir)
-            && TcpStream::connect_timeout(&(Ipv4Addr::LOCALHOST, port).into(), ANSWER_WAIT).is_ok()
-        {
+        let other = |what: &str| std::io::Error::other(what.to_string());
+        let name = wide(&format!("Local\\ibisOffice.SingleInstance.{}", key(dir)));
+        // SAFETY: `name` is a NUL-terminated wide string; the handle is kept to the end of the process (the mutex is what says "I am the first").
+        let first = unsafe {
+            let mutex = CreateMutexW(None, true, PCWSTR(name.as_ptr())).map_err(|e| other(&e.to_string()))?;
+            let exists = GetLastError() == ERROR_ALREADY_EXISTS;
+            if exists {
+                let _ = windows::Win32::Foundation::CloseHandle(mutex);
+            }
+            !exists
+        };
+        if !first {
             return Err(std::io::Error::new(std::io::ErrorKind::AddrInUse, "another ibisOffice is running"));
         }
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let port = listener.local_addr()?.port();
-        // A token nobody can guess: the hash of the process and two random seeds of the standard library.
-        let token = {
-            use std::hash::{BuildHasher, Hasher};
-            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-            hasher.write_u32(std::process::id());
-            format!("{:016x}{:016x}", hasher.finish(), std::collections::hash_map::RandomState::new().build_hasher().finish())
-        };
-        std::fs::write(port_file(dir), format!("{port} {token}"))?;
+        let class = class_name(dir);
+        let (ready, started) = std::sync::mpsc::channel::<Result<isize, String>>();
         std::thread::Builder::new().name("ibisOffice-instance".into()).spawn(move || {
-            for stream in listener.incoming().flatten() {
-                stream.set_read_timeout(Some(ANSWER_WAIT)).ok();
-                let mut reply = match stream.try_clone() {
-                    Ok(reply) => reply,
-                    Err(_) => continue,
+            // SAFETY: a window class and a message-only window of this thread, which then runs the message loop for the life of the process.
+            unsafe {
+                let instance = match GetModuleHandleW(None) {
+                    Ok(instance) => instance,
+                    Err(e) => return drop(ready.send(Err(e.to_string()))),
                 };
-                if let Some(requests) = read_request(BufReader::new(stream), Some(&token)) {
-                    deliver(requests);
-                    reply.write_all(b"OK\n").ok();
+                let class_info = WNDCLASSW { lpfnWndProc: Some(window_proc), hInstance: instance.into(), lpszClassName: PCWSTR(class.as_ptr()), ..Default::default() };
+                RegisterClassW(&class_info);
+                let window = match CreateWindowExW(WINDOW_EX_STYLE(0), PCWSTR(class.as_ptr()), PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(instance.into()), None) {
+                    Ok(window) => window,
+                    Err(e) => return drop(ready.send(Err(e.to_string()))),
+                };
+                handlers().lock().unwrap_or_else(|e| e.into_inner()).insert(window.0 as isize, Box::new(deliver));
+                ready.send(Ok(window.0 as isize)).ok();
+                let mut message = MSG::default();
+                while GetMessageW(&mut message, None, 0, 0).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
                 }
             }
         })?;
-        Ok(())
+        match started.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(why)) => Err(other(&why)),
+            Err(_) => Err(other("the window of the instance did not start")),
+        }
     }
 
-    pub(super) fn remove(dir: &Path) {
-        std::fs::remove_file(port_file(dir)).ok();
-    }
+    /// The process ends with its window and its mutex: nothing is left to take away.
+    pub(super) fn remove(_dir: &Path) {}
 }
 
 /// Ask the running ibisOffice of this user (if there is one) to do `requests`; `true` when it did and this process can end.

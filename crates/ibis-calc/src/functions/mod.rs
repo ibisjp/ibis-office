@@ -10,16 +10,21 @@
 
 pub mod table;
 
+mod contact_match;
 mod database;
 pub(crate) mod date;
 mod dist;
 mod engineering;
 mod ets;
+mod field_match;
 mod financial;
 mod groupby;
+mod identifier_match;
 mod info;
+mod kana_match;
 mod logical;
 mod lookup;
+mod name_match;
 pub(crate) mod math;
 pub(crate) mod stat;
 mod text;
@@ -36,6 +41,11 @@ pub type Func = fn(&mut Ctx, &[Expr]) -> Value;
 
 /// The function named `name` (upper case, no prefix), if the engine has it.
 pub fn lookup(name: &str) -> Option<Func> {
+    match name {
+        "IBIS.FIELDMATCH" => return Some(field_match::field_match),
+        "IBIS.RECORDMATCH" => return Some(field_match::record_match),
+        _ => {}
+    }
     math::get(name).or_else(|| logical::get(name)).or_else(|| info::get(name)).or_else(|| text::get(name)).or_else(|| stat::get(name)).or_else(|| lookup::get(name)).or_else(|| date::get(name)).or_else(|| financial::get(name)).or_else(|| groupby::get(name)).or_else(|| ets::get(name)).or_else(|| engineering::get(name)).or_else(|| database::get(name))
 }
 

@@ -455,6 +455,9 @@ docx.help-panels.characters-no-spaces	文字数 (スペースを含めない)
 docx.help-panels.characters-spaces	文字数 (スペースを含める)
 docx.help-panels.paragraphs	段落数
 docx.help-panels.lines	行数
+docx.help-panels.half-width-words	半角英数の単語数
+docx.help-panels.full-width-chars	全角文字 + 半角カタカナの数
+docx.help-panels.include-notes	テキスト ボックス、脚注、文末脚注を含める
 docx.paste-special	形式を選択して貼り付け
 docx.paste-special.keep-source	元の書式を保持
 docx.paste-special.match-format	貼り付け先の書式に合わせる
@@ -2004,6 +2007,7 @@ docx.design.themes.customize	テーマの色とフォントの編集…
 docx.design.themes.applied	テーマ「{name}」を適用しました
 docx.design.theme-colors	配色
 docx.design.theme-colors.office	Office
+docx.design.theme-colors.office_2013_2022	Office 2013 - 2022
 docx.design.theme-colors.office_2007_2010	Office 2007 - 2010
 docx.design.theme-colors.grayscale	グレースケール
 docx.design.theme-colors.blue_warm	ブルー ウォーム
@@ -2364,3 +2368,44 @@ _docx.tab-num	リスト
 docx.marks.page-break	改ページ
 docx.marks.column-break	段区切り
 docx.header-footer.close	ヘッダーとフッターを閉じる
+docx.view.marks.optional-hyphens	任意指定のハイフン
+docx.view.marks.anchors	アンカー（オブジェクトの位置）
+docx.page-setup.tab-other	その他
+docx.page-setup.columns	段数
+docx.page-setup.columns-unit	段
+docx.page-setup.grid-spec	文字数と行数の指定
+docx.page-setup.grid-default	標準の文字数を使う
+docx.page-setup.grid-lines	行数だけを指定する
+docx.page-setup.grid-lines-chars	文字数と行数を指定する
+docx.page-setup.grid-snap	原稿用紙の設定にする
+docx.page-setup.orientation	印刷の向き
+docx.page-setup.paper-kind	用紙サイズ
+docx.page-setup.paper-a5	A5 (148 x 210 mm)
+docx.page-setup.paper-b4	B4 (257 x 364 mm)
+docx.page-setup.paper-legal	リーガル (8.5 x 14 インチ)
+docx.page-setup.paper-custom	ユーザー設定
+docx.page-setup.apply-to	適用先
+docx.page-setup.apply-all	文書全体
+docx.page-setup.apply-section	このセクション
+docx.page-setup.bad-columns	段数は 1 から 12 の整数で入力してください。
+docx.page-setup.bad-char-pitch	字送りは 0 より大きい数で入力してください。
+docx.page-setup.genko-style	原稿用紙のスタイル
+docx.page-setup.genko-none	原稿用紙の設定にしない
+docx.page-setup.genko-grid	マス目付き原稿用紙
+docx.page-setup.genko-underline	下線付き原稿用紙
+docx.page-setup.genko-frame	外枠付き原稿用紙
+docx.page-setup.genko-color	罫線の色
+docx.page-setup.genko-color-green	緑
+docx.page-setup.genko-color-black	黒
+docx.page-setup.genko-color-red	赤
+docx.page-setup.genko-color-blue	青
+docx.page-setup.genko-color-gray	グレー
+docx.font-panel.nothing-changed	変更はありません。
+docx.paragraph-panel.nothing-changed	変更はありません。
+docx.edit-blocked.protected	文書が保護されている（または最終版・読み取り専用の）ため、この変更はできません。
+docx.style-panel.east-asian-font	日本語用
+docx.style-panel.latin-font	英数字用
+docx.style-panel.theme-body-latin	+本文のフォント
+docx.style-panel.theme-heading-latin	+見出しのフォント
+docx.style-panel.theme-body-east-asian	+本文の日本語のフォント
+docx.style-panel.theme-heading-east-asian	+見出しの日本語のフォント

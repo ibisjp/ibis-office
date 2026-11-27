@@ -705,6 +705,9 @@ docx.help-panels.characters-no-spaces	Characters (no spaces)
 docx.help-panels.characters-spaces	Characters (with spaces)
 docx.help-panels.paragraphs	Paragraphs
 docx.help-panels.lines	Lines
+docx.help-panels.half-width-words	Half-width alphanumeric words
+docx.help-panels.full-width-chars	Full-width characters + half-width katakana
+docx.help-panels.include-notes	Include textboxes, footnotes and endnotes
 docx.paste-special	Paste Special
 docx.paste-special.keep-source	Keep Source Formatting
 docx.paste-special.match-format	Match Destination Formatting
@@ -2013,6 +2016,7 @@ docx.design.themes.customize	Edit Theme Colors and Fonts…
 docx.design.themes.applied	Applied "{name}" theme
 docx.design.theme-colors	Colors
 docx.design.theme-colors.office	Office
+docx.design.theme-colors.office_2013_2022	Office 2013 - 2022
 docx.design.theme-colors.office_2007_2010	Office 2007 - 2010
 docx.design.theme-colors.grayscale	Grayscale
 docx.design.theme-colors.blue_warm	Blue Warm
@@ -2373,3 +2377,44 @@ _docx.tab-num	List
 docx.marks.page-break	Page Break
 docx.marks.column-break	Column Break
 docx.header-footer.close	Close Header and Footer
+docx.view.marks.optional-hyphens	Optional hyphens
+docx.view.marks.anchors	Object anchors
+docx.page-setup.tab-other	Layout
+docx.page-setup.columns	Columns
+docx.page-setup.columns-unit	columns
+docx.page-setup.grid-spec	Grid
+docx.page-setup.grid-default	No grid
+docx.page-setup.grid-lines	Specify line grid only
+docx.page-setup.grid-lines-chars	Specify line and character grid
+docx.page-setup.grid-snap	Manuscript paper (snap to characters)
+docx.page-setup.orientation	Orientation
+docx.page-setup.paper-kind	Paper size
+docx.page-setup.paper-a5	A5 (148 x 210 mm)
+docx.page-setup.paper-b4	B4 (257 x 364 mm)
+docx.page-setup.paper-legal	Legal (8.5 x 14 in)
+docx.page-setup.paper-custom	Custom
+docx.page-setup.apply-to	Apply to
+docx.page-setup.apply-all	Whole document
+docx.page-setup.apply-section	This section
+docx.page-setup.bad-columns	Enter a whole number of columns from 1 to 12.
+docx.page-setup.bad-char-pitch	Enter a character pitch larger than 0.
+docx.page-setup.genko-style	Manuscript paper style
+docx.page-setup.genko-none	No manuscript paper
+docx.page-setup.genko-grid	Manuscript paper with squares
+docx.page-setup.genko-underline	Manuscript paper with underlines
+docx.page-setup.genko-frame	Manuscript paper with an outer frame
+docx.page-setup.genko-color	Line color
+docx.page-setup.genko-color-green	Green
+docx.page-setup.genko-color-black	Black
+docx.page-setup.genko-color-red	Red
+docx.page-setup.genko-color-blue	Blue
+docx.page-setup.genko-color-gray	Gray
+docx.font-panel.nothing-changed	No changes to apply.
+docx.paragraph-panel.nothing-changed	No changes to apply.
+docx.edit-blocked.protected	The document is protected (or marked as final, read-only), so this change cannot be made.
+docx.style-panel.east-asian-font	East Asian
+docx.style-panel.latin-font	Latin
+docx.style-panel.theme-body-latin	+Body
+docx.style-panel.theme-heading-latin	+Headings
+docx.style-panel.theme-body-east-asian	+Body Asian
+docx.style-panel.theme-heading-east-asian	+Headings Asian

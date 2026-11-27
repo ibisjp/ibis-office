@@ -67,6 +67,8 @@ const REQUEST_MIN_WIDTH: f32 = 220.0;
 const COLUMN_MIN_WIDTH: f32 = 320.0;
 /// The size of the panel's letters, in pixels: 1.2 times `text_sm`'s.
 const REQUEST_TEXT_SIZE: f32 = 14.0 * 1.2;
+/// Under this width (a phone) the start view has the 協力のお願い panel below the column, not beside it (the two do not fit side by side), in pixels.
+pub(crate) const NARROW_WIDTH: f32 = COLUMN_MIN_WIDTH + REQUEST_MIN_WIDTH + 2.0 * COLUMN_PADDING;
 /// The width a start window opens at: the column, the panel and the space right of it.
 pub(crate) const START_WINDOW_WIDTH: f32 = COLUMN_WIDTH + REQUEST_WIDTH + COLUMN_PADDING;
 /// Where 協力のお願い asks for reports.
@@ -110,7 +112,7 @@ fn request_panel(muted: Hsla) -> Div {
 
 impl SlideEditor {
     /// The white page under the title bar while no file is open.
-    pub(crate) fn render_start_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_start_view(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let open = div()
@@ -139,15 +141,13 @@ impl SlideEditor {
             .min_h_0()
             .w_full()
             .bg(rgb(0xffffff))
-            .overflow_hidden()
             .flex()
-            .items_start()
+            .when(narrow, |d| d.flex_col().overflow_y_scroll().items_stretch())
+            .when(!narrow, |d| d.overflow_hidden().items_start())
             .child(
                 v_flex()
-                    .w(px(COLUMN_WIDTH))
-                    .min_w(px(COLUMN_MIN_WIDTH))
-                    .flex_shrink(1.0)
-                    .h_full()
+                    .when(!narrow, |d| d.w(px(COLUMN_WIDTH)).min_w(px(COLUMN_MIN_WIDTH)).flex_shrink(1.0).h_full())
+                    .when(narrow, |d| d.w_full().flex_none().min_h(px(400.)))
                     .px_8()
                     .pb(px(BOTTOM_MARGIN))
                     .child(section_title("start.new", BOTTOM_MARGIN, 0.0))
@@ -158,7 +158,7 @@ impl SlideEditor {
                     .map(|d| self.recent_files_list(d, cx))
                     .when_some(self.status.clone(), |d, status| d.child(div().mt_3().text_sm().text_color(muted).child(status))),
             )
-            .child(v_flex().w(px(REQUEST_WIDTH)).min_w(px(REQUEST_MIN_WIDTH)).flex_shrink(1.).mr(px(COLUMN_PADDING)).mt(px(BOTTOM_MARGIN)).gap_4()
+            .child(v_flex().when(!narrow, |d| d.w(px(REQUEST_WIDTH)).min_w(px(REQUEST_MIN_WIDTH)).flex_shrink(1.).mr(px(COLUMN_PADDING))).when(narrow, |d| d.w_full().flex_none().px(px(COLUMN_PADDING)).pb(px(BOTTOM_MARGIN))).mt(px(BOTTOM_MARGIN)).gap_4()
                 .children(Self::update_button())
                 .child(crate::chrome::brand_logo("start-app-logo",REQUEST_WIDTH / crate::chrome::LOGO_ASPECT,true))
                 .child(Self::version_line(muted))

@@ -238,6 +238,8 @@ pub enum EditError {
     ControlLocked,
     /// 変更履歴の記録がロックされている（Word の変更履歴の記録のロック / w:documentProtection w:edit="trackedChanges"）.
     TrackingLocked,
+    /// This document is a read-only preview.
+    ReadOnly,
     /// A slide uses the layout.
     LayoutInUse,
 }
@@ -263,6 +265,7 @@ impl std::fmt::Display for EditError {
             Self::CustomViewsDisabledByTable => write!(f, "custom views cannot be used in workbooks that contain tables"),
             Self::NotFound => write!(f, "item not found"),
             Self::TrackingLocked => write!(f, "tracking is locked"),
+            Self::ReadOnly => write!(f, "document is read-only"),
         }
     }
 }
@@ -658,6 +661,9 @@ impl Presentation {
             Command::SetTheme { colors, fonts } => {
                 let old_colors = std::mem::replace(&mut self.theme_colors, colors.clone());
                 let old_fonts = std::mem::replace(&mut self.theme_fonts, fonts.clone());
+                if colors != old_colors {
+                    self.resolve_theme_colors();
+                }
                 if let Some(flow_arc) = &mut self.flow
                     && colors != old_colors
                 {
@@ -1084,6 +1090,7 @@ fn follow(frame: EmuRect, from: EmuRect, to: EmuRect) -> EmuRect {
 #[derive(Clone, Debug)]
 pub struct Document {
     presentation: Presentation,
+    read_only: bool,
     undo: Vec<Vec<Command>>,
     redo: Vec<Vec<Command>>,
     /// Last successful worksheet edit, before undo inversion, for Repeat (F4).
@@ -1131,8 +1138,11 @@ impl Default for Document {
 
 impl Document {
     pub fn new(presentation: Presentation) -> Self {
-        Self { presentation, undo: Vec::new(), redo: Vec::new(), repeat_sheet:Vec::new(), repeat_sheet_group:false, clean_undo_len: Some(0), file: None, gesture: None, gesture_serial: 0 }
+        Self { presentation, read_only: false, undo: Vec::new(), redo: Vec::new(), repeat_sheet:Vec::new(), repeat_sheet_group:false, clean_undo_len: Some(0), file: None, gesture: None, gesture_serial: 0 }
     }
+
+    /// Prevent document-changing commands for read-only import previews.
+    pub fn set_read_only(&mut self, read_only: bool) { self.read_only = read_only; }
 
     /// Mark the current state of the document as saved (clean).
     pub fn mark_clean(&mut self) {
@@ -1194,6 +1204,9 @@ impl Document {
     /// Apply `commands` as one undo step. If any command fails, the ones
     /// before it are rolled back and the document is unchanged.
     pub fn execute(&mut self, commands: Vec<Command>) -> Result<(), EditError> {
+        if self.read_only && commands.iter().any(|command| !matches!(command, Command::Flow(crate::flow_command::FlowCommand::SetViewMode(_)))) {
+            return Err(EditError::ReadOnly);
+        }
         let repeat:Vec<_> = commands.iter().filter_map(|command|match command {
             Command::Sheet(edit @ (crate::SheetCommand::SetFormat{..}|crate::SheetCommand::Insert{..}|crate::SheetCommand::Delete{..}|crate::SheetCommand::ClearFormats{..}|crate::SheetCommand::InsertOrDeleteCells{..})) => Some(edit.clone()),
             _ => None,

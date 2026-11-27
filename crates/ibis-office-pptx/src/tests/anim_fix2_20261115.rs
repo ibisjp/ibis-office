@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 2026-11-15 (anim-fix-2): screen transitions fitted to PowerPoint's video (`scripts/transition-fit/audit_compare.py`); frames are read as pixels.
 use crate::shell::scenario::Scenario;
-use crate::slideshow::SlideshowExt;
+use crate::ext::*;
 use ibis_doc_model::{Color, Command, Fill, Rgb, Transition};
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {

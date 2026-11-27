@@ -124,7 +124,7 @@ pub(crate) fn replace_text(text: &str, query: &str, with: &str) -> Option<String
 
 fn searched_in_sheet(sheet: &ibis_doc_model::Sheet, row: u32, column: u32, formulas: bool) -> Option<String> {
     let c = sheet.cell(row, column)?;
-    match (&c.formula, formulas) {
+    match (sheet.visible_formula(c), formulas) {
         (Some(f), true) => Some(format!("={f}")),
         _ => (!c.text.is_empty()).then(|| c.text.clone()),
     }
@@ -140,7 +140,7 @@ fn match_cell_in_sheet(
     if let Some(target) = searched_in_sheet(sheet, row, column, options.formulas) {
         if is_match(&target, query, options) {
             let c = sheet.cell(row, column)?;
-            return Some((c.text.clone(), c.formula.as_ref().map(|f| format!("={f}"))));
+            return Some((c.text.clone(), sheet.visible_formula(c).map(|f| format!("={f}"))));
         }
     }
     if options.comments {
@@ -184,6 +184,10 @@ fn replacement_in_sheet(
     options: FindOptions,
 ) -> Option<CellEdit> {
     let c = sheet.cell(row, column)?;
+    // A hidden formula is not searched, so a replacement cannot tell what it holds.
+    if sheet.formula_is_hidden(c) {
+        return None;
+    }
     let input = match (&c.formula, &c.value) {
         (Some(f), _) if options.formulas => {
             let formula_str = format!("={f}");

@@ -2183,7 +2183,7 @@ impl SlideEditor {
             .shadow_lg()
             .text_size(px(12.))
             .occlude()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {gpui_kit::component::popup_guard::note_outside_dismiss();this.close_pivot_popup(cx)}))
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {gpui_kit::component::popup_guard::note_outside_dismiss(window);this.close_pivot_popup(cx)}))
             .child(body);
         Some(deferred(anchored().position(popup.position).snap_to_window_with_margin(px(8.)).child(panel)).with_priority(2).into_any_element())
     }

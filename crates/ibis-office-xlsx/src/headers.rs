@@ -38,6 +38,10 @@ pub struct HeaderGeometry {
     /// The top-left corner of the headers (the workspace's).
     pub(crate) origin: (f32, f32),
     pub(crate) row_header_width: f32,
+    /// The outline's strips (GitHub issue #291): the width at the left of the row headers and the height above the column headers, and the
+    /// buttons painted in them.
+    pub(crate) outline: (f32, f32),
+    pub(crate) outline_buttons: Vec<super::outline_gutter::OutlineButton>,
 }
 
 impl HeaderGeometry {
@@ -309,10 +313,11 @@ impl SlideEditor {
             // On a header's line: the resize pointer.
             let (x, y) = (f32::from(event.position.x), f32::from(event.position.y));
             let (ox, oy) = geometry.origin;
-            let (head_w, head_h) = (geometry.head_w(), super::sheet_ui::COLUMN_HEADER_HEIGHT);
-            let hover = if (oy..oy + head_h).contains(&y) && x >= ox + head_w {
+            let (outline_w, outline_h) = geometry.outline;
+            let (head_w, head_h) = (geometry.head_w(), super::sheet_ui::COLUMN_HEADER_HEIGHT + outline_h);
+            let hover = if (oy + outline_h..oy + head_h).contains(&y) && x >= ox + head_w {
                 matches!(hit(&geometry.columns, x), Some(HeaderHit::Line { .. })).then_some(Axis::Columns)
-            } else if (ox..ox + head_w).contains(&x) && y >= oy + head_h {
+            } else if (ox + outline_w..ox + head_w).contains(&x) && y >= oy + head_h {
                 matches!(hit(&geometry.rows, y), Some(HeaderHit::Line { .. })).then_some(Axis::Rows)
             } else {
                 None
@@ -397,12 +402,31 @@ impl SlideEditor {
     /// Fit column `index` (and the selected ones, if it is among them) to
     /// the widest text in it, as a double-click on its right line does.
     pub(crate) fn fit_columns(&mut self, index: u32, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((_, sheet)) = self.current_sheet() else { return };
         let (first, last) = self.selected_lines(Axis::Columns).filter(|(a, b)| (*a..=*b).contains(&index)).unwrap_or((index, index));
         let ts = window.text_system().clone();
-        let mut commands = Vec::new();
-        let slide = self.current_slide;
         let started = crate::debug_timing::start();
+        // With several sheets selected together every sheet of the group is fitted, each to its own contents (Excel, the Windows check of #238).
+        let mut commands = self.fit_columns_commands(self.current_slide, first, last, &ts);
+        for id in self.sheet_group().into_iter().filter(|id| *id != self.current_slide) {
+            commands.extend(self.fit_columns_commands(id, first, last, &ts));
+        }
+        crate::debug_timing::report("fit columns: measure", started);
+        if commands.is_empty() {
+            return;
+        }
+        if let Err(err) = self.document.execute(commands) {
+            log::warn!("fitting rejected: {err}");
+        }
+        // The rows not fixed by hand fit again to the new widths, in the same step.
+        self.fit_wrapped_rows(CellRange { first_row: 0, last_row: u32::MAX, first_column: first, last_column: last }, cx);
+        self.scroll_columns_horizontally_into_view(first, last);
+        cx.notify();
+    }
+
+    /// The commands that fit columns `first`..=`last` of the sheet `slide` to the widest text in each.
+    pub(crate) fn fit_columns_commands(&self, slide: ibis_doc_model::SlideId, first: u32, last: u32, ts: &TextSystem) -> Vec<Command> {
+        let Some(sheet) = self.presentation().slide(slide).and_then(ibis_doc_model::sheet_calc::sheet_of_slide) else { return Vec::new() };
+        let mut commands = Vec::new();
         // One pass over the cells for all the columns; each format's font found once (a column is a million cells of a few formats).
         let mut widest = vec![0.0f32; (last - first + 1) as usize];
         let mut measures: Vec<Option<(super::sheet_view::GlyphWidths, f32, f32, f32)>> = Vec::new();
@@ -417,7 +441,7 @@ impl SlideEditor {
             }
             let style = &sheet.styles[cell.style as usize];
             let slot = &mut measures[cell.style as usize];
-            let (glyphs, excel_digit, drawn_digit, italic) = slot.get_or_insert_with(|| self.excel_measure(style, &ts));
+            let (glyphs, excel_digit, drawn_digit, italic) = slot.get_or_insert_with(|| self.excel_measure(style, ts));
             // The widest of its lines (a line break starts another: issue #17, a cell of 54 lines was fitted to all of them end to end).
             let text_width = cell.text.split('\n').map(|line| glyphs.width(line.trim_end_matches('\r'))).fold(0.0, f32::max);
             let width = text_width * *excel_digit / *drawn_digit + *italic + style.indent as f32 * 3.0 * *excel_digit;
@@ -434,17 +458,7 @@ impl SlideEditor {
             // Fitted, the column is the sheet's to widen again (not a width set by hand), and the width is saved.
             commands.push(Command::Sheet(SheetCommand::SetColumnWidthFitted { sheet: slide, first: column, last: column, size }));
         }
-        crate::debug_timing::report("fit columns: measure", started);
-        if commands.is_empty() {
-            return;
-        }
-        if let Err(err) = self.document.execute(commands) {
-            log::warn!("fitting rejected: {err}");
-        }
-        // The rows not fixed by hand fit again to the new widths, in the same step.
-        self.fit_wrapped_rows(CellRange { first_row: 0, last_row: u32::MAX, first_column: first, last_column: last }, cx);
-        self.scroll_columns_horizontally_into_view(first, last);
-        cx.notify();
+        commands
     }
 
     /// Fit row `index` (and the selected ones, if it is among them) to
@@ -452,7 +466,11 @@ impl SlideEditor {
     pub(crate) fn fit_rows(&mut self, index: u32, window: &mut Window, cx: &mut Context<Self>) {
         let (first, last) = self.selected_lines(Axis::Rows).filter(|(a, b)| (*a..=*b).contains(&index)).unwrap_or((index, index));
         let ts = window.text_system().clone();
-        let commands = self.fit_rows_commands(first, last, &ts);
+        let mut commands = self.fit_rows_commands(first, last, &ts);
+        // With several sheets selected together every sheet of the group is fitted, each to its own contents.
+        for id in self.sheet_group().into_iter().filter(|id| *id != self.current_slide) {
+            commands.extend(self.fit_rows_commands_for(id, first, last, &ts));
+        }
         if !commands.is_empty()
             && let Err(err) = self.document.execute(commands)
         {
@@ -563,8 +581,12 @@ impl SlideEditor {
     /// one line in the default size; a wrapped cell's lines (its text broken
     /// at the column's width, as the drawing breaks it) or a larger font make it taller.
     pub(crate) fn fit_rows_commands(&self, first: u32, last: u32, ts: &TextSystem) -> Vec<Command> {
-        let Some((_, sheet)) = self.current_sheet() else { return Vec::new() };
-        let slide = self.current_slide;
+        self.fit_rows_commands_for(self.current_slide, first, last, ts)
+    }
+
+    /// [`Self::fit_rows_commands`] for the sheet `slide`.
+    pub(crate) fn fit_rows_commands_for(&self, slide: ibis_doc_model::SlideId, first: u32, last: u32, ts: &TextSystem) -> Vec<Command> {
+        let Some(sheet) = self.presentation().slide(slide).and_then(ibis_doc_model::sheet_calc::sheet_of_slide) else { return Vec::new() };
         let normal = super::row_fit::normal_font(self.presentation());
         // The height of a row for its content is `row_fit::fitted_height_pt`'s, the one opening a file uses too; the lines are the
         // ones the drawing breaks the text into (`sheet_view::drawn_line_counts`): nothing here breaks text or measures a row.

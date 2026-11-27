@@ -182,7 +182,10 @@ impl SlideEditor {
     /// The ▾ right of the file name in the title row, with its menu; `None` for a document that has no file yet (nothing to copy or
     /// rename). With a host the same menu works through the host's functions: an item the host cannot do (it gave no function, or the
     /// document is not its own) is there, disabled, as the menus' rule is. `disabled` while a modal dialog is open.
-    pub(crate) fn file_name_menu_button(&self, editor: &WeakEntity<SlideEditor>) -> Option<AnyElement> {
+    ///
+    /// `as_name`: on a mobile OS (K0088) there is no ▾; the file name itself is the button (`title-file-name`) that opens the same menu. It is given the
+    /// name to show.
+    pub(crate) fn file_name_menu_button(&self, editor: &WeakEntity<SlideEditor>, as_name: Option<SharedString>) -> Option<AnyElement> {
         let on_host = host_menu();
         #[cfg(not(target_family = "wasm"))]
         let has_path = self.path.is_some();
@@ -208,18 +211,31 @@ impl SlideEditor {
                 MenuItem::tr("shell.file-name-menu.rename").icon("edit").on(|e, window, cx| e.open_rename_file_dialog(window, cx)).into(),
             ]
         };
+        #[cfg(not(target_family = "wasm"))]
+        let items = if !on_host && self.has_law_source() {
+            let mut items = items;
+            items.push(MenuEntry::Separator);
+            items.push(MenuItem::tr("compare.law-command").icon("compare")
+                .on(|e, window, cx| e.compare_documents(window, cx)).into());
+            items
+        } else {
+            items
+        };
         let editor = editor.clone();
-        let id = "title-file-menu";
-        let button = Button::new(id)
-            .ghost()
-            .xsmall()
-            .h(px(24.))
-            .w(px(22.))
-            .rounded(px(4.))
-            .icon(Icon::new(Material("arrow_drop_down")))
-            .tooltip(text("shell.file-name-menu.tooltip"))
-            .disabled(self.dialog_is_modal());
-        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+        let (id, button) = match as_name {
+            // The name is the button: its words, 28 points high, as wide as its words (the row truncates it).
+            Some(name) => ("title-file-name", Button::new("title-file-name").ghost().h(px(28.)).px(px(6.)).rounded(px(4.)).text_size(px(15.)).label(name).disabled(self.dialog_is_modal())),
+            None => ("title-file-menu", Button::new("title-file-menu")
+                .ghost()
+                .xsmall()
+                .h(px(24.))
+                .w(px(22.))
+                .rounded(px(4.))
+                .icon(Icon::new(Material("arrow_drop_down")))
+                .tooltip(text("shell.file-name-menu.tooltip"))
+                .disabled(self.dialog_is_modal())),
+        };
+        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
         let button = crate::scenario::button_probe::observe(button, id.into());
         Some(
             button

@@ -9,7 +9,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
 
-use crate::shell::chrome::SidebarPanel;
+use crate::shell::chrome::{MenuEntry, MenuItem, SidebarPanel};
 use crate::shell::editor::SlideEditor;
 use crate::ext::*;
 
@@ -50,7 +50,14 @@ pub(crate) struct PrintSettings {
     pub(crate) landscape: bool,
     /// Handouts with the slides down a column before the next (配布資料の順序: 縦).
     pub(crate) vertical_order: bool,
+    /// The paper the pages are printed on (`--print-paper`, one of [`PRINT_PAPERS`]); `None`: the pages' own size.
+    pub(crate) paper: Option<&'static str>,
+    /// With a paper: the pages at 100 % instead of scaled to fit it (`--no-print-fit-paper`).
+    pub(crate) no_fit_paper: bool,
 }
+
+/// The papers of the print panel, as `--print-paper` and the MCP server's `paper` take them.
+pub(crate) const PRINT_PAPERS: [&str; 8] = ["a3", "a4", "a5", "b4", "b5", "letter", "legal", "tabloid"];
 
 impl PrintSettings {
     /// Whether the print is not a vector PDF (so it is made of the slides' pictures): none is any more. Handouts, notes pages and the outline are vector (#225), so is the
@@ -116,6 +123,12 @@ impl PrintSettings {
         }
         if self.frame {
             args.push("--print-frame".to_string());
+        }
+        if let Some(paper) = self.paper {
+            args.extend(["--print-paper".to_string(), paper.to_string()]);
+            if self.no_fit_paper {
+                args.push("--no-print-fit-paper".to_string());
+            }
         }
         args
     }
@@ -325,6 +338,16 @@ impl SlideEditor {
         body = body
             .child(colors)
             .child(crate::shell::chrome::checkbox_button("pptx-print-frame", crate::shell::i18n::text("pptx.print-panel.frame-slides"), settings.frame, false, cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.frame = !s.frame, cx))));
+        // 用紙: the pages' own size or one of the papers, and whether the pages are scaled to fit it.
+        let paper_entries: Vec<MenuEntry> = std::iter::once(MenuItem::tr("pptx.print-panel.paper-own").checked(settings.paper.is_none()).on(|e, _, cx| e.edit_print_panel(|s| s.paper = None, cx)).into())
+            .chain(PRINT_PAPERS.into_iter().map(|name| MenuItem::new("dropdown.item", name.to_uppercase()).checked(settings.paper == Some(name)).on(move |e, _, cx| e.edit_print_panel(|s| s.paper = Some(name), cx)).into())) // i18n-ok（用紙の名前）
+            .collect();
+        let paper_label = settings.paper.map_or_else(|| crate::shell::i18n::text("pptx.print-panel.paper-own"), |name| name.to_uppercase().into());
+        body = body
+            .child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("pptx.print-panel.paper"), crate::shell::chrome::Dropdown::from_entries("pptx-print-paper", paper_label, paper_entries, true, 0, &cx.weak_entity()).fill_width()));
+        if settings.paper.is_some() {
+            body = body.child(crate::shell::chrome::checkbox_button("pptx-print-fit-paper", crate::shell::i18n::text("pptx.print-panel.fit-paper"), !settings.no_fit_paper, false, cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.no_fit_paper = !s.no_fit_paper, cx))));
+        }
         body = body.child(heading("shell.print.cmyk-heading")).child(self.print_cmyk_section("pptx-print", cx));
         if let Some(error) = error {
             body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));
@@ -357,10 +380,16 @@ mod tests {
     fn arguments() {
         let none = PrintSettings::default();
         assert!(none.arguments(4, &Default::default()).is_empty() && !none.needs_pictures());
-        let all = PrintSettings { range: PrintRange::Current, custom: String::new(), handout: Some(6), notes_pages: false, outline: false, color: PrintColorKind::Gray, frame: true, landscape: false, vertical_order: false };
+        let all = PrintSettings { range: PrintRange::Current, custom: String::new(), handout: Some(6), notes_pages: false, outline: false, color: PrintColorKind::Gray, frame: true, landscape: false, vertical_order: false, paper: None, no_fit_paper: false };
         assert_eq!(all.arguments(4, &Default::default()), ["--range", "4", "--print-color", "gray", "--handout", "6", "--print-frame"]);
         assert!(!all.needs_pictures(), "the colour is vector too (#225)");
         // A handout (or notes) with a frame is vector: the frame is drawn as a line; a frame round the slides themselves is a picture.
+        // The paper, and the pages at 100 % on it.
+        let on_paper = PrintSettings { paper: Some("a4"), ..Default::default() };
+        assert_eq!(on_paper.arguments(1, &Default::default()), ["--print-paper", "a4"]);
+        let at_size = PrintSettings { paper: Some("letter"), no_fit_paper: true, ..Default::default() };
+        assert_eq!(at_size.arguments(1, &Default::default()), ["--print-paper", "letter", "--no-print-fit-paper"]);
+        assert!(PrintSettings { no_fit_paper: true, ..Default::default() }.arguments(1, &Default::default()).is_empty());
         assert!(!PrintSettings { handout: Some(6), frame: true, ..Default::default() }.needs_pictures());
         assert!(!PrintSettings { frame: true, ..Default::default() }.needs_pictures(), "the frame is vector too");
         // Handouts on their side with what the notes pages carry.

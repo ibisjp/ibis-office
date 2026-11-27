@@ -290,7 +290,7 @@ impl RenderOnce for SegmentControl {
         if animating {
             window.request_animation_frame();
         }
-        #[cfg_attr(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))), allow(unused_variables))]
+        #[cfg_attr(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))), allow(unused_variables))]
         let probe_id = format!("segment-highlight-{:?}", self.items[0].id);
         // Keyboard (WAI-ARIA radio group): the arrow keys move the selection to the neighbouring enabled segment and stop at the ends
         // (like the Dropdown list), Home/End go to the first/last enabled one, Space/Enter are the button's own keyboard click,
@@ -315,7 +315,7 @@ impl RenderOnce for SegmentControl {
                 })
             })
             .collect();
-        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
         for (item, handle) in self.items.iter().zip(&handles) {
             let key = match &item.id {
                 ElementId::Name(n) => n.to_string(),
@@ -373,11 +373,11 @@ impl RenderOnce for SegmentControl {
                         canvas(
                             |_, _, _| (),
                             move |b, _, _, _| {
-                                #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+                                #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))))]
                                 let _ = b;
                                 #[cfg(all(
                                     feature = "scenarios",
-                                    any(target_os = "macos", target_os = "linux")
+                                    any(target_os = "macos", target_os = "linux", windows)
                                 ))]
                                 crate::scenario::button_probe::record_bounds(&probe_id, b);
                             },

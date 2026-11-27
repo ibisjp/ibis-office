@@ -261,6 +261,12 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// A refusal: in the panel and in a message box (the OK button of the panel must always show what it did).
+    fn text_columns_error(&mut self, text: String, cx: &mut Context<Self>) {
+        self.show_alert(crate::shell::i18n::text("xlsx.text-to-columns").trim_end_matches('…').to_string().into(), text.clone().into(), cx);
+        self.text_columns_message(text, cx);
+    }
+
     fn text_columns_message(&mut self, text: String, cx: &mut Context<Self>) {
         if let Some(p) = self.wb_mut().panels.text_columns.as_mut() {
             p.message = text;
@@ -282,19 +288,19 @@ impl SlideEditor {
         }
         let Some(p) = self.sheet_state().and_then(|s| s.panels.text_columns.as_ref()) else { return };
         if p.slide != self.current_slide {
-            self.text_columns_message(crate::shell::i18n::text("_xlsx.the-sheet-has-changed-reopen-it").into(), cx);
+            self.text_columns_error(crate::shell::i18n::text("_xlsx.the-sheet-has-changed-reopen-it").into(), cx);
             return;
         }
         if p.source.first_column != p.source.last_column {
-            self.text_columns_message(crate::shell::i18n::text("fix.text-columns.only-one-column-can-converted").into(), cx);
+            self.text_columns_error(crate::shell::i18n::text("fix.text-columns.only-one-column-can-converted").into(), cx);
             return;
         }
         let split = match p.split(cx) {
             Ok(s) => s,
-            Err(e) => return self.text_columns_message(e, cx),
+            Err(e) => return self.text_columns_error(e, cx),
         };
         let Some(destination) = super::dedupe_edit::parse_range(&p.destination.read(cx).value()) else {
-            return self.text_columns_message(crate::shell::i18n::text("fix.text-columns.enter-destination-cell-e-g").into(), cx);
+            return self.text_columns_error(crate::shell::i18n::text("fix.text-columns.enter-destination-cell-e-g").into(), cx);
         };
         let (as_text, confirm, slide, source, columns) = (p.as_text, p.confirm, p.slide, p.source, p.columns.clone());
         let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
@@ -328,21 +334,21 @@ impl SlideEditor {
             formats.extend(part_formats);
         }
         if edits.is_empty() {
-            return self.text_columns_message(crate::shell::i18n::text("fix.text-columns.there-no-data-split").into(), cx);
+            return self.text_columns_error(crate::shell::i18n::text("fix.text-columns.there-no-data-split").into(), cx);
         }
         // Excel asks before it replaces the cells there.
         if occupied && !confirm {
             if let Some(p) = self.wb_mut().panels.text_columns.as_mut() {
                 p.confirm = true;
             }
-            return self.text_columns_message(crate::shell::i18n::text("fix.text-columns.there-already-data-here-replace").into(), cx);
+            return self.text_columns_error(crate::shell::i18n::text("fix.text-columns.there-already-data-here-replace").into(), cx);
         }
         let mut commands = vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })];
         for (range, code) in formats {
             commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
         }
         if let Err(error) = self.document.execute(commands) {
-            return self.text_columns_message(error.to_string(), cx);
+            return self.text_columns_error(error.to_string(), cx);
         }
         self.wb_mut().last_fill = None;
         if let Some(p) = self.wb_mut().panels.text_columns.as_mut() {

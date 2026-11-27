@@ -129,6 +129,34 @@ impl WinRowMetrics {
     }
 }
 
+impl WinRowMetrics {
+    /// GDI's `tmAscent` at `ppem` pixels: `usWinAscent` scaled to the em and rounded to a pixel (游ゴシック 74 at 75 px, 87 at 88 px, 115 at 117 px).
+    pub fn gdi_ascent_px(&self, ppem: f64) -> f64 {
+        (self.win_ascent * ppem / self.units_per_em).round()
+    }
+
+    /// GDI's `tmExternalLeading` at `ppem` pixels: the font's external leading (`external_leading`, in ems) scaled and rounded to a pixel (Arial 2, 3 and 4 px at
+    /// 75, 88 and 117 px; Times New Roman 3, 4, 5; 游ゴシック 24, 28, 37).
+    pub fn gdi_external_leading_px(&self, ppem: f64) -> f64 {
+        (f64::from(self.external_leading()) * ppem).round()
+    }
+
+    /// What a turned line's box is thicker than the line by, per side, beyond the fixed part (GitHub issue #189, Excel's EMF and PDF of 99 typeface and size
+    /// pairs: the box is `tmHeight + 2 S` thick, and `S` is 0.5 pt plus this): half of the external leading and half of how far the ascent passes the em, in
+    /// pixels at `ppem` (rms 0.51 px over the 99 pairs, the measurement's own quantum; the fixed 0.5 pt is not here: it is a measured constant of
+    /// `docs/rule/implimentationRule.md`, "測った係数を使ってよい例外", placed in `xlsx::sheet_view`).
+    pub fn rotated_box_margin_px(&self, ppem: f64) -> f64 {
+        rotated_box_margin_px_em(f64::from(self.external_leading()), self.win_ascent / self.units_per_em, ppem)
+    }
+}
+
+/// `WinRowMetrics::rotated_box_margin_px` from the two values in ems (`external_leading()` and `usWinAscent / unitsPerEm`), as a font's cached metrics hold them:
+/// `½ × (tmExternalLeading + max(0, tmAscent − ppem))`, each of the two GDI values rounded to a pixel at `ppem`.
+pub fn rotated_box_margin_px_em(external_leading_em: f64, win_ascent_em: f64, ppem: f64) -> f64 {
+    let (leading, ascent) = ((external_leading_em * ppem).round(), (win_ascent_em * ppem).round());
+    0.5 * (leading + (ascent - ppem).max(0.0))
+}
+
 pub(crate) fn font_file_win_row_metrics(data: &[u8], index: u32) -> Option<WinRowMetrics> {
     let u16_at = |at: usize| -> Option<u16> { Some(u16::from_be_bytes([*data.get(at)?, *data.get(at + 1)?])) };
     let i16_at = |at: usize| -> Option<i16> { u16_at(at).map(|v| v as i16) };
@@ -824,6 +852,32 @@ pub(crate) fn fallback_fullwidth_alnum_width(c: char) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
+    use super::WinRowMetrics;
+
+    /// GitHub issue #189: the typeface-dependent part of the turned line's box margin, against Excel's measured S minus its fixed 0.5 pt (4.17 px at 600 dpi).
+    #[test]
+    fn rotated_box_margin_follows_external_leading_and_ascent_excess() {
+        let font = |win_ascent: f64, win_descent: f64, hhea_ascent: f64, hhea_descent: f64, gap: f64, upm: f64| WinRowMetrics {
+            // `hhea`'s descender is negative, as in the file.
+            win_ascent, win_descent, hhea_ascent, hhea_descent: -hhea_descent, hhea_line_gap: gap, units_per_em: upm,
+            y_subscript_size: 0.0, y_superscript_size: 0.0, y_subscript_offset: 0.0, y_superscript_offset: 0.0, code_page_range_1: 0, vdmx: None,
+        };
+        // (typeface, Excel's measured S at 9, 10.5 and 14 pt: 75, 88 and 117 px)
+        let cases = [
+            ("游ゴシック", font(2017.0, 619.0, 1802.0, 455.0, 1024.0, 2048.0), [15.3, 17.3, 20.9]),
+            ("Arial", font(1854.0, 434.0, 1854.0, 434.0, 67.0, 2048.0), [5.08, 5.37, 5.95]),
+            ("Times New Roman", font(1825.0, 443.0, 1825.0, 443.0, 87.0, 2048.0), [5.7, 6.2, 6.2]),
+            ("Meiryo UI", font(2171.0, 430.0, 2171.0, 430.0, 0.0, 2048.0), [6.2, 6.7, 7.7]),
+            ("ＭＳ 明朝", font(220.0, 36.0, 220.0, 36.0, 0.0, 256.0), [4.7, 5.2, 4.7]),
+        ];
+        for (name, metrics, measured) in cases {
+            for (ppem, measured) in [75.0, 88.0, 117.0].into_iter().zip(measured) {
+                let s = 4.17 + metrics.rotated_box_margin_px(ppem);
+                assert!((s - measured).abs() < 2.0,  "{name} at {ppem} px: {s} against {measured}");
+            }
+        }
+    }
+
     #[test]
     fn century_advances_are_the_font_file() {
         // Word's PDF, 10 pt: TOE 21.70 pt (hmtx 4438 units), SFR 20.14 pt (4135 units).

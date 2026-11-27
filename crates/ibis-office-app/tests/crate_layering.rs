@@ -27,7 +27,10 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("ibis-office-pptx", &["ibis-office-base", "ibis-office-render", "ibis-office-shell", "ibis-office-macros"]),
     // The workbook screen (XLSX), cut out in stage 5 (tasks/doc/crate-split-plan.md, 16): a format on the shell, naming no other format.
     ("ibis-office-xlsx", &["ibis-office-base", "ibis-office-render", "ibis-office-shell", "ibis-office-macros"]),
-    ("ibis-office-app", &["ibis-office-base", "ibis-office-render", "ibis-office-shell", "ibis-office-docx", "ibis-office-pptx", "ibis-office-xlsx", "ibis-office-updater", "ibis-office-macros"]),
+    // The PDF viewer's screen (#235): on the shell, and it reuses the document screen's menus and toolbar (`viewer_menu_items`, `viewer_toolbar_*`
+    // of ibis-office-docx), so it is the one format that names another (a sideways dependency; the menus would move to the shell to remove it).
+    ("ibis-office-pdf", &["ibis-office-base", "ibis-office-shell", "ibis-office-docx"]),
+    ("ibis-office-app", &["ibis-office-base", "ibis-office-render", "ibis-office-shell", "ibis-office-docx", "ibis-office-pptx", "ibis-office-xlsx", "ibis-office-pdf", "ibis-office-updater", "ibis-office-macros"]),
     // The attribute macro `#[editor_ext]`: built for the compiler, it depends on no crate of ibisOffice.
     ("ibis-office-macros", &[]),
     ("ibis-office-updater", &[]),

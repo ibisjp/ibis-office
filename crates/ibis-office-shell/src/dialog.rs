@@ -26,6 +26,8 @@ pub struct PendingAsk {
     pub(crate) on_ok: std::rc::Rc<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>,
     /// The buttons are はい and いいえ (a yes-or-no question such as deleting a sheet), not OK and キャンセル.
     pub yes_no: bool,
+    /// The words of the two buttons when they are neither OK/キャンセル nor はい/いいえ (`ask_with_buttons`).
+    pub labels: Option<(SharedString, SharedString)>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -170,13 +172,19 @@ impl SlideEditor {
     }
     /// Ask `message` under `title` in a message box with OK and キャンセル; OK runs `on_ok`, キャンセル (or Escape) does nothing.
     pub fn ask(&mut self, title: SharedString, message: SharedString, on_ok: Rc<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>, cx: &mut Context<Self>) {
-        self.ask = Some(PendingAsk { title, message, on_ok, yes_no: false });
+        self.ask = Some(PendingAsk { title, message, on_ok, yes_no: false, labels: None });
         self.dialog.drag = None;
         cx.notify();
     }
     /// `ask` with the buttons はい and いいえ (the user's K0019: deleting a sheet asks so).
     pub fn ask_yes_no(&mut self, title: SharedString, message: SharedString, on_yes: Rc<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>, cx: &mut Context<Self>) {
-        self.ask = Some(PendingAsk { title, message, on_ok: on_yes, yes_no: true });
+        self.ask = Some(PendingAsk { title, message, on_ok: on_yes, yes_no: true, labels: None });
+        self.dialog.drag = None;
+        cx.notify();
+    }
+    /// `ask` with the words of the two buttons given (the first runs `on_ok`; the second, or Escape, closes), e.g. 取り除く… and 閉じる.
+    pub fn ask_with_buttons(&mut self, title: SharedString, message: SharedString, ok_label: SharedString, cancel_label: SharedString, on_ok: Rc<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>, cx: &mut Context<Self>) {
+        self.ask = Some(PendingAsk { title, message, on_ok, yes_no: false, labels: Some((ok_label, cancel_label)) });
         self.dialog.drag = None;
         cx.notify();
     }
@@ -195,14 +203,16 @@ impl SlideEditor {
         let (title, message) = self.ask.as_ref().map(|a| (a.title.clone(), a.message.clone())).unwrap_or_default();
         let yes_no = self.ask.as_ref().is_some_and(|a| a.yes_no);
         let (ok_key, cancel_key) = if yes_no { ("shell.action.yes", "shell.action.no") } else { ("shell.action.ok", "shell.action.cancel") };
-        let ok = ActionDefinition::new("ask-ok", super::i18n::text(ok_key), ActionButtonKind::Primary)
+        let labels = self.ask.as_ref().and_then(|a| a.labels.clone());
+        let (ok_text, cancel_text) = labels.map_or_else(|| (super::i18n::text(ok_key), super::i18n::text(cancel_key)), |(a, b)| (a, b));
+        let ok = ActionDefinition::new("ask-ok", ok_text, ActionButtonKind::Primary)
             .on_click(cx.listener(|this, _, _, cx| this.answer_ask(true, cx)));
-        let cancel = ActionDefinition::new("ask-cancel", super::i18n::text(cancel_key), ActionButtonKind::Normal)
+        let cancel = ActionDefinition::new("ask-cancel", cancel_text, ActionButtonKind::Normal)
             .on_click(cx.listener(|this, _, _, cx| this.answer_ask(false, cx)));
         super::message_box::message_box("ask-dialog", title, message, action_bar().action(ok).action(cancel), &self.msgbox, false, cx)
     }
     /// Show the About screen as a modal dialog inside the window (every platform: shell/about.rs).
-    pub(crate) fn show_about(&mut self, cx: &mut Context<Self>) {
+    pub fn show_about(&mut self, cx: &mut Context<Self>) {
         self.about_open = true;
         self.dialog.drag = None;
         cx.notify();
@@ -243,6 +253,11 @@ impl SlideEditor {
         super::message_box::message_box_at("panel-message", super::i18n::text("shell.panel-message.title"),
             self.panel_message.clone().unwrap_or_default(), action_bar().action(ok), &self.msgbox, false, Some(place), cx)
     }
+    /// The panel dialog now open, for the scenarios that press its primary (coloured) button (#261): `None` when no dialog is open;
+    /// else whether the dialog has a primary button and, when it is enabled, what a press of it runs.
+    pub fn open_dialog_primary(&self) -> Option<(bool, Option<crate::chrome::action_bar::ClickHandler>)> {
+        (self.sidebar_open && self.dialog.active).then(|| (self.dialog.has_submit_action, self.dialog.submit_handler.clone()))
+    }
     pub fn dialog_is_modal(&self) -> bool {
         self.sidebar_open && self.dialog.active && self.dialog.mode == DialogMode::Modal
     }
@@ -279,6 +294,7 @@ impl SlideEditor {
             "recover_unsaved_panel" => { self.recover_unsaved = None; return; }
             "replace_fonts_panel" => { self.replace_fonts = None; return; }
             "rename_file_panel" => { self.rename_file = None; return; }
+            "dicom_dialog" => { self.dicom_dialog = None; return; }
             #[cfg(not(target_family = "wasm"))]
             "password_dialog" => { self.password_dialog = None; return; }
             "host_file_dialog" => { self.host_fd_discard(); return; }
@@ -519,7 +535,7 @@ impl SlideEditor {
                 Some("fit_text_panel") | Some("tate_chu_yoko_panel") => 320.,
                 Some("ruby_panel") => 520. * 0.4,
                 Some("style_panel") | Some("doc_properties_panel") => 520. * 0.8,
-                Some("cells_dialog_panel") | Some("cell_size_panel") => 520. * 0.7,
+                Some("cells_dialog_panel") | Some("cell_size_panel") | Some("grid_guides_panel") => 520. * 0.7,
                 Some("tab_stop_editor") => 320.,
                 Some("names_dialog") => 400.,
                 Some("pivot_value_dialog") => 400.,
@@ -540,6 +556,7 @@ impl SlideEditor {
                 Some("settings_dialog") => crate::settings_dialog::DIALOG_WIDTH,
                 Some("toolbar_customize_dialog") => crate::toolbar_customize::DIALOG_WIDTH,
                 Some("host_file_dialog") => crate::host_file_dialog::DIALOG_WIDTH,
+                Some("dicom_dialog") => crate::dicom_dialog::DIALOG_WIDTH,
                 _ => 520.,
             };
             let width = px(preferred).min(viewport.width).max(px(320.));

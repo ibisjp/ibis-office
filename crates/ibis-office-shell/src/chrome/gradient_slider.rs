@@ -46,8 +46,7 @@ pub fn interpolated(stops: &[GradientStop], position: u32) -> Color {
                 | (mix(a.color.rgb.0 >> 8 & 255, b.color.rgb.0 >> 8 & 255) << 8)
                 | mix(a.color.rgb.0 & 255, b.color.rgb.0 & 255),
         ),
-        alpha: mix(a.color.alpha as u32, b.color.alpha as u32) as u8,
-    }
+        alpha: mix(a.color.alpha as u32, b.color.alpha as u32) as u8, theme: None }
 }
 
 /// Clicking empty track adds a stop; drag a knob to move it. The owner supplies colour/position

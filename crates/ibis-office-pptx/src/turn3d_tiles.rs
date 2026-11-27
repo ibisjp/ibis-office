@@ -218,49 +218,44 @@ fn polygon_card(face: Face, polygon: &[(f32, f32)], transform: Transform3D, opac
 /// ハニカム at `q` (0 to 1, linear): the slide is a plane of hexagons, each of its own on the lattice below, seen over black.
 ///
 /// Measured on PowerPoint for Windows (Microsoft 365 16.0.20527; the slideshow of `audit-trans-flat-16x9-dur2000.pptx` exported with
-/// `Presentation.CreateVideo`, 1280 x 720, 30 frames a second, a 2 second transition = 60 frames; the planes' places fitted to the video's
-/// frames as homographies (a plane turned about the viewing axis, moved and seen in perspective of focal length 1000 for a slide 640
-/// wide), 0.002 to 0.008 squared difference over the frames where a plane could be fitted), `k` the frame:
-/// * The lattice: PowerPoint makes regular hexagons (a point up and down, vertical sides, rows 1.5 r down for a width of the square root of 3 times
-///   r) in the coordinates of a 4:3 slide and stretches them across with the slide's shape (measured on the 16:9 video only: the autocorrelation
-///   of the gap lines in its frames, 1280 x 720, frames 6 to 8, gives centres 151 apart across and the next row 95 down and 75 across, 1.37 times
-///   wider than a regular lattice of that row; 16:9 over 4:3 is 1.333; a video of a 4:3 slide to confirm that the hexagons stay regular there is
-///   to be made on Windows: tasks/doc/requests/k88-honeycomb-4x3-video.md). Here: radius 30 in a frame of 480 x 360 (rows 45 down in the 360 high
-///   slide as measured; across 69.3 against the 71 fitted), stretched to 640 x 360 (and to any slide's shape). The gap is 3.75 in the frame (5 across
-///   the 16:9 slide, as measured).
-/// * The old plane: from the start it moves with an even acceleration (the fit is exact to 1 frame in the frames 1 to 22): turned about the
-///   viewing axis by -0.00089 k^2 radians, moved by (0.078, -0.037) k^2 and toward the viewer by 1.62 k^2, so it is carried through the camera
-///   (focal length 1000) at frame 23.5 and gone.
-/// * The gaps of the old plane (the lines) go dark from the left to the right: half dark at k = 3.9 + 0.0123 x (x across the 640), over 6 frames.
-/// * Each old hexagon goes (fades to black in 3 frames) at a time of its own, spread evenly from frame 7 to 45 (the share of those still there
-///   falls from 1 at frame 7 to 0.5 at frame 22 of the hexagons in the picture, and the ones seen late are the middle ones); which goes when is
-///   random, and is here a hash of the hexagon's place.
-/// * The new plane settles from far and turned: with m = 60 - k its turn is 0.00076 m^2 radians, its move (0.0205, -0.007) m^2, and away
-///   from the viewer 0.0135 m^3 (fitted to frames 24 to 70 of the video, m' of the law found equal to m within 1 frame to m = 24, within 2 to 34).
-/// * Each new hexagon comes in (over 1.5 frames) at a time of its own, spread evenly from frame 24 to 55 (the share present: 0.04 at 24,
-///   0.45 at 40, 0.75 at 48, 1 at 55). The new plane's gap lines show from the left to the right at k = 37 + 0.0125 x (over 2 frames) and go
-///   from the right to the left at k = 57 - 0.008 x (over 3 frames), the plane then being the new slide itself.
+/// `Presentation.CreateVideo`, 1280 x 720, 30 frames a second, a 2 second transition = 60 frames, the motion starting at the video's 29th
+/// frame of the row), `k` the frame from the start of the motion (`q` * 60). What was measured, and how:
+/// * The planes stay parallel to the slide, so each frame's plane is a similarity of the slide (a turn about its middle, a scale and a move),
+///   found per frame by fitting the old slide's picture (its quadrant edges, the circle) to the video's frames, and, from frame to frame, by
+///   fitting each frame to the one before (the product of the steps gives the scale at k = 1 to 20 to within 1%).
+/// * The lattice (fitted on the gap lines of the frames 4 to 14, 0.0217 to 0.0188 squared difference; the fits of the pitch gave 71.3 across
+///   and 45.0 down in 640 x 360): pointy hexagons, 9 across the slide's width (the pitch across is `w` / 9) in rows `h` / 8 apart, so that the
+///   circumradius is `h` / 12 (a regular hexagon: the corners at (+-a/2, +-b/3) and (0, +-2b/3) about the centre, a the pitch across, b the pitch down),
+///   the first centre at (0.0628 w, 0.1186 h). The gap between the hexagons is 5.5 of 640 wide (the profile of the frames' brightness across
+///   a hexagon's side, frames 10 to 12), so each hexagon is shown scaled about its centre by 0.923; the gaps go dark from the left to the right.
+/// * The old plane: its scale is 1 / (1 - z) with z the plane's depth over the focal length (the perspective of a camera), and z = 0.00164 k^2
+///   (the cumulative scale of the frame to frame fits gave z / k^2 = 0.00158 +- 0.00002 at each of k = 4 to 20, with the camera passing the plane at
+///   z = 1, k = 24.7); its turn is -0.000915 k^2 radians (the same fits: -0.00084 to -0.00093 k^2); its move is (0.040, -0.014) k^2 (of 640 wide,
+///   before the scale; the fits of the squared difference over the frames 4 to 22). So the plane accelerates evenly toward the viewer and turns
+///   evenly, and is gone when it reaches the camera.
+/// * Each old hexagon goes (to black in 3 frames) at a time of its own, spread over frames 7 to 37 (the hexagons seen in the frames, 14 of them
+///   followed to their going, went between frames 8 and 20, the ones in the picture falling from all there at 7 to a fifth at 22; the order is
+///   random in PowerPoint (one hexagon's time was not the same as its neighbours' or related to its place) and is here a hash of the hexagon's
+///   place).
+/// * The new plane settles from far and turned: with m = 60 - k its turn is 0.00078 m^2 radians, its move (0.0150, -0.0070) m^2, and away from
+///   the viewer 0.0229 m^3 over the focal length of 1000 for 640 wide (fitted to the frames 34 to 54 by the squared difference, starting
+///   from the older fit 0.00076, (0.0205, -0.007), 0.0135 of the 3D transitions).
+/// * Each new hexagon comes in (over 1.5 frames) at a time of its own, spread over frames 25.4 to 58.5, the last one in place at 60 (random; a hash of the place). The new
+///   plane's gap lines show from the left to the right at k = 37 + 0.0125 x (over 2 frames) and go from the right to the left at
+///   k = 57 - 0.008 x (over 3 frames), the plane then being the new slide itself.
 pub(crate) fn honeycomb(q: f32, w: f32, h: f32) -> Vec<Card> {
-    // The lattice, in a frame of 480 x 360 (4:3), where the hexagons are regular: radius R, rows 1.5 R down. The slide's picture is that frame
-    // stretched to the slide's own shape (the slide 640 x 360 the figures above are in: across by 640 / 480; a 4:3 slide keeps them regular).
-    const R: f32 = 30.0;
-    const ORIGIN: (f32, f32) = (25.5, 46.0);
-    const GAP: f32 = 3.75;
-    const WIDE: f32 = 640.0 / 480.0;
-    let r = R;
-    let root3 = 3.0_f32.sqrt();
-    let a_step = (root3 * r, 0.0_f32);
-    let b_step = (root3 * r / 2.0, 1.5 * r);
-    let cell = [(root3 * r / 2.0, r / 2.0), (0.0, r), (-root3 * r / 2.0, r / 2.0), (-root3 * r / 2.0, -r / 2.0), (0.0, -r), (root3 * r / 2.0, -r / 2.0)];
-    let inset = |d: f32| {
-        let apothem = root3 * r / 2.0 - d;
-        let rr = apothem * 2.0 / root3;
-        [(apothem, rr / 2.0), (0.0, rr), (-apothem, rr / 2.0), (-apothem, -rr / 2.0), (0.0, -rr), (apothem, -rr / 2.0)]
-    };
-    let inner = inset(GAP / 2.0);
-    let (sx, sy) = (w / 640.0, h / 360.0);
-    let focal = 1000.0 * sx;
+    // The lattice in the slide's pixels: the pitch across `a`, down `b`; the corners about a centre.
+    let (a, b) = (w / 9.0, h / 8.0);
+    let origin = (0.0628 * w, 0.1186 * h);
+    // The gap between hexagons (5.5 of 640 wide), as the scale of each hexagon about its centre.
+    const SHOWN: f32 = 0.923;
+    // The order the hexagons go and come in is random in PowerPoint (a different one in each showing), so a hexagon's own time is a hash of its place.
+    // With `EXPECTED` the share of the hexagons that have gone (or come) at k is drawn instead, as every hexagon's own opacity.
+    const EXPECTED: bool = false;
+    let corners = [(a / 2.0, b / 3.0), (0.0, 2.0 * b / 3.0), (-a / 2.0, b / 3.0), (-a / 2.0, -b / 3.0), (0.0, -2.0 * b / 3.0), (a / 2.0, -b / 3.0)];
     let k = q * 60.0;
+    let sx = w / 640.0;
+    let focal = 1000.0 * sx;
     let place = |rz: f32, tx: f32, ty: f32, tz: f32| {
         Transform3D::translate(-w / 2.0, -h / 2.0, 0.0)
             .then(Transform3D::rotate_z(rz))
@@ -272,31 +267,32 @@ pub(crate) fn honeycomb(q: f32, w: f32, h: f32) -> Vec<Card> {
         let t = t.clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
-    let old_plane = (k < 23.4).then(|| {
+    // z = 1 is the camera: the old plane is past it from k = 24.7.
+    let old_plane = (k < 24.5).then(|| {
         let e = k * k;
-        place(-0.00089 * e, 0.078 * e, -0.037 * e, 1.62 * e)
+        place(-0.000915 * e, 0.040 * e, -0.014 * e, 1000.0 * 0.00164 * e)
     });
-    let new_plane = (k >= 24.0).then(|| {
+    let new_plane = (k >= 25.0).then(|| {
         let m = 60.0 - k;
-        place(0.00076 * m * m, 0.0205 * m * m, -0.007 * m * m, -0.0135 * m * m * m)
+        place(0.00078 * m * m, 0.0150 * m * m, -0.0070 * m * m, -0.0229 * m * m * m)
     });
     let mut cards = Vec::new();
     for (face, plane) in [(Face::Old, old_plane), (Face::New, new_plane)] {
         let Some(transform) = plane else { continue };
         for i in -14..=24 {
             for j in -6..=16 {
-                let c = (ORIGIN.0 + i as f32 * a_step.0 + j as f32 * b_step.0, ORIGIN.1 + i as f32 * a_step.1 + j as f32 * b_step.1);
-                let shape = |corners: &[(f32, f32); 6]| clip_to_slide(corners.iter().map(|p| ((c.0 + p.0) * WIDE * sx, (c.1 + p.1) * sy)).collect(), w, h);
-                let outer = shape(&cell);
+                let c = (origin.0 + i as f32 * a + j as f32 * a / 2.0, origin.1 + j as f32 * b);
+                let shape = |scale: f32| clip_to_slide(corners.iter().map(|p| (c.0 + p.0 * scale, c.1 + p.1 * scale)).collect(), w, h);
+                let outer = shape(1.0);
                 if outer.len() < 3 {
                     continue;
                 }
                 let (alpha, gap) = if face == Face::Old {
-                    let gone = 7.0 + 38.0 * lattice_random(i, j, 1);
-                    (1.0 - ((k - gone) / 3.0).clamp(0.0, 1.0), ramp((k - (3.9 + 0.0123 * c.0 * WIDE)) / 6.0 + 0.5))
+                    let gone = 7.0 + 30.0 * lattice_random(i, j, 1);
+                    (if EXPECTED { 1.0 - ((k - 7.0) / 30.0).clamp(0.0, 1.0) } else { 1.0 - ((k - gone) / 3.0).clamp(0.0, 1.0) }, ramp((k - (3.9 + 0.0123 * c.0 * 640.0 / w)) / 6.0 + 0.5))
                 } else {
-                    let came = 24.0 + 31.0 * lattice_random(i, j, 2);
-                    ((((k - came) / 1.5).clamp(0.0, 1.0)), ramp((k - (37.0 + 0.0125 * c.0 * WIDE)) / 2.0 + 0.5) * (1.0 - ramp((k - (57.0 - 0.008 * c.0 * WIDE)) / 3.0 + 0.5)))
+                    let came = 25.4 + 33.1 * lattice_random(i, j, 2);
+                    ((if EXPECTED { ((k - 25.4) / 34.6).clamp(0.0, 1.0) } else { ((k - came) / 1.5).clamp(0.0, 1.0) }), ramp((k - (37.0 + 0.0125 * c.0 * 640.0 / w)) / 2.0 + 0.5) * (1.0 - ramp((k - (57.0 - 0.008 * c.0 * 640.0 / w)) / 3.0 + 0.5)))
                 };
                 if alpha <= 0.0 {
                     continue;
@@ -305,12 +301,120 @@ pub(crate) fn honeycomb(q: f32, w: f32, h: f32) -> Vec<Card> {
                     cards.extend(polygon_card(face, &outer, transform, alpha * (1.0 - gap), w, h));
                 }
                 if gap > 0.003 {
-                    cards.extend(polygon_card(face, &clip_to_slide(inner.iter().map(|p| ((c.0 + p.0) * WIDE * sx, (c.1 + p.1) * sy)).collect(), w, h), transform, alpha, w, h));
+                    cards.extend(polygon_card(face, &shape(SHOWN), transform, alpha, w, h));
                 }
             }
         }
     }
     cards
+}
+
+/// きらめき (`glitter`) at `q` (0 to 1, linear), the slide a lattice of hexagons (`diamond` false) or tall diamonds, over black: the old slide's
+/// tiles turn about their own vertical axes and fall (the ones on the side the effect starts at first, the others later, each with a time of its
+/// own: the order is random but for the spread), leaving black; then the new slide's tiles come down from above, from far behind, turning about
+/// their vertical axes, and pile up in their places in the same order (`motion`: the side it starts at, as for the vortex: (1, 0) is the right).
+///
+/// What was read off PowerPoint for Windows (Microsoft 365 16.0.20527; `audit-trans-flat-16x9-dur2000.pptx`, 1280 x 720 video at 30 frames a
+/// second, a 2 second transition = 60 frames; every option looked at, frames compared by eye and by the blurred squared difference of
+/// `scripts/transition-fit/audit_compare.py`):
+/// * The tiles' size: a hexagon is 1/36 of the slide's width across (about 17 px of 640), with flat top and bottom and points at the sides;
+///   a diamond is as wide and twice as high, the rows half its height apart. The slide's own size is the only measure, so any slide's shape
+///   gets the same tiles. The tiles show a hairline seam while they move (6% smaller about their centres); at rest they meet.
+/// * The order: the side the effect starts at goes first, in every option (a start at the right goes to the left; at the bottom, upwards), with
+///   the tiles' own random delay on top, so the front is ragged. The old tiles are leaving from 1/12 of the time (0.08) at the starting side
+///   to 0.58 at the far side; the new ones land from 1/3 of the time at the starting side to 1 at the far side. The random delay is
+///   0.2 of the time for the old ones and 1/6 for the new ones.
+/// * A new tile comes down in about 1/4 of the time (14 frames), from half a slide's height above and from half a focal length behind,
+///   turning an even number of whole turns about its vertical axis, so that it lands face on; it is seen small and dark at first.
+/// * An old tile falls from rest with the plain law (distance 1/2 g t^2), g such that it has fallen 1.1 slides' heights, and so is out of the
+///   picture, a third of the time after it let go; it turns about its vertical axis at an even speed on the way, its back dark (0.12).
+/// The tiles' times are not those of PowerPoint (they are random in it too): a hash of the tile's place with a fixed seed.
+/// (The numbers of frames in the constants below are these shares of 60.)
+pub(crate) fn glitter(diamond: bool, motion: (f32, f32), q: f32, w: f32, h: f32) -> Vec<Card> {
+    let k = q * 60.0;
+    let r = w / 72.0;
+    let root3 = 3.0_f32.sqrt();
+    let focal = 1.5 * w;
+    // Frames: when the old tiles begin to fall (at the starting side, and the spread to the far side, the random part); the same for the
+    // moment each new tile lands; how long a new tile takes to come down; how long it takes an old one to fall past the slide's bottom.
+    const OLD_AT: (f32, f32, f32) = (5.0, 30.0, 12.0);
+    const NEW_AT: (f32, f32, f32) = (20.0, 30.0, 10.0);
+    const COME_DOWN: f32 = 14.0;
+    const FALL_FRAMES: f32 = 20.0;
+    // Falling 1.1 slides' heights in FALL_FRAMES frames.
+    let gravity = 2.0 * 1.1 * h / (FALL_FRAMES * FALL_FRAMES);
+    // The tile's corners about its centre, and its centres.
+    let corners: Vec<(f32, f32)> = if diamond { vec![(r, 0.0), (0.0, 2.0 * r), (-r, 0.0), (0.0, -2.0 * r)] } else { vec![(r, 0.0), (r / 2.0, root3 * r / 2.0), (-r / 2.0, root3 * r / 2.0), (-r, 0.0), (-r / 2.0, -root3 * r / 2.0), (r / 2.0, -root3 * r / 2.0)] };
+    let mut centres: Vec<(i32, i32, f32, f32)> = Vec::new();
+    if diamond {
+        for j in -2..=(h / (2.0 * r)) as i32 + 2 {
+            for i in -2..=(w / (2.0 * r)) as i32 + 2 {
+                centres.push((i, j, 2.0 * r * i as f32 + r * (j & 1) as f32, 2.0 * r * j as f32));
+            }
+        }
+    } else {
+        for i in -2..=(w / (1.5 * r)) as i32 + 2 {
+            for j in -2..=(h / (root3 * r)) as i32 + 2 {
+                centres.push((i, j, 1.5 * r * i as f32, root3 * r * (j as f32 + 0.5 * (i & 1) as f32)));
+            }
+        }
+    }
+    let scaled = |c: (f32, f32), f: f32| -> Vec<(f32, f32)> { corners.iter().map(|p| (c.0 + p.0 * f, c.1 + p.1 * f)).collect() };
+    // 0 at the side the effect starts at, 1 at the far side.
+    let spread = |c: (f32, f32)| (0.5 - ((c.0 / w - 0.5) * motion.0 + (c.1 / h - 0.5) * motion.1)).clamp(0.0, 1.0);
+    let place = |c: (f32, f32), angle: f32, dy: f32, tz: f32| {
+        Transform3D::translate(-c.0, -c.1, 0.0).then(Transform3D::rotate_y(angle)).then(Transform3D::translate(c.0 - w / 2.0, c.1 - h / 2.0 + dy, tz)).then(Transform3D::perspective(focal)).then(Transform3D::translate(w / 2.0, h / 2.0, 0.0))
+    };
+    let light = |angle: f32| {
+        let c = angle.cos();
+        if c >= 0.0 { 0.35 + 0.65 * c } else { 0.12 }
+    };
+    let mut old_cards = Vec::new();
+    let mut new_cards = Vec::new();
+    for &(i, j, cx, cy) in &centres {
+        let c = (cx, cy);
+        let s = spread(c);
+        // The old tile: where it is, then falling and turning.
+        let begin = OLD_AT.0 + OLD_AT.1 * s + OLD_AT.2 * lattice_random(i, j, 11);
+        let t = k - begin;
+        // Once the new tile has landed in this place, an old tile still falling is below it (the new slide is whole at the end).
+        let landed = k >= NEW_AT.0 + NEW_AT.1 * s + NEW_AT.2 * lattice_random(i, j, 14);
+        if landed {
+        } else if t <= 0.0 {
+            let outer = clip_to_slide(scaled(c, 1.0), w, h);
+            old_cards.extend(polygon_card(Face::Old, &outer, Transform3D::identity(), 1.0, w, h));
+        } else {
+            let fall = 0.5 * gravity * t * t;
+            if cy + fall < h + 2.0 * r + 2.0 * r {
+                let spin = (0.10 + 0.14 * lattice_random(i, j, 12)) * if lattice_random(i, j, 13) < 0.5 { -1.0 } else { 1.0 };
+                let angle = spin * t * 2.0;
+                let poly = clip_to_slide(scaled(c, 0.94), w, h);
+                old_cards.extend(polygon_card(Face::Old, &poly, place(c, angle, fall, 0.0), 1.0, w, h).map(|mut card| {
+                    card.shade = light(angle);
+                    card
+                }));
+            }
+        }
+        // The new tile: nothing, then coming down from above and far behind, turning, and in its place.
+        let lands = NEW_AT.0 + NEW_AT.1 * s + NEW_AT.2 * lattice_random(i, j, 14);
+        let u = (k - (lands - COME_DOWN)) / COME_DOWN;
+        if u >= 1.0 {
+            let outer = clip_to_slide(scaled(c, 1.0), w, h);
+            new_cards.extend(polygon_card(Face::New, &outer, Transform3D::identity(), 1.0, w, h));
+        } else if u > 0.0 {
+            let rest = 1.0 - u;
+            let turns = (1.0 + (2.0 * lattice_random(i, j, 15)).floor()) * if lattice_random(i, j, 16) < 0.5 { -1.0 } else { 1.0 };
+            let angle = turns * 2.0 * std::f32::consts::PI * rest;
+            let poly = clip_to_slide(scaled(c, 0.94), w, h);
+            new_cards.extend(polygon_card(Face::New, &poly, place(c, angle, -0.6 * h * (1.0 - u * u), -0.6 * focal * rest * rest), 1.0, w, h).map(|mut card| {
+                card.shade = light(angle);
+                card
+            }));
+        }
+    }
+    // The new tiles over the old ones that are still falling (the new ones land on the empty places).
+    old_cards.extend(new_cards);
+    old_cards
 }
 
 #[cfg(test)]
@@ -331,14 +435,58 @@ mod tests {
     }
 
     #[test]
+    fn a_glitter_starts_with_the_old_slide_whole_and_ends_with_the_new_one_whole() {
+        for diamond in [false, true] {
+            for motion in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                let start = glitter(diamond, motion, 0.0, 640.0, 360.0);
+                assert!(!start.is_empty() && start.iter().all(|c| c.face == Face::Old), "{diamond} {motion:?}");
+                let end = glitter(diamond, motion, 1.0, 640.0, 360.0);
+                assert!(!end.is_empty() && end.iter().all(|c| c.face == Face::New && c.shade == 1.0), "{diamond} {motion:?}");
+                // In the middle both are there, and the new ones come later at the far side than at the starting side.
+                let mid = glitter(diamond, motion, 0.5, 640.0, 360.0);
+                assert!(mid.iter().any(|c| c.face == Face::Old) && mid.iter().any(|c| c.face == Face::New));
+            }
+        }
+    }
+
+    #[test]
     fn a_honeycomb_starts_with_the_old_slide_whole_and_ends_with_the_new_one_whole() {
         let start = honeycomb(0.0, 640.0, 360.0);
         assert!(!start.is_empty() && start.iter().all(|c| c.face == Face::Old && c.opacity == 1.0));
         let end = honeycomb(1.0, 640.0, 360.0);
         assert!(!end.is_empty() && end.iter().all(|c| c.face == Face::New && c.opacity == 1.0));
-        // The old plane has gone through the camera by frame 24, and the new one has not come before it.
+        // The old plane has gone through the camera by frame 24.7 (z = 1), and the new one has not come before it.
         assert!(honeycomb(24.5 / 60.0, 640.0, 360.0).iter().all(|c| c.face == Face::New));
         assert!(honeycomb(10.0 / 60.0, 640.0, 360.0).iter().all(|c| c.face == Face::Old));
+    }
+
+    #[test]
+    fn the_old_honeycomb_plane_is_scaled_by_a_camera_dollying_in_with_an_even_acceleration() {
+        // Measured: the scale is 1 / (1 - z), z = 0.00164 k^2 (the plane's distance over the focal length).
+        for k in [6.0_f32, 12.0, 18.0] {
+            let card = honeycomb(k / 60.0, 640.0, 360.0).into_iter().find(|c| c.face == Face::Old).unwrap();
+            let (p, r) = (card.transform.project(0.0, 0.0, 0.0).unwrap(), card.transform.project(100.0, 0.0, 0.0).unwrap());
+            let scale = ((r.0 - p.0).powi(2) + (r.1 - p.1).powi(2)).sqrt() / 100.0;
+            let want = 1.0 / (1.0 - 0.00164 * k * k);
+            assert!((scale - want).abs() < 0.01 * want, "k {k}: {scale} against {want}");
+        }
+    }
+
+    #[test]
+    fn the_halves_of_the_doors_swing_away_from_the_viewer_into_the_depth() {
+        // The free edge of each half is farther than its hinge edge, so it is drawn smaller: a half's projected height (vertical option) or width
+        // (horizontal option) is the least at the free edge.
+        for window in [false, true] {
+            let vert = doors(window, false, 0.5, 640.0, 360.0);
+            let halves: Vec<_> = vert.iter().filter(|c| c.face == Face::Old && c.mesh.is_some() && c.transform.project(0.0, 0.0, 0.0).is_some()).collect();
+            let left = halves.iter().find(|c| c.mesh.as_ref().is_some_and(|m| m.vertices.iter().all(|v| v.position[0] <= 320.0))).expect("left half");
+            let tall = |c: &Card, x: f32| c.transform.project(x, 360.0, 0.0).unwrap().1 - c.transform.project(x, 0.0, 0.0).unwrap().1;
+            assert!(tall(left, 320.0) < tall(left, 0.0), "the left half's inner edge is the far one");
+            let hor = doors(window, true, 0.5, 640.0, 360.0);
+            let top = hor.iter().find(|c| c.face == Face::Old && c.mesh.as_ref().is_some_and(|m| m.vertices.iter().all(|v| v.position[1] <= 180.0))).expect("top half");
+            let wide = |c: &Card, y: f32| c.transform.project(640.0, y, 0.0).unwrap().0 - c.transform.project(0.0, y, 0.0).unwrap().0;
+            assert!(wide(top, 180.0) < wide(top, 0.0), "the top half's lower edge is the far one");
+        }
     }
 
     #[test]
@@ -357,11 +505,11 @@ mod tests {
 /// growing until it fills the picture. `window` is the same scene on a grey ground with the halves pale (`window`), 扉 on black.
 pub(crate) fn doors(window: bool, horizontal: bool, q: f32, w: f32, h: f32) -> Vec<Card> {
     // Fitted to the video of the horizontal option of each (18 pictures, the blurred squared difference 0.052 to 0.017 for the doors, 0.047 to 0.019
-    // for the window; the vertical options with the same figures: 0.051 to 0.019 for the doors): the halves swing from 17.75 to 40 frames of the 60
-    // through 95 degrees, the camera's focal length 1.675 times the width, the new slide grows from 0.45 of its size at frame 22 to 1 at frame 46,
+    // for the window; the vertical options with the same figures: 0.051 to 0.019 for the doors): the halves swing (the earlier fit: 17.75 to 40 frames of the 60;
+    // from 22 to 48 frames through 150 degrees away from the viewer (refitted 2026-11-23 after the halves were made to open into the depth: swept a0 8 to 26, a1 32 to 56, the angle 70 to 180 degrees, the focal 1.2 to 2.4: the doors 0.0160 and 0.0199 -> 0.0142 and 0.0156; the earlier 17.75 to 40 frames and 95 degrees were fitted to the halves swinging toward the viewer), the camera's focal length 1.675 times the width, the new slide grows from 0.45 of its size at frame 22 to 1 at frame 46,
     // fading in over frames 10.75 to 29.5, behind the halves at full strength and in front of them at 0.475 (the window: 0.175); the window's ground is
     // 0.48 white and its halves 0.6 opaque (the doors' ground is black, their halves opaque).
-    let (a0, a1, amax, focal_w, b0, b1, s0, c0, c1) = (17.75, 40.0, 95.0_f32, 1.675, 22.0, 46.0, 0.45, 10.75, 29.5);
+    let (a0, a1, amax, focal_w, b0, b1, s0, c0, c1) = (22.0, 48.0, 150.0_f32, 1.675, 22.0, 46.0, 0.45, 10.75, 29.5);
     let (ground, half_opacity, ghost) = if window { (0.48, 0.6, 0.175) } else { (0.0, 1.0, 0.475) };
     let k = q * 60.0;
     let frac = |a: f32, b: f32| ((k - a) / (b - a)).clamp(0.0, 1.0);
@@ -393,9 +541,9 @@ pub(crate) fn doors(window: bool, horizontal: bool, q: f32, w: f32, h: f32) -> V
     for (rect, side) in halves {
         let hinge = if horizontal { if side > 0.0 { -h / 2.0 } else { h / 2.0 } } else if side > 0.0 { -w / 2.0 } else { w / 2.0 };
         let (to_hinge, rot, from_hinge) = if horizontal {
-            (Transform3D::translate(0.0, -hinge, 0.0), Transform3D::rotate_x(angle * side), Transform3D::translate(0.0, hinge, 0.0))
+            (Transform3D::translate(0.0, -hinge, 0.0), Transform3D::rotate_x(-angle * side), Transform3D::translate(0.0, hinge, 0.0))
         } else {
-            (Transform3D::translate(-hinge, 0.0, 0.0), Transform3D::rotate_y(-angle * side), Transform3D::translate(hinge, 0.0, 0.0))
+            (Transform3D::translate(-hinge, 0.0, 0.0), Transform3D::rotate_y(angle * side), Transform3D::translate(hinge, 0.0, 0.0))
         };
         cards.push(Card {
             face: Face::Old,

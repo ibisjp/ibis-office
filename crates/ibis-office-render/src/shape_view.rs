@@ -277,6 +277,8 @@ pub struct Resources {
     /// The scale a printed sheet is drawn at on its paper (for where Excel
     /// starts its dashed borders), set by the export before each sheet.
     pub print_scale: std::cell::Cell<f64>,
+    /// Worksheets: the columns and rows of the limited grid this window shows (限られたグリッド表示, #273), set when the workspace is laid out; `None`: the whole grid.
+    pub grid_limit: std::cell::Cell<Option<(u32, u32)>>,
     /// Where each printed page of the sheet starts (row tops and column lefts in EMU of the sheet),
     /// set by the export with the scale: a fill does not reach back over the page's edge.
     pub print_breaks: std::cell::RefCell<Arc<(Vec<i64>, Vec<i64>)>>,
@@ -471,6 +473,7 @@ impl Resources {
             positions: None,
             last,
             word_lines: body.word_lines,
+            font_lines: body.font_lines,
             upright: body.vertical,
             mirror: false,
             at_x: None,
@@ -670,6 +673,7 @@ impl Resources {
             markup_view: Default::default(),
             ime_marked: None,
             print_scale: std::cell::Cell::new(1.0),
+            grid_limit: std::cell::Cell::new(None),
             print_breaks: Default::default(),
             exact: false,
             theme_fonts: presentation.theme_fonts.as_ref().map(|t| t.minor.clone()),
@@ -1392,6 +1396,7 @@ fn browser_fallbacks(style: &TextStyle) -> Option<FontFallbacks> {
 pub fn browser_fallback_names(style: &TextStyle) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     let mut east_asian = false;
+    let mut mincho = false;
     for name in [style.font.as_deref(), style.fallback_font.as_deref()].into_iter().flatten() {
         let base = WEIGHT_SUFFIXES.iter().find_map(|(suffix, _)| name.strip_suffix(suffix)).map_or(name, str::trim_end);
         for n in [name, base] {
@@ -1405,13 +1410,19 @@ pub fn browser_fallback_names(style: &TextStyle) -> Vec<String> {
             }
         }
         east_asian |= is_east_asian_typeface(name);
+        mincho |= names_mincho_typeface(name);
     }
     if east_asian {
         names.push(String::new());
-        // Close in widths to Office's Japanese typefaces.
-        for n in ["Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "YuGothic", "Meiryo", "Noto Sans JP"] {
+        // Close in widths to Office's Japanese typefaces, of the class the document asked for: a mincho is never drawn in a gothic (#301).
+        let stand_ins: &[&str] = if mincho {
+            &["Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "MS PMincho", "MS Mincho", "Noto Serif CJK JP", "Noto Serif JP", "IPAexMincho"]
+        } else {
+            &["Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "YuGothic", "Meiryo", "Noto Sans JP"]
+        };
+        for n in stand_ins {
             if !names.iter().any(|x| x == n) {
-                names.push(n.to_string());
+                names.push((*n).to_string());
             }
         }
     }
@@ -1436,11 +1447,19 @@ fn chain_fallbacks(family: &str, style: &TextStyle) -> Option<FontFallbacks> {
     Some(FontFallbacks::from_fonts(names))
 }
 
+/// Whether a typeface's name says it is a mincho (serif) face. Only for the browser's stand-in list (`browser_fallback_names`); the same words as
+/// the web text system's `names_serif_family`, so the two agree on the class.
+fn names_mincho_typeface(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    (!lower.contains("sans") && !lower.contains("gothic") && ["mincho", "serif"].iter().any(|k| lower.contains(k)))
+        || ["明朝", "明體", "明体"].iter().any(|k| name.contains(k)) // i18n-ok（フォント名の判定）
+}
+
 /// Typefaces made for Japanese (or other East Asian) text.
 pub fn is_east_asian_typeface(name: &str) -> bool {
     const HINTS: &[&str] = &[
-        "M PLUS", "Noto Sans JP", "Noto Serif JP", "Noto Sans CJK", "Yu Gothic", "Yu Mincho",
-        "Meiryo", "Hiragino", "MS Gothic", "MS Mincho", "MS PGothic", "MS PMincho", "MS UI Gothic", "BIZ UD", "Kosugi",
+        "M PLUS", "Noto Sans JP", "Noto Serif JP", "Noto Sans CJK", "Noto Serif CJK", "Yu Gothic", "YuGothic", "Yu Mincho", "YuMincho",
+        "Meiryo", "Hiragino", "MS Gothic", "MS Mincho", "MS PGothic", "MS PMincho", "MS UI Gothic", "BIZ UD", "GJMincho", "Kosugi",
         "Sawarabi", "IPA", "Source Han",
     ];
     name.chars().any(|c| c as u32 >= 0x2e80) || HINTS.iter().any(|h| name.contains(h))
@@ -2283,6 +2302,13 @@ pub fn system_font_names() -> Option<&'static HashSet<String>> {
     SYSTEM_FONTS.get()
 }
 
+/// Lists the system's fonts now if no document has been drawn yet (the font lists read the list; before it is made they offer only a few stand-in families).
+pub fn ensure_system_font_names(cx: &gpui_kit::App) {
+    if SYSTEM_FONTS.get().is_none() {
+        let _ = Fonts::new(cx);
+    }
+}
+
 /// The font names once fonts were added while the app runs (セットアップ's download): the system's with them. Made anew (and kept for
 /// the run) at each such addition, which is rare.
 static LATE_FONTS: std::sync::RwLock<Option<&'static HashSet<String>>> = std::sync::RwLock::new(None);
@@ -2768,6 +2794,8 @@ pub(crate) fn background_with_mode(fill: &Fill, mode: ColorMode) -> Option<Backg
                 linear_color_stop(hsla_mode(last.color, mode), last.position as f32 / 100_000.0),
             ))
         }
+        // The dots of the pure black and white print's automatic series: a background of their own that the PDF writer paints as a tiling pattern (`print_dots_background`).
+        Fill::Pattern { preset, .. } if print_dots_of(preset).is_some() => print_dots_of(preset).map(print_dots_background),
         // The background colour; the foreground's cells are painted over it
         // (`paint_pattern`).
         Fill::Pattern { background, .. } => Some(hsla_mode(*background, mode).into()),
@@ -2775,6 +2803,34 @@ pub(crate) fn background_with_mode(fill: &Fill, mode: ColorMode) -> Option<Backg
         Fill::Path { stops, .. } => Some(hsla_mode(stops.last()?.color, mode).into()),
         Fill::None | Fill::Image(_) | Fill::TileImage { .. } | Fill::Blip(_) | Fill::TileLinear { .. } => None,
     }
+}
+
+/// The preset names of the dot patterns PowerPoint's pure black and white print gives the 3rd to 19th automatic series of a chart (`printDots3` to `printDots19`, then the series repeat with period 19):
+/// 1 unit (1/96 inch) squares of the paper's grid, black or white by the series' number (`tasks/doc/requests/2026-11-21-225-chart-stripes-result.md`).
+pub const PRINT_DOTS_PRESET_PREFIX: &str = "printDots";
+
+/// The series number (3 to 19) of a `printDots` preset.
+pub fn print_dots_of(preset: &str) -> Option<u8> {
+    preset.strip_prefix(PRINT_DOTS_PRESET_PREFIX)?.parse().ok().filter(|n| (3..=19).contains(n))
+}
+
+/// A gradient angle no gradient has: the background of the dots of series `n` is a gradient of this angle plus `n` (GPUI's background has no
+/// field for a pattern of our own), which the PDF writer takes for the tiling pattern of the dots (`print_dots_series`).
+const PRINT_DOTS_ANGLE: f32 = 7200.0;
+
+/// The background of the dots of automatic series `n` (see `PRINT_DOTS_ANGLE`); its stops are the dots' black and white.
+pub fn print_dots_background(n: u8) -> Background {
+    linear_gradient(
+        PRINT_DOTS_ANGLE + f32::from(n),
+        linear_color_stop(hsla(DocColor::opaque(Rgb(0))), 0.0),
+        linear_color_stop(hsla(DocColor::opaque(Rgb(0xffffff))), 1.0),
+    )
+}
+
+/// The series number of a background made by `print_dots_background`, from the angle of its gradient.
+pub fn print_dots_series(angle: f32) -> Option<u8> {
+    let n = angle - PRINT_DOTS_ANGLE;
+    ((3.0..=19.0).contains(&n) && n.fract() == 0.0).then_some(n as u8)
 }
 
 /// A fill as a GPUI background, for fills that are not pictures.
@@ -4359,7 +4415,7 @@ fn paint_bevel_stroke(window: &mut Window, pts: &[Point<Pixels>], bevel: &ibis_d
     for (poly, [r, g, b]) in crate::bevel::stroke_pieces(&flat, width, ratio, bevel.preset, rgb) {
         let corners: Vec<Point<Pixels>> = poly.iter().map(|&(x, y)| point(px(x), px(y))).collect();
         if let Some(path) = compound_path(&[(corners, true)], None) {
-            window.paint_path(path, hsla(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)), alpha: 255 }));
+            window.paint_path(path, hsla(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)), alpha: 255, theme: None }));
         }
     }
 }
@@ -4372,7 +4428,7 @@ fn paint_bevel(window: &mut Window, pts: &[Point<Pixels>], bevel: &ibis_doc_mode
     for (poly, [r, g, b]) in crate::bevel::pieces(&flat, width, ratio, bevel.preset, base, solid) {
         let corners: Vec<Point<Pixels>> = poly.iter().map(|&(x, y)| point(px(x), px(y))).collect();
         if let Some(path) = compound_path(&[(corners, true)], None) {
-            window.paint_path(path, hsla(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)), alpha: 255 }));
+            window.paint_path(path, hsla(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)), alpha: 255, theme: None }));
         }
     }
 }
@@ -6216,10 +6272,10 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
     let lum_overlay = picture.luminance.filter(|_| styled.is_none()).and_then(|(bright, _)| {
         if bright > 0 {
             let alpha = ((bright as f32 / 100_000.0).clamp(0.0, 0.85) * 255.0) as u8;
-            Some(div().absolute().size_full().bg(hsla(DocColor { rgb: ibis_doc_model::Rgb(0xffffff), alpha })))
+            Some(div().absolute().size_full().bg(hsla(DocColor { rgb: ibis_doc_model::Rgb(0xffffff), alpha, theme: None })))
         } else if bright < 0 {
             let alpha = (((-bright) as f32 / 100_000.0).clamp(0.0, 0.85) * 255.0) as u8;
-            Some(div().absolute().size_full().bg(hsla(DocColor { rgb: ibis_doc_model::Rgb(0x000000), alpha })))
+            Some(div().absolute().size_full().bg(hsla(DocColor { rgb: ibis_doc_model::Rgb(0x000000), alpha, theme: None })))
         } else {
             None
         }
@@ -6858,6 +6914,7 @@ pub(crate) fn text_body_element(
                 positions: slots.as_ref().map(|s| s[index].clone()),
                 last: index + 1 == body.paragraphs.len(),
                 word_lines: body.word_lines,
+            font_lines: body.font_lines,
                 upright: body.vertical,
                 mirror: body.vertical && body.vertical_kind == ibis_doc_model::VerticalKind::Mongolian,
                 at_x: origin_x.filter(|_| turn.is_none() && !body.vertical && paragraph.align.unwrap_or(body.style.align) == TextAlign::Left).map(|x0| {
@@ -7766,3 +7823,40 @@ mod eavert_turn_tests {
 #[cfg(test)]
 #[path = "shape_view_tilt_tests.rs"]
 mod tilted_frame_tests;
+
+/// #301: the browser's stand-ins for an East Asian typeface are of its own class.
+#[cfg(test)]
+mod browser_fallback_class_tests {
+    use super::{TextStyle, browser_fallback_names};
+
+    fn stand_ins(font: &str) -> Vec<String> {
+        let style = TextStyle { font: Some(font.to_string()), ..TextStyle::default() };
+        let names = browser_fallback_names(&style);
+        let sep = names.iter().position(|n| n.is_empty()).expect("the East Asian separator");
+        names[sep + 1..].to_vec()
+    }
+
+    #[test]
+    fn browser_fallback_names_keeps_mincho_and_gothic_classes_separate() {
+        for mincho in ["游明朝", "ＭＳ 明朝", "BIZ UD明朝", "Add Character_GJMincho", "Noto Serif CJK JP", "YuMincho"] { // i18n-ok（試験のフォント名）
+            let list = stand_ins(mincho);
+            assert!(list.iter().any(|n| n == "Hiragino Mincho ProN"), "{mincho}: {list:?}");
+            assert!(list.iter().any(|n| n == "Noto Serif JP"), "{mincho}: {list:?}");
+            assert!(!list.iter().any(|n| n.contains("Gothic") || n == "Hiragino Sans" || n == "Meiryo"), "{mincho} must not fall back to a gothic: {list:?}");
+        }
+        for gothic in ["游ゴシック", "ＭＳ ゴシック", "BIZ UDゴシック", "メイリオ", "YuGothic", "Noto Sans CJK JP"] { // i18n-ok（試験のフォント名）
+            let list = stand_ins(gothic);
+            assert!(list.iter().any(|n| n == "Hiragino Kaku Gothic ProN"), "{gothic}: {list:?}");
+            assert!(!list.iter().any(|n| n.contains("Mincho") || n.contains("Serif")), "{gothic} must not fall back to a mincho: {list:?}");
+        }
+    }
+
+    #[test]
+    fn the_mincho_stand_ins_come_first_after_the_names_asked_for() {
+        let style = TextStyle { font: Some("游明朝".into()), ..TextStyle::default() }; // i18n-ok（試験のフォント名）
+        let names = browser_fallback_names(&style);
+        let sep = names.iter().position(|n| n.is_empty()).unwrap();
+        assert!(names[..sep].iter().any(|n| n == "Yu Mincho"), "the Windows name of the face is asked first: {names:?}");
+        assert!(!names.iter().any(|n| n == "Hiragino Sans" || n == "Yu Gothic"), "{names:?}");
+    }
+}

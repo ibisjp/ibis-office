@@ -148,6 +148,18 @@ pub fn rerouted(doc: &FlowDocument) -> Vec<(usize, usize, Shape)> {
     out
 }
 
+/// The commands that make the connectors of a slide follow shapes moved to `moved` (shape, new frame), as the window does when it moves them.
+pub fn follow_commands(slide: &crate::model::Slide, moved: &[(crate::model::ShapeId, crate::geometry::EmuRect)]) -> Vec<crate::command::Command> {
+    let updated: Vec<Shape> = slide.shapes.iter().map(|s| match moved.iter().find(|(id, _)| *id == s.id) {
+        Some((_, frame)) => Shape { frame: *frame, ..s.clone() },
+        None => s.clone(),
+    }).collect();
+    rerouted_on_slide(&updated, &slide.shape_glues)
+        .into_iter()
+        .map(|(shape, frame, flip_h, flip_v)| crate::command::Command::SetConnectorFrame { slide: slide.id, shape, frame, flip_h, flip_v })
+        .collect()
+}
+
 /// The connectors on a slide that must change to follow the shapes they are glued to:
 /// returns list of (connector_shape_id, new_frame, new_flip_h, new_flip_v).
 pub fn rerouted_on_slide(

@@ -53,7 +53,8 @@ const FILES: [(&str, &str); 3] = [
 const MAX_ROWS: usize = 25;
 
 /// The redesign allows these to be in two menus (comment, cross-reference, page break).
-const ALLOWED_TWICE: &[&str] = &["pptx.animation.preview", "docx.page-break", "docx.cross-reference", "docx.quick-parts.prop.comments", "insert.comment", "xlsx.protect-sheet"];
+// `file.recent.item` is every line of the recent files: one id for all of them (an id names a command, not a file), so it is in the bar once for each file (K0070).
+const ALLOWED_TWICE: &[&str] = &["file.recent.item", "pptx.animation.preview", "docx.page-break", "docx.cross-reference", "docx.quick-parts.prop.comments", "insert.comment", "xlsx.protect-sheet"];
 
 fn rows(entries: &[MenuEntry]) -> usize {
     entries.iter().filter(|e| !matches!(e, MenuEntry::Separator)).count()

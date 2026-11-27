@@ -10,7 +10,7 @@ mod platform;
 mod window;
 
 pub use android_activity;
-pub use jni_bridge::sync_saved_file;
+pub use jni_bridge::{KeyboardInfo, KeyboardKind, SafeAreaFn, hide_keyboard, keyboard, safe_area, set_safe_area_fn, sync_saved_file};
 pub use platform::AndroidPlatform;
 
 pub fn init_logging() {

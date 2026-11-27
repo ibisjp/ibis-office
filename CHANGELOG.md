@@ -5,12 +5,153 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-11-27
+
+The large changes of this version:
+
+- **More tools for AI apps, and ChatGPT too** (#159, #231): about 70 more MCP tools edit styles, lists, tables, headers and footers, comments, tracked changes, charts, shapes, groups, animations and themes in documents, spreadsheets and presentations; reads carry a revision so an edit can be refused when the file moved on; and `ibisOffice --mcp --http <port>` serves the same tools over Streamable HTTP on this PC for OpenAI's Secure MCP Tunnel (see [docs/mcp.md](docs/mcp.md)).
+- **More kinds of files open**: DocuWorks (.xdw, .xbd) and Ichitaro (.jtd) are shown read-only (#254, #80); PDF, XPS and OFD can be exported as Markdown with their figures (#272) or as plain text; and spreadsheet queries read Parquet, JSON Lines, Arrow IPC, Avro, SQLite, JSON and CSV files (#263).
+- **Statutes, forms and record matching**: Lawtext and e-Gov law XML get statute comparison and the five-set drafts of a bill (#229); a .docx with tagged fields becomes a form that is filled from one record, a CSV row or a CSV of many (#270); and `IBIS.FIELDMATCH` and `IBIS.RECORDMATCH` compare names, addresses, dates and ID numbers that are written in different ways (#257).
+- **Slide transitions and animations measured on Microsoft PowerPoint again** (#88, #89): crush, glitter, newsflash, fracture, flythrough, prestige, warp and honeycomb are new or redrawn, and all 291 animation effects were measured once more.
+- **Touch and small screens** (iPhone, iPad, Android and narrow windows): the menu bar and toolbar move to the bottom, one finger selects and two fingers scroll with coasting and bounce, a long press opens the context menu, a finger can take hold of a splitter, and the soft keyboard has its own toolbar and keeps the caret in view.
+- **Closer to Microsoft Word and Microsoft Excel**: character count (#295), grid lines (#287), manuscript paper and page setup, vertical writing and its footnotes (#188), tables (#178), page numbers with chapter numbers (#296), outline groups of a worksheet (#291) and the date text of Microsoft Excel (#294) were measured against the real applications.
+
+### Added
+
+#### All apps
+
+- MCP stage B (#159): about 70 more tools. Spreadsheets: sheet order, rows and columns, merge, sort, cell copy and move, replace, names, data validation, conditional formats, filters, tables, links, comments, duplicates, subtotals, borders, freeze panes, sheet view, page setup, protection, calculation and charts. Documents: page setup, paragraph format and styles, lists, tables with merge and split, page breaks, page numbers, fields, content controls, headers and footers, comments, accept and reject of tracked changes (and tracked editing while changes are tracked), text boxes, shapes, pictures, watermark, charts, table of contents and wrapping. Presentations: theme read and set, comments, transitions, tables, preset shapes and lines, gradient and transparency, hyperlinks, connectors, groups, copy of shapes and slides, align and arrange, animations, charts, layout change and pictures. Colors picked from a theme keep their theme reference in the file and follow a changed theme. Reads can carry a folder, revision and Git commit, and edits can pass an expected revision (`ibisOffice --mcp --call`, `--args`, `--folder`, `--revision`, `--commit`, `--expected-revision`).
+- MCP over HTTP (#231): `ibisOffice --mcp --http <port>` speaks Streamable HTTP (POST `/mcp`) on 127.0.0.1 with limits on host, origin, size, rate and time, for ChatGPT through OpenAI's Secure MCP Tunnel; the tunnel client is OpenAI's and is not included.
+- MCP: a formula that a protected sheet hides is not returned or copied (#275), and the 100000-cell limit of `xlsx_set_cells` is checked before the input is expanded (#276).
+- Open DocuWorks documents (.xdw, .xbd) read-only on the desktop, in the Web version, on Android and on iOS (#254).
+- Open Ichitaro documents (.jtd) read-only, or as a .docx converted from them (#80).
+- Export PDF, XPS and OFD as Markdown with the page graphics, keep EMF and WMF pictures through Markdown, and export their text with `--export txt` (`--text-layout physical` keeps the columns, vertical columns are read in order); PDFs that open without a password are decrypted (#272).
+- Statute comparison and drafting for Lawtext and e-Gov law XML (#229): the five-set drafts of a bill (a vertical .docx), a comparison of old and new text opened from Document Compare, checks of dangling and rippling references, and the old-law picker; Save As offers Lawtext (.lawtext) and the law standard XML.
+- Markdown: `plantuml` and `puml` code blocks are drawn offline as SVG and written back as they were (#298).
+- Review > Check Personal Information Left Behind checks notes, comments, hidden slides and sheets and removes what it found as one undo step (#246).
+- Insert > Picture > Medical Image (DICOM) anonymises a DICOM picture and inserts it into a document or a slide, with a dialog to black out areas of the picture (#246). DPC E/F and RECEIPTC files named `.txt` open as spreadsheets, with the sheets named in Japanese.
+- The signature report shows the signing certificate and, on Windows, asks the OS whether it is trusted (trusted, not trusted, expired and so on), without holding up the screen (#232).
+- The color schemes include Office (2013 - 2022) and Office with Microsoft 365's default colors, and the palettes follow the file's theme (#290).
+- Settings: the formatting marks can be chosen by item and shown from the start, and the sheet list's search field appears from a set number of sheets (#262).
+- Every toolbar button with a plain drop-down arrow is a split button: the left half repeats the last choice (#241).
+- The start window: Quit and the Window menu work on Windows (#265); Alt and a letter open the start window's menus, Alt alone puts the focus on the bar, the arrows move along the bar and Esc closes one menu level (Windows menus with access keys). A click outside an overlapping submenu closes that submenu only.
+- Web: the Open dialog offers PDF, OFD, XPS and DocuWorks files (#254); a .csv, .tsv or .tab file is saved as text, and Save As by name works (host page).
+- npm: `npm install @ibisjp/ibis-office` brings the Web version and a `ibis-office-copy` command to put it in a site (see `docs/web-embedding.md`).
+- Nix: an installation page for NixOS (Flatpak through nix-flatpak, AppImage through appimage-run) (#269).
+- The Android launcher icon is the logo's hexagon on white (#247); the iPhone home screen shows the logo's hexagon and the launch screen shows the logo.
+
+#### Touch and small screens (iOS, Android, narrow windows)
+
+- A window under 720 px wide puts the menu bar and toolbar at the bottom (on a touch device only), with scrolling bars and edge shadows; the formula bar of a worksheet is the last row; a narrow window leaves out the zoom controls, the format icon beside the back arrow, and a slide list that would cover more than half of the window.
+- One finger selects and two fingers scroll the page, with coasting, and the page, the worksheet, the slide's workspace, the side panels and menus stretch past their end and spring back.
+- A finger held 500 ms on a page, a sheet or a slide is a right click; held on a sheet tab it lifts the tab, which is carried along the tab strip and dropped, and held still it opens the tab menu. A finger within 22 points of a splitter takes hold of it.
+- The soft keyboard comes up on a tap (also in the Web version on iPhone and iPad, #267), has its own toolbar with a hide button, shortens the window, scrolls the caret, cell or composing text into view, and stays closed until a tap on the text.
+- On iOS and Android the file name in the title bar opens the file's menu, a back arrow and the format's icon return to the start window, and the menus have no Quit, no shortcut labels and no Window menu; the apps use the whole screen and keep their content inside the safe area.
+- iOS: colour emoji are drawn (Apple Color Emoji), the Japanese input method works with marked text, and Backspace, Delete and the caret step over a whole emoji sequence (a family, a flag, a skin tone, a keycap).
+
+#### Documents (.docx)
+
+- Page setup in Microsoft Word's four tabs (characters and lines, margins, paper, layout) with the grid types (default, lines only, characters and lines, manuscript paper); manuscript paper (genkō yōshi) is drawn behind every page and is saved in the header as Microsoft Word writes it.
+- View > Grid and Guides draws the drawing grid by the text direction of the page (horizontal: lines across from the top; vertical: lines down from the right edge, gutter on the right) as Microsoft Word does (#287).
+- Forms (#270): a .docx with tagged plain-text content controls is filled from a record (a form definition and a record as YAML, JSON or CSV), with a Form Input pane (Window > Sidebar), tagging a control at the caret, a CSV read into the pane with previous and next row buttons, numeric and `maxChars` fields, and the filled documents written for every CSV row.
+- The Style dialog has the typeface of the style's Japanese and Latin slots, with theme typefaces and a search of the font list.
+- The word count follows Microsoft Word: line breaks inside a paragraph, empty paragraphs, words, half-width alphanumerics, full-width plus half-width kana, footnotes and text boxes, and section breaks, also in the status bar (#295).
+- Page numbers with a chapter number use the heading's number part as Microsoft Word 365 does (#296).
+- Backspace at a page break leaves no empty page, and a page break that ends the last paragraph makes no new page after it (#234).
+- The document's default run format is saved when it changes.
+- The caret in a dark page takes its color from what is under it: the page color, paragraph and cell shading, highlight, and the fill of a text box, a shape or a table cell (#245); in a dark page the text of a text box with no or a dark fill is lightened and text on a highlight keeps its black.
+- Vertical text: footnotes and endnotes are set beneath the text in columns with Microsoft Word's separator and reference marks, and the arrow keys and marks follow Microsoft Word (#188, #289).
+- A SmartArt in a document is drawn from its drawing part and saved as it was (#208).
+
+#### Spreadsheets (.xlsx)
+
+- Queries read local files (#263): Parquet (also Zstandard, a column choice, several files in one query and a partitioned folder), JSON Lines, JSON record arrays, Arrow IPC, Avro and SQLite tables, and CSV and TSV that can be refreshed; Data > Get Data shows them; Query steps > Change Type > Using Locale… takes ja-JP, en-US, zh-CN, de-DE, fr-FR, en-GB and th-TH, and the `datetimezone` type works.
+- `IBIS.FIELDMATCH` and `IBIS.RECORDMATCH` (#257): grades for names (former surnames, kana readings and long vowels), addresses (uncertain spellings), dates, genders, phone numbers, postal codes, e-mail addresses, corporate numbers, individual numbers with check digits, driver license numbers (reissues), and passport numbers (also against the machine-readable zone), combined into one grade for a table row.
+- Outline groups as Microsoft Excel draws them (#291): the strip with lines, the - and + buttons and the level buttons at the left of the row headers and above the column headers, sizes by zoom, up to eight levels, a summary row above or to the left (Data > Outline settings) and the collapsed state saved.
+- A limited grid (#273): the setting `xlsx.grid.limited` (off by default) shows the used range plus a margin and grows as the selection nears the edge.
+- Rows can be added under the last row of a table by Tab in its bottom-right cell, the resize handle or paste under it (#303).
+- Data validation over several cells reads its relative references from each cell, an empty cell of the source is an empty item, and a rejected entry keeps the cell's old value (#284).
+- Regular expressions `REGEXTEST`, `REGEXEXTRACT` and `REGEXREPLACE` accept lookahead, lookbehind, named groups and back references (#259).
+- Microsoft Excel's date text (#294): `d/m` and `m/d` readings, two-digit years, a month with a year, `G/標準` as General and times are read as Microsoft Excel does, with cell entry stricter than `--`.
+- The machine readability panel's Show brings the cell into view.
+
+#### Presentations (.pptx)
+
+- Grid and Guides (View > Grid and Guides…): spacing, snap to grid and to other objects, grid lines, guides and smart guides, and the default shape, line and text box (`spDef`, `lnDef`, `txDef`) are read, written and applied.
+- Printing on a paper (#225): `--print-paper` and `--no-print-fit-paper` (and the print panel and the MCP export) put the pages on A4, A5, B5, A3 or Letter, scaled to fit and centred; handouts of 1 to 9 slides per page, also landscape; the pure black and white print of charts has the dot and stripe patterns of series 3 to 19, black axes and gridlines and a thin edge on markers.
+- Slide transitions: crush, glitter, newsflash, fracture, flythrough, prestige, warp and curtains are drawn from Microsoft PowerPoint's recordings (#88).
+- Text with a theme color in a shape, a hyperlink, a bullet or a chart keeps the theme reference (#159).
+- The Web page export (all three screens) draws charts and SmartArt as pictures in the page (#208).
+
+#### Command line
+
+- `--export txt` for PDF, XPS and OFD (with `--text-layout physical`), `--print-paper` and `--no-print-fit-paper`, and `--export html` reads a file as the window does (a .csv, .tsv or .tab table also exports).
+
+### Changed
+
+#### All apps
+
+- Fonts: the system's fonts are listed in Settings when it opens (Windows offered five stand-ins until a document was drawn); a missing typeface takes the stand-in a typeface of the same kind (mincho or gothic) in the Web version (#301).
+- Performance (#299, #300): the settings, text lines, text box pagination, menu bar widths, gradient bands, a worksheet's shaped text and headers are kept between frames, and the slide sorter builds only the cards in view; the settings cache reads the file again when it is changed from outside.
+- The iOS and Android app ID is `jp.ne.ibis.ibisOffice`.
+- A panel dialog's main button does something in every state, or says why it cannot (#261).
+- PDF viewer: images are not smoothed when enlarged unless the file asks for it, and shading patterns and soft masks are drawn.
+- A dropdown list is fitted into the room under its button.
+- Windows: a picture that is cut off (a truncated JPEG, GIF or BMP) is refused, as on a Mac; in the slide show the Ctrl keys of pen, laser, grid and zoom win over Print, Save and Select All.
+
+#### Documents (.docx)
+
+- Justified lines and Japanese typesetting follow Microsoft Word more closely: the squeeze of compatibility mode 14 (colon, semicolon and full-width space give up half an em) (#164), a `linesAndChars` line is `floor(W / pitch)` cells long and a `snapToChars` character takes whole grid cells, also in vertical sections and columns (#54).
+- Tables (#178): a row at a page's end is divided by the cells' lines and each part is aligned in its own height, a table of the text's width has its end borders inside it, and the left border of a table in compatibility mode 14 and below stays on the cell's edge; a table row is its content and the thickest border at the joint above it (#271); a vertical cell is as wide as its lines are thick.
+- Line heights and frames (#179, #191, #192): ruby and emphasis marks, a framed character's line is widened by the frame's margin, a paragraph frame's height and `hRule`, `wrap` `notBeside` and `none`, and the narrow frames.
+- A word too wide for the gap beside a picture goes to the next gap whole (#196), and the line of a picture on a line grid is the picture's height rounded up to whole grids (#208).
+- Spaces and typefaces (#188): U+2002 to U+2006 take the advance of the typeface's en and em dash, U+202F and U+205F are fixed, 游明朝 and 游ゴシック take the stand-in typefaces' advances, MS Mincho and MS Gothic have Microsoft Word's widths for U+2004 to U+2006, letters of the Letterlike block, Armenian and phonetic letters are spaced from Japanese, a superscript or subscript takes the line room of its full size, and the PDF writes the font descriptor as Microsoft Word does.
+- Emoji and symbols: a character followed by U+FE0E is drawn in a plain typeface, a run without a typeface takes 游明朝, as Microsoft Word's PDF does.
+- Boxed characters (#180) take the room the font file gives for the typeface, not what the machine's face measures.
+
+#### Spreadsheets (.xlsx)
+
+- Rotated text (#189): the room of turned text in a cell follows Microsoft Excel's box (from the typeface's ascent and external leading) for angles of 15 to 75 degrees, 90 degrees and stacked text; on Windows, a two-cell anchored shape or picture prints from its top-left cell to its bottom-right one.
+- The row height of a font whose ascent is the em is one pixel taller where Microsoft Excel makes it so (Yu Gothic 14 pt bold: 32 px).
+- A workbook with no `styles.xml` can be saved after an edit.
+- A read-only workbook takes no text input.
+- Query steps convert to a whole number, Int32 and currency with halves to even, as the M interpreter and Microsoft Excel do.
+- Grouped sheets (#238): fit column width and row height fit each sheet to its own contents, the chart and shape submenus are grey, and the commands that Microsoft Excel refuses (hyperlinks, comments, input rules, conditional formats, filters, sheet protection, scenarios) are refused.
+- The formula bar's IME underline is placed from the typeface's baseline.
+
+#### Presentations (.pptx)
+
+- Slide transitions measured on Microsoft PowerPoint's recordings (#88): honeycomb (9 hexagons across), doors (the halves swing away), curtains, rotate, cube, zoom, reveal, page curl and morph by word and by character; Animations: all 291 effects measured once more and the line outside a shape's frame is no longer cut when a window-type effect begins (#89).
+- Charts printed in grey and pure black and white draw lines as lines at 600 dpi (#225).
+- A zoom card's outline is saved as Microsoft PowerPoint writes it.
+
+#### OpenDocument
+
+- ODF files open closer to Microsoft Office's reading of them (#249): .odt (header and footer of even pages, tab stops, page number format and start, single border widths, vertical text boxes, auto-grow, section breaks and table margins), .ods (text of shapes with each span's format, secondary chart axes, number formats with zero and text sections, embedded text, fill characters, Japanese era years, merged empty cells, nested groups and hidden rows) and .odp (connectors, pie 3-D charts, negative clips, bitmap tiling, line height, kerning, links to slides and EMF crops); ODF files with repeated rows, covered cells or no columns are read, and an oversized expansion is refused.
+
+#### For developers and forks
+
+- New crates: `ibis-jtd` (Ichitaro) and the DocuWorks readers, and the form data in `ibis-formats`; the build takes its version from `crates/build-version.txt` (`version.txt` stays what installed apps read); the YAML of forms is read with `serde-saphyr`.
+- The GPUI forks gained a finger's scroll (`touch_fingers`, `ScrollMotion`), a long press as a right click and an iOS glyph raster for colour emoji.
+
+### Fixed
+
+- All apps: a menu with more items than the window shows scrolls by a finger, with coasting and edge bounce; a dropdown no longer overlaps the window's bottom.
+- Windows: no console window appears in the update restart (#266) and an installation in `C:\ibisOffice` updates without administrator rights (#268).
+- .docx: a table's left border in compatibility mode 14 and below sits on the cell's edge whatever its thickness (#178); a text round a picture breaks punctuation squeeze by the picture's unit (#196); the caret of a dark page is visible on every fill (#245); the text boundary marks of a vertical section are turned into the paper (#289); the vertical text's upright characters are centred in the line's box (#188); a cell fill of a table made in this session is saved; the MS Mincho underline is placed by Microsoft Word's rule (#192).
+- .docx: a paragraph that holds a SmartArt is saved with the original graphic, once (#208).
+- .xlsx: formulas whose F2 edit would show a hidden formula open an empty editor as Microsoft Excel does, and hidden formulas do not reach the clipboard (#275); a list validation over several cells and the wheel over its drop-down do not scroll the sheet (#284); the cell editor's box is the caret's character box and the formula bar's caret does not scroll the body on a touch screen; an omitted `IF` branch passes an omitted `ISOMITTED` on (#278); opening a CSV or TSV and saving it asks nothing; the `r` namespace is declared on added worksheets; and Flash Fill no longer freezes the window over columns of long text.
+- .pptx: a presentation's picture compression menu is in the Windows menus; the slide list's focus returns to the editor when the list is hidden in a narrow window.
+- iOS and Android: the keyboard's Enter goes to the cell as the Enter key, the content of a `content://` file keeps its name as the title (#247), the iPhone app uses the whole screen, and an iPhone's start view has the request panel below the column.
+- Web: a worksheet's Web page export no longer shows a dashed frame for a chart (#208).
+
 ## [0.8.9] - 2026-11-20
 
 The large changes of this version:
 
 - **ibisOffice speaks MCP** (#159): `ibisOffice --mcp` (and `ibisOffice-mcp.exe` on Windows) lets an AI app such as Claude Desktop or Claude Code open, read, edit and export documents, spreadsheets and presentations through tools, with safe defaults (see [docs/mcp.md](docs/mcp.md)).
 - **More kinds of files open**: PDF, XPS and OFD (read-only, with their signatures), Markdown with Mermaid diagrams, Japanese law XML and Lawtext, and medical documents (DICOM, FHIR, CDA, HL7 v2); OpenDocument files (.odt, .ods, .odp) are read through their own crate and drawn as the equivalent Office file.
+- **CMYK mode for print work** (#133): a document, spreadsheet or presentation can be put in CMYK mode with an ICC profile; the screen shows a soft proof of how the press prints the colors, CMYK JPEG pictures are converted with the profile, and the mode and profile are kept when the file is saved. Colors are still entered as RGB.
 - **Slide transitions and animations are checked against PowerPoint's own recordings** (#88, #89): honeycomb, vortex, shred, ripple, wheel, doors, checker and many others are redrawn from measurements, and the 291 animation effects were compared one by one.
 - **Japanese typesetting follows Microsoft Word more closely** (#54, #188, #192 and others): punctuation squeeze, vertical columns, emphasis marks, superscripts, ruby, drop caps and tables were measured against Word.
 

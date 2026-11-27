@@ -274,8 +274,9 @@ pub(crate) fn style_chart(xml: String, content: &str, reversed: bool) -> String 
     // The plot area (its wall) and the chart area.
     let wall = plot.children().find(|c| c.is_element() && c.tag_name().namespace() == Some(CHART) && c.tag_name().name() == "wall");
     let is_3d = style(plot).get("three-dimensional").is_some_and(|v| v == "true") && xml.contains("<c:barChart>");
+    let is_3d_pie = style(plot).get("three-dimensional").is_some_and(|v| v == "true") && xml.contains("<c:pieChart>");
     // A 3-D chart's walls are `c:sideWall` and `c:backWall` (below); its plot area keeps the plot area's own style.
-    let wall_style = wall.map(|w| style(w)).filter(|m| !m.is_empty() && !is_3d).unwrap_or_else(|| style(plot));
+    let wall_style = wall.map(|w| style(w)).filter(|m| !m.is_empty() && !is_3d && !is_3d_pie).unwrap_or_else(|| style(plot));
     if !wall_style.is_empty() && xml.contains("</c:plotArea>") {
         let tail = xml.rfind("</c:plotArea>").unwrap_or(0);
         let before = &xml[..tail];
@@ -289,6 +290,8 @@ pub(crate) fn style_chart(xml: String, content: &str, reversed: bool) -> String 
     }
     if is_3d {
         xml = three_d(xml, plot, &styles);
+    } else if is_3d_pie {
+        xml = three_d_pie(xml, plot, &styles);
     }
     let _ = OFFICE;
     xml
@@ -362,6 +365,14 @@ fn mul3(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 /// `rotY = atan2(s02, s22)` of `s = T * B`, rotY taken modulo 360, and both truncated toward zero (the values 14.99995 and 19.99986 of a
 /// real chart's matrix are written 14 and 19; -8.17 is -8, 54.86 is 54). All 38 agree.
 fn view_angles(transform: &str) -> (i32, i32) {
+    let (rot_x, rot_y) = view_raw(transform);
+    // 1e-9: floating point noise only (the identity must stay 10 and 25).
+    let trunc = |v: f64| (v + 1e-9f64.copysign(v)).trunc() as i32;
+    (trunc(rot_x), trunc(rot_y))
+}
+
+/// The angles of `view_angles` before they are cut to whole degrees (rotX, rotY in degrees, rotY modulo 360).
+fn view_raw(transform: &str) -> (f64, f64) {
     let n: Vec<f64> = transform
         .trim()
         .trim_start_matches("matrix")
@@ -378,9 +389,7 @@ fn view_angles(transform: &str) -> (i32, i32) {
     let s = mul3(t, b);
     let rot_x = -(-s[1][2]).atan2(s[0][2].hypot(s[2][2])).to_degrees();
     let rot_y = s[0][2].atan2(s[2][2]).to_degrees().rem_euclid(360.0);
-    // 1e-9: floating point noise only (the identity must stay 10 and 25).
-    let trunc = |v: f64| (v + 1e-9f64.copysign(v)).trunc() as i32;
-    (trunc(rot_x), trunc(rot_y))
+    (rot_x, rot_y)
 }
 
 /// A chart with `chart:three-dimensional="true"` (bars) as PowerPoint writes it: `c:bar3DChart` with `c:view3D`, `c:floor`, `c:sideWall`,
@@ -404,7 +413,50 @@ pub(crate) fn three_d_chart(xml: String, content: &str) -> String {
     let Some(chart_el) = root.descendants().find(|n| n.is_element() && n.tag_name().namespace() == Some(CHART) && n.tag_name().name() == "chart") else { return xml };
     let Some(plot) = chart_el.children().find(|c| c.is_element() && c.tag_name().namespace() == Some(CHART) && c.tag_name().name() == "plot-area") else { return xml };
     let is_3d = plot.attribute((CHART, "style-name")).and_then(|s| styles.get(s)).and_then(|m| m.get("three-dimensional")).is_some_and(|v| v == "true") && xml.contains("<c:barChart>");
+    // (A 3-D pie of an `.ods` is not measured with Excel: only the `.odp` path writes `pie3DChart`.)
     if is_3d { three_d(xml, plot, &styles) } else { xml }
+}
+
+/// A 3-D pie (`chart:class="chart:circle"` with `chart:three-dimensional="true"`) as PowerPoint writes it (`topptx` of 076, whose matrix is
+/// `Rx(70) * Ry(-25)` and whose view PowerPoint wrote as rotX 29, rotY 360, rAngAx 0): `c:pie3DChart` (no `c:firstSliceAng`) with the same
+/// `c:view3D`, `c:floor`, `c:sideWall`, `c:backWall` as the bars. PowerPoint's rotY is 360 (the pie is turned by its slices, not the view) and its
+/// rotX is 90 + the floor of the bars' (unrounded) rotX of the same matrix: `-60.00005` of this matrix (`Rx(60)` after the base of 10 and 25
+/// degrees, with the digits the attribute keeps) gives 90 - 61 = 29 where 90 - 60 would be 30; the same floor as the 36.63 -> 36, -17.21 -> -18,
+/// -8.17 -> -9 of 12 matrices `Ry(ry) * Rx(rx)` (rx -45 to 60, ry -50 to 90) measured with `topptx` (25th hand-over).
+fn three_d_pie(mut xml: String, plot: Node, styles: &HashMap<String, Props>) -> String {
+    let empty = Props::new();
+    let style = |n: Node| -> &Props { n.attribute((CHART, "style-name")).and_then(|s| styles.get(s)).unwrap_or(&empty) };
+    let child = |name: &str| plot.children().find(|c| c.is_element() && c.tag_name().namespace() == Some(CHART) && c.tag_name().name() == name);
+    let (raw_x, _) = view_raw(plot.attribute((DR3D, "transform")).unwrap_or(""));
+    let rot_x = 90 + raw_x.floor() as i32;
+    let right_angled = style(plot).get("right-angled-axes").is_none_or(|v| v == "true");
+    let mut view = format!(r#"<c:view3D><c:rotX val="{rot_x}"/><c:rotY val="360"/><c:rAngAx val="{}"/></c:view3D>"#, u8::from(right_angled));
+    let wall = child("wall").map(|w| style(w)).unwrap_or(&empty);
+    let floor = child("floor").map(|f| style(f)).unwrap_or(&empty);
+    let wall_pr = sp_pr(wall);
+    let fill = match floor.get("fill").map(String::as_str) {
+        Some("none") => "<a:noFill/>".to_string(),
+        Some("solid") => floor.get("fill-color").and_then(|c| rgb(c)).map(|c| format!(r#"<a:solidFill><a:srgbClr val="{c}"/></a:solidFill>"#)).unwrap_or_default(),
+        _ => String::new(),
+    };
+    let _ = write!(
+        view,
+        r#"<c:floor><c:thickness val="0"/><c:spPr>{fill}{}</c:spPr></c:floor><c:sideWall><c:thickness val="0"/>{wall_pr}</c:sideWall><c:backWall><c:thickness val="0"/>{wall_pr}</c:backWall>"#,
+        floor_line(floor)
+    );
+    if let Some(i) = xml.find("<c:plotArea>") {
+        xml.insert_str(i, &view);
+    }
+    xml = xml.replacen("<c:pieChart>", "<c:pie3DChart>", 1).replacen("</c:pieChart>", "</c:pie3DChart>", 1);
+    if let (Some(a), Some(b)) = (xml.find("<c:pie3DChart>"), xml.find("</c:pie3DChart>")) {
+        if let Some(i) = xml[a..b].find("<c:firstSliceAng ") {
+            let i = a + i;
+            if let Some(j) = xml[i..].find("/>") {
+                xml.replace_range(i..i + j + 2, "");
+            }
+        }
+    }
+    xml
 }
 
 fn three_d(mut xml: String, plot: Node, styles: &HashMap<String, Props>) -> String {
@@ -520,5 +572,13 @@ mod tests_3d {
         ] {
             assert_eq!(view_angles(&rot(rx, ry)), want, "rx {rx} ry {ry}");
         }
+    }
+
+    /// 076's 3-D pie: PowerPoint wrote rotX 29 for this matrix (`Rx(70) * Ry(-25)`, bars' unrounded rotX -60.00005 -> 90 + floor = 29).
+    #[test]
+    fn pie_rot_x_is_90_plus_floor() {
+        let m = "matrix (0.90630677104982404 0 -0.42262044052464098 -0.39713343902554066 0.342019300324991 -0.85165006300296331 0.14454434737127708 0.9396929276126339 0.30997440771426255 0cm 0cm 0cm)";
+        let (x, _) = super::view_raw(m);
+        assert_eq!(90 + x.floor() as i32, 29);
     }
 }

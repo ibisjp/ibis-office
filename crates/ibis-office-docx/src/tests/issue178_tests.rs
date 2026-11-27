@@ -3,7 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! GitHub issue #178 (a table's width, margins, border position and the break of a row at a page's end differ from Word's), the document (DOCX)
 //! side. Each test lays out a table of one row (MS Mincho 10.5 pt, A4 with 72 pt margins) and measures the vertical lines and the first
-//! character's x; the values are the issue's measurements of Word's PDFs (tolerance 0.25 pt for a line or a character, 1 pt for a width).
+//! character's x; the values are the issue's measurements of Word's PDFs (tolerance 0.25 pt for a line or a character, 1 pt for a width). The documents carry the
+//! styles.xml Word writes (its default table style gives the cells their 108 twips side margins: #227).
 
 use super::flow_layout::{Item, Pagination};
 use crate::shell::scenario::Scenario;
@@ -15,8 +16,11 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::issue178_fixed_table_widths", fixed_table_widths),
         ("docx::issue178_autofit_cell_widths", autofit_cell_widths),
         ("docx::issue178_compat14_tables_reach_out_over_their_margins", compat14_tables_reach_out_over_their_margins),
+        ("docx::issue178_compat14_left_line_is_on_the_cell_edge_whatever_its_width", compat14_left_line_is_on_the_cell_edge_whatever_its_width),
         ("docx::issue178_borders_and_text_from_the_middle_of_the_line", borders_and_text_from_the_middle_of_the_line),
         ("docx::issue178_rows_divide_whatever_the_vertical_alignment", rows_divide_whatever_the_vertical_alignment),
+        ("docx::issue178_a_centred_cell_beside_a_taller_one_stays_in_the_first_part", a_centred_cell_beside_a_taller_one_stays_in_the_first_part),
+        ("docx::issue178_a_width_of_the_texts_has_the_end_borders_inside", a_width_of_the_texts_has_the_end_borders_inside),
         ("docx::issue178_nested_table_percent_is_of_the_cells_text", nested_table_percent_is_of_the_cells_text),
         ("docx::issue178_fixed_table_widened_by_tcw_and_cut_inside_the_margins", fixed_table_widened_by_tcw_and_cut_inside_the_margins),
     ]
@@ -33,13 +37,17 @@ const BORDERS: &str = r#"<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0
 fn make(name: &str, mode: u32, body: &str) -> String {
     use ibis_formats::ibis_ooxml::zip::{EntryMeta, Writer};
     let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
     let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
     let doc_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
     let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     let settings = format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="{w}"><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat></w:settings>"#);
+    // The styles every file Word writes has: its Normal paragraph style and the default table style, 標準の表 (Normal Table), whose cell margins are 108 twips. A table's cells
+    // have margins only where the file has a default table style (#227: Windows Word's XPS of one-factor tests, `tasks/doc/requests/2026-11-18-227-margin-s1-result.md`); the
+    // measurements of this issue are of Word's own files, which have it.
+    let styles = format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>"#);
     let document = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="{w}"><w:body>{body}<w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>"#
     );
@@ -48,6 +56,7 @@ fn make(name: &str, mode: u32, body: &str) -> String {
     z.add("_rels/.rels", EntryMeta::new(), rels.as_bytes()).unwrap();
     z.add("word/_rels/document.xml.rels", EntryMeta::new(), doc_rels.as_bytes()).unwrap();
     z.add("word/settings.xml", EntryMeta::new(), settings.as_bytes()).unwrap();
+    z.add("word/styles.xml", EntryMeta::new(), styles.as_bytes()).unwrap();
     z.add("word/document.xml", EntryMeta::new(), document.as_bytes()).unwrap();
     let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
     std::fs::create_dir_all(&dir).unwrap();
@@ -190,6 +199,41 @@ fn rows_divide_whatever_the_vertical_alignment() {
     }
 }
 
+/// A row of a cell of 8 lines and a cell of one line centred, at a page's end (Word's PDF of `n1-table-widths.docx`, GitHub issue #178 T6a: three lines of the tall cell in the
+/// first part, the centred cell's line centred in them (baseline 740.55 beside 720.5, 740.5, 760.5), the rest of the tall cell's lines on the next page): the row is divided by where the
+/// lines fall from the cells' tops, and each part's text is aligned in the part's own height.
+fn a_centred_cell_beside_a_taller_one_stays_in_the_first_part() {
+    let filler = r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="400" w:lineRule="exact"/></w:pPr></w:p>"#.repeat(31);
+    let line = |t: &str| format!(r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="400" w:lineRule="exact"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="{MINCHO}" w:hAnsi="{MINCHO}" w:eastAsia="{MINCHO}"/><w:sz w:val="21"/></w:rPr><w:t>{t}</w:t></w:r></w:p>"#);
+    let tall: String = (0..8).map(|_| line(KANA1)).collect();
+    let tbl = format!(r#"<w:tbl><w:tblPr><w:tblW w:w="7200" w:type="dxa"/>{BORDERS}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="3600"/><w:gridCol w:w="3600"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="3600" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>{tall}</w:tc><w:tc><w:tcPr><w:tcW w:w="3600" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#, line(KANA2));
+    let p = pages_of(&make("split-two-cells", 15, &format!("{filler}{tbl}")));
+    let ys = |n: usize, text: &str| -> Vec<f32> { p.pages.get(n).map_or(vec![], |pg| pg.items.iter().filter_map(|it| match it { Item::Text { y, text: t, .. } if &**t == text => Some(*y), _ => None }).collect()) };
+    let (first, rest) = (ys(0, KANA1), ys(1, KANA1));
+    assert!(!first.is_empty() && !rest.is_empty() && first.len() + rest.len() == 8, "the tall cell is divided: {} and {}", first.len(), rest.len());
+    let side = ys(0, KANA2);
+    assert_eq!(side.len(), 1, "the one line of the centred cell is in the first part: {side:?}; the next page has {:?}", ys(1, KANA2));
+    assert!(ys(1, KANA2).is_empty(), "and not in the second");
+    // Centred in the lines beside it: the middle of the first part's lines.
+    let middle = (first[0] + first[first.len() - 1]) / 2.0;
+    near(side[0], middle, 0.5, "the centred line is in the middle of the part");
+}
+
+/// A table of the text's width (`w:tblW` 100 % or auto, wide cells) in mode 15 has its end borders inside that width, half of each (Word's PDF of `n1-table-widths.docx`, #178 T4a and
+/// T4b, borders of 0.5 pt, text of 451.3 pt: the lines' middles at 72.26, 297.65, 523.18 and 72.26, 491.62, 523.18; within 0.25 pt).
+fn a_width_of_the_texts_has_the_end_borders_inside() {
+    let tbl = |w: &str, text: &str| format!(r#"<w:tbl><w:tblPr><w:tblW {w}/>{BORDERS}</w:tblPr><w:tblGrid><w:gridCol w:w="4513"/><w:gridCol w:w="4513"/></w:tblGrid><w:tr><w:tc><w:tcPr></w:tcPr>{}</w:tc><w:tc><w:tcPr></w:tcPr>{}</w:tc></w:tr></w:tbl>"#, para(text), para(KANA2));
+    let a = verticals(&pages_of(&make("autofit-pct", 15, &tbl(r#"w:w="5000" w:type="pct""#, KANA2))));
+    assert_eq!(a.len(), 3, "{a:?}");
+    near(a[0], 72.26, 0.25, "T4a: the left line");
+    near(a[1], 297.65, 0.25, "T4a: the middle line");
+    near(a[2], 523.18, 0.25, "T4a: the right line");
+    let long = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめも";
+    let b = verticals(&pages_of(&make("autofit-auto", 15, &tbl(r#"w:w="0" w:type="auto""#, long))));
+    assert_eq!(b.len(), 3, "{b:?}");
+    near(b[2], 523.18, 0.25, "T4b: the right line");
+}
+
 /// A nested table's percent is of the outer cell's width less its margins, in every compatibility mode, and it does not reach out to the left
 /// (Word's XPS, MS Mincho 10.5 pt: outer cells of 200 pt, margins 5.4 pt, a nested table of two columns of 50 pt in a tblW of 100 % or 50 %;
 /// the lines' middles are of a width of 189.2 pt or 94.6 pt from the outer cell's text, 77.9 in mode 15 and 72.3 in mode 14).
@@ -234,4 +278,13 @@ fn fixed_table_widened_by_tcw_and_cut_inside_the_margins() {
     case("tcw-i", 2400, &[2000, 1000], &[(1, 2000), (1, 1000)], &[79.08, 40.95]);
     case("tcw-j", 6000, &[2000, 1000], &[(1, 2000), (1, 1000)], &[200.0, 100.0]);
     case("tcw-k", 3000, &[1500, 1500], &[(1, 2000), (1, 1000)], &[100.0, 50.0]);
+}
+
+/// Before mode 15 the left line's middle is on the cell's edge (the text's edge less the margin), as thick as the line is (Word's PDFs, 0.5/1.5/3 pt: 66.62, 66.62, 66.56).
+fn compat14_left_line_is_on_the_cell_edge_whatever_its_width() {
+    for sz in [4u32, 12, 24] {
+        let borders = BORDERS.replace(r#"w:sz="4""#, &format!(r#"w:sz="{sz}""#));
+        let xs = verticals(&pages_of(&make(&format!("compat14-border-{sz}"), 14, &table(&format!(r#"<w:tblW w:w="6000" w:type="dxa"/>{borders}"#), &[3000, 3000], &["", ""]))));
+        near(xs[0], 66.6, 0.15, &format!("the left line of sz {sz}"));
+    }
 }

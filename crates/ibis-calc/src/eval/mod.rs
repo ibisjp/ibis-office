@@ -103,6 +103,10 @@ pub trait Book {
     fn table_at(&self, _sheet: usize, _row: u32, _column: u32) -> Option<TableInfo> {
         None
     }
+    /// Optional character cluster used by the name comparison function.
+    fn name_variant_cluster(&self, _character: char) -> Option<u32> {
+        None
+    }
     fn date1904(&self) -> bool {
         false
     }
@@ -560,13 +564,34 @@ impl<'a> Ctx<'a> {
             {
                 continue;
             }
-            let mut found: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
-            self.book.for_each_cell(sheet, (area.first_row, area.first_column, last_row, last_column), &mut |r, c, _| {
-                found.insert((r, c));
-            });
-            self.cells.for_each_cell(sheet, (area.first_row, area.first_column, last_row, last_column), &mut |r, c, _| {
-                found.insert((r, c));
-            });
+            let (first_row, first_column) = (area.first_row, area.first_column);
+            let bounds = (first_row, first_column, last_row, last_column);
+            let visit = |record: &mut dyn FnMut(u32, u32)| {
+                let mut visit_cell = |r, c, _: &CellValue| record(r, c);
+                self.book.for_each_cell(sheet, bounds, &mut visit_cell);
+                self.cells.for_each_cell(sheet, bounds, &mut visit_cell);
+            };
+            if first_row <= last_row && first_column <= last_column {
+                let width = u64::from(last_column - first_column) + 1;
+                let height = u64::from(last_row - first_row) + 1;
+                if width.saturating_mul(height) <= u64::BITS.into() {
+                    // A bit per coordinate merges overlapping book and spill
+                    // cells without allocating a set for this small range.
+                    let width = width as u32;
+                    let mut found = 0u64;
+                    visit(&mut |r, c| found |= 1 << ((r - first_row) * width + (c - first_column)));
+                    while found != 0 {
+                        let offset = found.trailing_zeros();
+                        found &= found - 1;
+                        let r = first_row + offset / width;
+                        let c = first_column + offset % width;
+                        f(sheet, r, c, self.cell_value(sheet, r, c));
+                    }
+                    continue;
+                }
+            }
+            let mut found = std::collections::BTreeSet::new();
+            visit(&mut |r, c| { found.insert((r, c)); });
             for (r, c) in found {
                 let v = self.cell_value(sheet, r, c);
                 f(sheet, r, c, v);

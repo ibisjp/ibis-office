@@ -59,11 +59,11 @@ pub fn label_column_width(widths: &[f32]) -> f32 {
     widths.iter().copied().fold(0., f32::max).ceil()
 }
 
-#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
 fn observe(d: Div, key: String) -> Div {
     d.relative().child(canvas(|_, _, _| (), move |b, _, _, _| crate::scenario::button_probe::record_bounds(&key, b)).absolute().inset_0())
 }
-#[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+#[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))))]
 fn observe(d: Div, _key: String) -> Div {
     d
 }

@@ -63,6 +63,11 @@ impl CosDict {
         &self.entries
     }
 
+    /// The values, to change in place (the keys and their order stay).
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut CosObj> {
+        self.entries.iter_mut().map(|(_, v)| v)
+    }
+
     pub fn get(&self, key: &[u8]) -> Option<&CosObj> {
         self.entries
             .iter()

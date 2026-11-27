@@ -109,7 +109,7 @@ impl SlideEditor {
         let (head_w, head_h) = self.current_sheet().map_or((0.0, 0.0), |(_, sheet)| {
             (
                 if sheet.headings { super::sheet_ui::row_header_width(sheet) } else { 0.0 },
-                if sheet.headings { super::sheet_ui::COLUMN_HEADER_HEIGHT } else { 0.0 },
+                if sheet.headings { crate::shell::sheet_metrics::column_header_height(sheet) } else { 0.0 },
             )
         });
         let ws_w = f32::from(ws.size.width);
@@ -243,7 +243,7 @@ impl SlideEditor {
         let (head_w, head_h) = self.current_sheet().map_or((0.0, 0.0), |(_, sheet)| {
             (
                 if sheet.headings { super::sheet_ui::row_header_width(sheet) } else { 0.0 },
-                if sheet.headings { super::sheet_ui::COLUMN_HEADER_HEIGHT } else { 0.0 },
+                if sheet.headings { crate::shell::sheet_metrics::column_header_height(sheet) } else { 0.0 },
             )
         });
 
@@ -349,7 +349,7 @@ impl SlideEditor {
         let emu_x = ((local_x - f32::from(content.slide_origin.x)) / content.scale) as i64 - shape.frame.x;
         let emu_y = ((local_y - f32::from(content.slide_origin.y)) / content.scale) as i64 - shape.frame.y;
         let head_w = if sheet.headings { super::sheet_ui::row_header_width(sheet) } else { 0.0 };
-        let head_h = if sheet.headings { super::sheet_ui::COLUMN_HEADER_HEIGHT } else { 0.0 };
+        let head_h = if sheet.headings { crate::shell::sheet_metrics::column_header_height(sheet) } else { 0.0 };
 
         let find_closest = |offsets: &[i64], target_emu: i64, min_head: f32, pos: f32| -> u32 {
             if pos <= min_head + 8.0 {

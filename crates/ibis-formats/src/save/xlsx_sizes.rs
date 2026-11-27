@@ -470,10 +470,11 @@ pub(crate) fn write_outline(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, dig
     let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
     let prefix = prefix_of(doc, root);
     let data = doc.child(root, "sheetData").ok_or_else(|| Error::new("シートに sheetData がありません"))?;
-    let rows: std::collections::BTreeSet<u32> = old.outline_rows.keys().chain(new.outline_rows.keys()).copied().collect();
+    let rows: std::collections::BTreeSet<u32> = old.outline_rows.keys().chain(new.outline_rows.keys()).chain(old.collapsed_rows.iter()).chain(new.collapsed_rows.iter()).copied().collect();
     for r in rows {
         let level = new.outline_rows.get(&r).copied().unwrap_or(0);
-        if old.outline_rows.get(&r).copied().unwrap_or(0) == level {
+        let collapsed = new.collapsed_rows.contains(&r);
+        if old.outline_rows.get(&r).copied().unwrap_or(0) == level && old.collapsed_rows.contains(&r) == collapsed {
             continue;
         }
         let found = doc.children_named(data, "row").find(|&n| doc.attr(n, "r").and_then(|v| v.parse::<u32>().ok()) == Some(r + 1));
@@ -498,12 +499,18 @@ pub(crate) fn write_outline(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, dig
         } else {
             doc.set_attr(row, "outlineLevel", &level.to_string());
         }
+        if collapsed {
+            doc.set_attr(row, "collapsed", "1");
+        } else {
+            doc.remove_attr(row, "collapsed");
+        }
     }
     // Columns: one col element per changed column (split from runs).
-    let columns: std::collections::BTreeSet<u32> = old.outline_columns.keys().chain(new.outline_columns.keys()).copied().collect();
+    let columns: std::collections::BTreeSet<u32> = old.outline_columns.keys().chain(new.outline_columns.keys()).chain(old.collapsed_columns.iter()).chain(new.collapsed_columns.iter()).copied().collect();
     for c in columns {
         let level = new.outline_columns.get(&c).copied().unwrap_or(0);
-        if old.outline_columns.get(&c).copied().unwrap_or(0) == level {
+        let collapsed = new.collapsed_columns.contains(&c);
+        if old.outline_columns.get(&c).copied().unwrap_or(0) == level && old.collapsed_columns.contains(&c) == collapsed {
             continue;
         }
         let cols = match doc.child(root, "cols") {
@@ -558,6 +565,11 @@ pub(crate) fn write_outline(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, dig
             doc.remove_attr(col, "outlineLevel");
         } else {
             doc.set_attr(col, "outlineLevel", &level.to_string());
+        }
+        if collapsed {
+            doc.set_attr(col, "collapsed", "1");
+        } else {
+            doc.remove_attr(col, "collapsed");
         }
     }
     // The deepest levels on sheetFormatPr.
@@ -1036,6 +1048,44 @@ pub(crate) fn write_tab_color(doc: &mut XmlDocument, color: Option<ibis_doc_mode
         let e = detached(doc, &format!("{prefix}tabColor"));
         doc.set_attr(e, "rgb", &format!("FF{:06X}", c.0 & 0xFFFFFF));
         doc.insert(sheet_pr, 0, e);
+    }
+    Ok(())
+}
+
+/// `sheetPr/outlinePr` (after tabColor, before pageSetUpPr): `summaryBelow`/`summaryRight` are written as "0" when the totals are above/left, and left out
+/// (their default is 1, ECMA-376 18.3.1.31) when below/right.
+pub(crate) fn write_outline_summary(doc: &mut XmlDocument, above: bool, left: bool) -> Result<(), Error> {
+    let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
+    let prefix = prefix_of(doc, root);
+    let sheet_pr = match doc.child(root, "sheetPr") {
+        Some(p) => p,
+        None => {
+            if !above && !left {
+                return Ok(());
+            }
+            let p = detached(doc, &format!("{prefix}sheetPr"));
+            doc.insert(root, 0, p);
+            p
+        }
+    };
+    let pr = match doc.child(sheet_pr, "outlinePr") {
+        Some(p) => p,
+        None => {
+            if !above && !left {
+                return Ok(());
+            }
+            let e = detached(doc, &format!("{prefix}outlinePr"));
+            let at = usize::from(doc.child(sheet_pr, "tabColor").is_some());
+            doc.insert(sheet_pr, at, e);
+            e
+        }
+    };
+    for (name, off) in [("summaryBelow", above), ("summaryRight", left)] {
+        if off {
+            doc.set_attr(pr, name, "0");
+        } else {
+            doc.remove_attr(pr, name);
+        }
     }
     Ok(())
 }

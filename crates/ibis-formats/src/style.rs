@@ -141,8 +141,8 @@ impl RunProps {
                 "hlinkClick" => {
                     self.underline = Some(true);
                     let keeps_color = n.descendants().any(|d| d.tag_name().name() == "hlinkClr" && attr(d, "val") == Some("tx"));
-                    if !keeps_color && let Some(rgb) = colors.scheme("hlink") {
-                        self.color = Some(Color::opaque(rgb));
+                    if !keeps_color && let Some(c) = colors.named_ref("hlink") {
+                        self.color = Some(c);
                     }
                 }
                 // A Latin typeface that names the theme's East Asian font, which the theme leaves empty, is the theme's Japanese font (PowerPoint's

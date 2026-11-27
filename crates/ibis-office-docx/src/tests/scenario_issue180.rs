@@ -18,6 +18,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::issue180_stacked_pair_is_drawn_and_takes_room", stacked_pair_is_drawn_and_takes_room),
         ("docx::issue180_enclosed_character_is_on_the_baseline", enclosed_character_is_on_the_baseline),
         ("docx::issue180_combined_run_size_and_alignment", combined_run_size_and_alignment),
+        ("docx::issue180_enclosure_takes_the_fixed_width_typefaces_own_room", enclosure_takes_the_fixed_width_typefaces_own_room),
+        ("docx::issue180_fixed_width_typeface_room_ignores_what_this_machine_measured", fixed_width_typeface_room_ignores_what_this_machine_measured),
         ("docx::issue180_dump", dump),
     ]
 }
@@ -206,6 +208,55 @@ fn enclosed_character_is_on_the_baseline() {
             near(inner_item.3[0], x, 0.25, &format!("{name}: the character's x"));
         }
     }
+}
+
+/// An enclosure (□ or ○, 10.5 pt, the character inside it 7.5 pt) set in typeface `font` for every run of the paragraph "あいう" + the enclosure + AFTER.
+fn enclosed_in(font: &str, ring: &str) -> String {
+    let rf = format!(r#"<w:rFonts w:ascii="{font}" w:hAnsi="{font}" w:eastAsia="{font}" w:cs="{font}"/>"#);
+    let code = |text: &str, half_points: u32| format!(r#"<w:r><w:rPr>{rf}<w:sz w:val="{half_points}"/><w:szCs w:val="{half_points}"/></w:rPr><w:instrText xml:space="preserve">{text}</w:instrText></w:r>"#);
+    let plain = |text: &str| format!(r#"<w:r><w:rPr>{rf}</w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#);
+    format!(
+        r#"<w:p><w:pPr><w:jc w:val="left"/></w:pPr>{}<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> eq \o\ac(</w:instrText></w:r>{}<w:r><w:instrText xml:space="preserve">,</w:instrText></w:r>{}<w:r><w:instrText xml:space="preserve">)</w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>{}</w:p>"#,
+        plain("あいう"),
+        code(ring, 21),
+        code("か", 15),
+        plain(AFTER)
+    )
+}
+
+/// GitHub issue #180 (macOS only: D6b): the room an enclosure (EQ \o\ac) takes is the room its typeface gives the ring, and for ＭＳ 明朝 and ＭＳ ゴシック that is
+/// the advance their font files have (`font_metrics::ms_fixed_advance_em`: □ and ○ one em), as it is for the text beside them, whatever this machine draws the ring
+/// with. On a Mac that draws □ with another face (Times New Roman: 6.34 pt wide, and the ring was measured as half of the em when its typeface lacked the
+/// glyph) the text after it came 5.4 pt early. Reproduced with `scripts/make-mincho-without-square.py` and `IBIS_EXTRA_FONT_DIRS` (a MS Mincho found but with no □: the
+/// text after came at 108.75, the issue's number). Word's PDF: the character after □ starts 10.56 pt from its left edge (103.6 + 10.5 = 114.0).
+fn enclosure_takes_the_fixed_width_typefaces_own_room() {
+    // Typefaces whose name `fixed_width` knows: ＭＳ 明朝 where this machine has it and where it does not (a name this machine has no face for).
+    for (n, font) in ["ＭＳ 明朝", "ＭＳ ゴシック", "MS Mincho", "ＭＳ明朝"].into_iter().enumerate() {
+        for (m, ring) in ["□", "○"].into_iter().enumerate() {
+            let name = format!("d6x-{n}-{m}");
+            let t = texts(&pages_of(&make(&name, &enclosed_in(font, ring))));
+            near(start_x(&t, AFTER), 114.0, 0.25, &format!("{font} {ring}: the text after the enclosure"));
+        }
+    }
+}
+
+/// The mechanism behind the macOS-only D6b: a machine that draws ＭＳ 明朝 with another face measures □ and ○ as that face does (half an em where the face lacks
+/// the glyph: 5.25 pt at 10.5 pt, or Times New Roman's 6.34 pt), but the room of the fixed-width typefaces is what their font files give, one em for □ and ○.
+fn fixed_width_typeface_room_ignores_what_this_machine_measured() {
+    use super::flow_layout::typeface_room;
+    for font in ["ＭＳ 明朝", "ＭＳ ゴシック", "MS Mincho", "MS Gothic"] {
+        for ring in ['□', '○'] {
+            for measured in [5.25f32, 6.34, 10.5] {
+                near(typeface_room(Some(font), ring, 10.5, measured), 10.5, 0.001, &format!("{font} {ring} measured {measured}"));
+            }
+        }
+        // A half-width character stays half an em, a full-width kana one.
+        near(typeface_room(Some(font), 'A', 10.5, 6.0), 5.25, 0.001, &format!("{font} A"));
+        near(typeface_room(Some(font), 'か', 7.5, 3.0), 7.5, 0.001, &format!("{font} か"));
+    }
+    // Any other typeface keeps what the machine measures.
+    near(typeface_room(Some("Arial"), '□', 10.5, 6.34), 6.34, 0.001, "Arial □");
+    near(typeface_room(None, '□', 10.5, 6.34), 6.34, 0.001, "no typeface □");
 }
 
 fn combined(round: bool, text: &str) -> String {

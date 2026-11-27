@@ -6,8 +6,7 @@
 //! functions this engine has, by name: every name of the list has a
 //! calculation unless the entry says it is out of scope (the user's decision
 //! of 2026-10-07: cube, add-in, web and service functions), and what the
-//! engine has beyond the list is only what it needs inside (`SINGLE`,
-//! `ANCHORARRAY`, `ECMA.CEILING`, …).
+//! engine has beyond the list includes internal and ibisOffice-specific functions.
 use std::collections::BTreeSet;
 
 fn official() -> (BTreeSet<String>, BTreeSet<String>) {
@@ -40,11 +39,11 @@ fn every_function_of_the_official_list_has_a_calculation_unless_it_is_out_of_sco
 }
 
 #[test]
-fn what_the_engine_has_beyond_the_list_is_what_it_uses_inside() {
+fn functions_beyond_the_official_list_are_explicitly_allowed() {
     let (all, _) = official();
     let beyond: BTreeSet<String> = ibis_calc::functions::implemented().into_iter().map(str::to_string).filter(|n| !all.contains(n)).collect();
     println!("beyond the list: {beyond:?}");
-    let allowed: BTreeSet<&str> = ["ANCHORARRAY", "SINGLE", "ECMA.CEILING", "FIELDVALUE", "PY", "COPILOT", "DATESTRING", "NUMBERSTRING"].into_iter().collect();
+    let allowed: BTreeSet<&str> = ["ANCHORARRAY", "SINGLE", "ECMA.CEILING", "FIELDVALUE", "PY", "COPILOT", "DATESTRING", "NUMBERSTRING", "IBIS.FIELDMATCH", "IBIS.RECORDMATCH"].into_iter().collect();
     let unexpected: Vec<&String> = beyond.iter().filter(|n| !allowed.contains(n.as_str())).collect();
     assert!(unexpected.is_empty(), "{unexpected:?}");
 }

@@ -33,11 +33,18 @@ impl Swatch {
     /// A square that picks `rgb` through `pick`; `id` is its item's.
     pub fn with_id(id: &'static str, rgb: Rgb, label: impl Into<SharedString>, checked: bool, pick: &PickColor) -> Self {
         let pick = pick.clone();
-        Self { rgb, item: MenuItem::new(id, label).checked(checked).on(move |e, w, cx| { pick(e, Some(rgb), w, cx) }) }
+        Self { rgb, item: MenuItem::new(id, label).checked(checked).on(move |e, w, cx| { e.theme_pick = None; pick(e, Some(rgb), w, cx) }) }
     }
 
     pub fn new(rgb: Rgb, label: impl Into<SharedString>, checked: bool, pick: &PickColor) -> Self {
         Self::with_id("color.swatch", rgb, label, checked, pick)
+    }
+
+    /// A square of the theme's rows: picking it hands the editor the theme reference too (see `SlideEditor::picked_color`), so a
+    /// format that can follow the theme keeps the reference instead of the colour (#159). `rgb` is what the reference works out to.
+    pub fn themed(rgb: Rgb, theme: ibis_doc_model::ThemeRef, label: impl Into<SharedString>, checked: bool, pick: &PickColor) -> Self {
+        let pick = pick.clone();
+        Self { rgb, item: MenuItem::new("color.swatch", label).checked(checked).on(move |e, w, cx| { e.theme_pick = Some(theme); pick(e, Some(rgb), w, cx) }) }
     }
 }
 
@@ -105,9 +112,9 @@ fn row(swatches: Vec<Swatch>, editor: &WeakEntity<SlideEditor>, id: &'static str
                     .ok();
             })
             .child(canvas(|_,_,_|(),move|bounds,_,_,_|{
-                #[cfg(not(all(feature="scenarios",any(target_os="macos",target_os="linux"))))]
+                #[cfg(not(all(feature="scenarios",any(target_os="macos",target_os="linux",windows))))]
                 let _=bounds;
-                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
                 crate::scenario::button_probe::record_bounds(&format!("{id}-{i}"),bounds);
             }).absolute().inset_0())
     }))
@@ -198,6 +205,9 @@ const THEME_NAME_IDS: [&str; 10] = ["color.theme.bg1", "color.theme.text1", "col
 /// The palette's rows of the theme's `colors` (background 1, text 1, background 2, text 2, accents 1 to 6):
 /// row 0 the colours, the next rows each colour with its tint. `current` is marked.
 pub fn theme_rows(colors: &[Rgb; 10], pick: &PickColor, current: Option<Rgb>) -> Vec<Vec<Swatch>> {
+    // The scheme the references are worked out under (the palette's order: lt1, dk1, lt2, dk2, accent 1 to 6) and the slot of each column.
+    let scheme: Vec<(String, Rgb)> = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6"].iter().zip(colors).map(|(n, c)| (n.to_string(), *c)).collect();
+    let slots = ["bg1", "tx1", "bg2", "tx2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6"];
     (0..6)
         .map(|row| {
             (0..10)
@@ -210,7 +220,14 @@ pub fn theme_rows(colors: &[Rgb; 10], pick: &PickColor, current: Option<Rgb>) ->
                         t if t > 0 => crate::i18n::format("color.theme.lighter", &[("name", &name), ("n", &(t / 10_000))]),
                         t => crate::i18n::format("color.theme.darker", &[("name", &name), ("n", &(-t / 10_000))]),
                     };
-                    Swatch::new(rgb, label, current == Some(rgb), pick)
+                    // Office's rows are `lumMod`/`lumOff` of the colour (brightness = the tint).
+                    let themed = ibis_doc_model::ThemeSlot::from_name(slots[column])
+                        .and_then(|slot| ibis_doc_model::ThemeRef::with_brightness(slot, tint as f32 / 1_000_000.0))
+                        .and_then(|t| t.resolve(&scheme).and_then(|c| c.theme.map(|t| (c.rgb, t))));
+                    match themed {
+                        Some((resolved, theme)) => Swatch::themed(resolved, theme, label, current == Some(rgb) || current == Some(resolved), pick),
+                        None => Swatch::new(rgb, label, current == Some(rgb), pick),
+                    }
                 })
                 .collect()
         })

@@ -15,6 +15,8 @@ pub(crate) enum QOp {
     PromoteHeaders,
     DemoteHeaders,
     ChangeType,
+    /// 型の変更 > ロケールを使用…: the type and the locale (`Table.TransformColumnTypes(..., culture)`).
+    ChangeTypeLocale,
     SelectColumns,
     RemoveColumns,
     Rename,
@@ -71,6 +73,7 @@ pub(crate) const TABS: [(&str, &[QOp]); 4] = [
             QOp::PromoteHeaders,
             QOp::DemoteHeaders,
             QOp::ChangeType,
+            QOp::ChangeTypeLocale,
             QOp::SelectColumns,
             QOp::RemoveColumns,
             QOp::Rename,
@@ -155,7 +158,8 @@ pub(crate) const TYPES: [&str; 13] = [
     "query.type.datetimezone",
     "query.type.duration",
 ];
-pub(crate) const CULTURES: [&str; 6] = ["query.culture.invariant", "query.culture.en-us", "query.culture.ja-jp", "query.culture.de-de", "query.culture.fr-fr", "query.culture.zh-cn"];
+/// The locales of 型の変更 > ロケールを使用… (`Culture::LOCALES`, in this order).
+pub(crate) const LOCALES: [&str; 7] = ["query.culture.ja-jp", "query.culture.en-us", "query.culture.zh-cn", "query.culture.de-de", "query.culture.fr-fr", "query.culture.en-gb", "query.culture.th-th"];
 pub(crate) const COMPARISONS: [&str; 14] = [
     "query.cmp.equals",
     "query.cmp.not-equals",
@@ -205,6 +209,7 @@ impl QOp {
             Self::PromoteHeaders => "promote",
             Self::DemoteHeaders => "demote",
             Self::ChangeType => "change-type",
+            Self::ChangeTypeLocale => "change-type-locale",
             Self::SelectColumns => "select-columns",
             Self::RemoveColumns => "remove-columns",
             Self::Rename => "rename",
@@ -256,7 +261,8 @@ impl QOp {
     pub(crate) fn fields(self) -> Vec<Field> {
         match self {
             Self::PromoteHeaders | Self::DemoteHeaders | Self::RemoveBlankRows | Self::Transpose | Self::Reverse | Self::FilterCode | Self::SplitCode | Self::MissingField | Self::GroupLocal | Self::MCode => vec![],
-            Self::ChangeType => vec![text("column"), choice("type", &TYPES), choice("culture", &CULTURES)],
+            Self::ChangeType => vec![text("column"), choice("type", &TYPES)],
+            Self::ChangeTypeLocale => vec![text("column"), choice("type", &TYPES), choice("culture", &LOCALES)],
             Self::SelectColumns | Self::RemoveColumns | Self::Reorder | Self::RemoveDuplicates | Self::RemoveErrors | Self::FillDown | Self::FillUp | Self::Trim | Self::Upper | Self::Lower => vec![text("columns")],
             Self::Rename => vec![text("from"), text("to")],
             // The second comparison is optional (an empty column leaves it out); `logic` joins the two.
@@ -342,7 +348,8 @@ pub(crate) fn build(op: QOp, v: &Values) -> Result<Step, String> {
     Ok(match op {
         QOp::PromoteHeaders => Step::PromoteHeaders,
         QOp::DemoteHeaders => Step::DemoteHeaders,
-        QOp::ChangeType => Step::ChangeType { column: need(v, "column", "column")?, ty: QType::ALL[index(v, "type").min(QType::ALL.len() - 1)], culture: Culture::ALL[index(v, "culture").min(Culture::ALL.len() - 1)], apart: false },
+        QOp::ChangeType => Step::ChangeType { column: need(v, "column", "column")?, ty: QType::ALL[index(v, "type").min(QType::ALL.len() - 1)], culture: Culture::Invariant, apart: false },
+        QOp::ChangeTypeLocale => Step::ChangeType { column: need(v, "column", "column")?, ty: QType::ALL[index(v, "type").min(QType::ALL.len() - 1)], culture: Culture::LOCALES[index(v, "culture").min(Culture::LOCALES.len() - 1)], apart: false },
         QOp::SelectColumns => Step::SelectColumns(columns("columns")?),
         QOp::RemoveColumns => Step::RemoveColumns(columns("columns")?),
         QOp::Rename => {
@@ -529,8 +536,12 @@ pub(crate) fn values_of(step: &Step) -> (QOp, Values) {
         Step::ChangeType { column, ty, culture, .. } => {
             set("column", column.clone());
             set("type", position(&QType::ALL, *ty));
-            set("culture", position(&Culture::ALL, *culture));
-            QOp::ChangeType
+            if *culture == Culture::Invariant {
+                QOp::ChangeType
+            } else {
+                set("culture", position(&Culture::LOCALES, *culture));
+                QOp::ChangeTypeLocale
+            }
         }
         Step::SelectColumns(c) => {
             set("columns", join(c));
@@ -818,6 +829,9 @@ pub(crate) fn defaults(op: QOp, selected: &[String], table: &QTable) -> Values {
             ("start", _) => "0".into(),
             ("step", _) => "1".into(),
             ("name1", _) => "Count".into(),
+            // 型の変更 > ロケールを使用…: a number, read in the locale of the screen's language (the first listed is ja-JP).
+            ("type", _) if op == QOp::ChangeTypeLocale => position(&QType::ALL, QType::Decimal),
+            ("culture", _) => position(&Culture::LOCALES, if crate::shell::i18n::language() == crate::shell::i18n::Language::English { Culture::EnglishUs } else { Culture::Japanese }),
             (_, Kind::Choice(_)) => "0".into(),
             (_, Kind::Flag) => "0".into(),
             _ => String::new(),
@@ -859,7 +873,7 @@ mod tests {
                 seen += 1;
             }
         }
-        assert_eq!(seen, 42);
+        assert_eq!(seen, 43);
         assert!(matches!(build(QOp::SelectColumns, &defaults(QOp::SelectColumns, &[], &table)), Err(e) if e == "columns"));
         // Several columns are renamed in one step, the old and the new names in the same order; a different number is refused.
         let mut rename = defaults(QOp::Rename, &selected, &table);

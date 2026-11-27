@@ -188,7 +188,7 @@ pub(crate) fn corpus_report_xlsx_x2b_header_footer_line_breaks() {
 pub(crate) fn corpus_report_xlsx_x2c_page_numbers_across_sheets() {
     let exe = std::env::current_exe().unwrap();
     let app = exe.parent().and_then(|d| d.parent()).map(|d| d.join("ibisOffice")).filter(|p| p.exists()).expect("target/<profile>/ibisOffice（cargo test がテストと一緒に作る）");
-    let out = crate::shell::scenario::repo_root().join("target/scenario/xlsx::corpus_report_xlsx_x2c_page_numbers_across_sheets");
+    let out = crate::shell::scenario::scenario_dir("xlsx::corpus_report_xlsx_x2c_page_numbers_across_sheets");
     std::fs::create_dir_all(&out).unwrap();
     let file = crate::shell::scenario::repo_root().join(DIR).join("page-numbers-across-sheets.xlsx");
     let status = std::process::Command::new(&app).arg("--export").arg("pdf").arg("--out-dir").arg(&out).arg(&file).status().expect("ibisOffice を起動できる");
@@ -425,7 +425,7 @@ fn export_pdf(file: &str, label: &str) -> PathBuf {
         color: Default::default(),
         handout: None,
         frame: false,
-        handout_landscape: false,
+        handout_landscape: false, paper: None, fit_paper: true,
         notes_pages: false,
         outline_pages: false,
         notes_source: None,
@@ -1141,12 +1141,13 @@ pub(crate) fn corpus_report_xlsx_vertical_text_wraps_into_columns() {
     assert_eq!(printed.chars().count(), 10, "縦書きの 10 字のうち出る字：「{printed}」（残りは切れて出ない）");
 }
 
-/// The shade (0 black to 255 white) at the point (`x_pt`, the middle of the text line `key`) of page 1 of the file.
+/// The shade (0 black to 255 white) at the point (`x_pt`, the vertical middle of the text line `key`) of page 1 of the file. The middle, not the line's top edge:
+/// where the top edge of the text box lies against the top of a filled cell depends on the font's metrics (a few tenths of a point on a Mac, 3 pt above it was white).
 fn shade_right_of(file: &str, label: &str, key: &str, x_pt: f32) -> u8 {
     let pdf = export_pdf(file, label);
     let pages = pdf_pages(&pdf);
     let line = pages[0].iter().find(|l| l.compact().starts_with(key)).unwrap_or_else(|| panic!("{key} の行"));
-    raster(&pdf, 1, 100).gray_at(x_pt, line.y0 - 3.0)
+    raster(&pdf, 1, 100).gray_at(x_pt, (line.y0 + line.y1) / 2.0)
 }
 
 /// xlsx-C022-b1 行の書式（`<row s="1" customFormat="1">`）を読まず、行の中でセルの無い列に塗りと罫線を引かない。見出しの帯が先頭のセルの幅で止まる。

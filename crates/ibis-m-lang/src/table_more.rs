@@ -208,7 +208,7 @@ pub fn register(l: &mut HashMap<&'static str, Value>) {
             let Some(Value::Type(ts)) = s.get(1) else { return Err(MError::expr("A type change needs a type.")) };
             types[i] = ts.clone();
             for r in &mut rows {
-                r[i] = convert_value(&r[i], ts, c);
+                r[i] = convert_value(&r[i], ts, c, it.utc_offset());
             }
         }
         Ok(make(t.columns.clone(), types, rows))

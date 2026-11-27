@@ -521,6 +521,41 @@ This document lists all features implemented in ibisOffice across Word (.docx), 
 | 509 | docx: Remove an entry from the recent files list with the ... menu | Completed |
 | 510 | docx: Color picker dialog (hue wheel) | Completed |
 | 511 | docx: Number field up/down arrows that keep the unit | Completed |
+| 512 | docx: Color scheme "Office" (Microsoft 365 defaults), Office 2013 - 2022 color schemes, and palettes that follow the file's theme | Completed |
+| 513 | docx: MCP versioned reads and expanded editing tools (revision, state, expected_revision) | Completed |
+| 514 | docx: Review > Check for leftover personal information (removes notes, comments and hidden content) | Completed |
+| 515 | docx: Touch screens: one finger selects, two fingers scroll, with inertia and edge bounce | Completed |
+| 516 | docx: Touch screens: long press opens the right-click menu | Completed |
+| 517 | docx: Toolbar above the soft keyboard (buttons by the place being edited) | Completed |
+| 518 | docx: In a narrow touch window, the menu bar and toolbar go to the bottom | Completed |
+| 519 | docx: Japanese marked text and emoji input with the iOS soft keyboard | Completed |
+| 520 | docx: Page numbers with chapter numbers and the list of headings | Completed |
+| 521 | docx: Choose East Asian and Latin typefaces in the style dialog (with theme fonts) | Completed |
+| 522 | docx: Footnotes in vertical text (beneath the text, kanji numbers, line grid) | Completed |
+| 523 | docx: Word count that follows Microsoft Word (line breaks, empty paragraphs, words, notes, text boxes) | Completed |
+| 524 | docx: Manuscript paper settings (grid cells, underline, outer frame, line color) | Completed |
+| 525 | docx: View > Gridlines follow the text direction (horizontal and vertical), and the gutter of a vertical page | Completed |
+| 526 | docx: Form input pane (fill tagged fields at once, read and write CSV and YAML) | Completed |
+| 527 | docx: Caret movement, Backspace and Delete treat an emoji sequence (family, flag, skin tone, keycap) as one | Completed |
+| 528 | docx: No new page after a page break in the last paragraph | Completed |
+| 529 | docx: Cell lines and vertical alignment of a table row divided at a page end | Partial |
+| 530 | docx: Line height of ruby and emphasis marks on ruby bases | Partial |
+| 531 | docx: Line height of boxed characters and underline position by typeface | Partial |
+| 532 | docx: Punctuation squeeze in lines beside a figure | Partial |
+| 533 | docx: Punctuation squeeze in justified text with compatibility mode 14 | Partial |
+| 534 | docx: Line length and character positions on the character grid (linesAndChars, snapToChars) | Partial |
+| 535 | docx: Advance widths of spaces (U+2000 to U+200A and others), Latin letters and symbols from the typeface tables | Partial |
+| 536 | docx: Read and place SmartArt in a document from its drawing part | Partial |
+| 537 | docx: OpenDocument Text (.odt) import (headers, footers, tab stops, sections, text position, shapes) | Partial |
+| 538 | docx: Read-only preview of Ichitaro (.jtd) and conversion to docx | Partial |
+| 539 | docx: DocuWorks (.xdw, .xbd) reading | Partial |
+| 540 | docx: PlantUML in Markdown (plantuml and puml code blocks are drawn as diagrams) | Completed |
+| 541 | docx: Export PDF, XPS and OFD to Markdown with page graphics, and keep EMF and WMF pictures | Completed |
+| 542 | docx: PDF display: axial and radial gradients and soft masks | Completed |
+| 543 | docx: Statute comparison tables and five-set bill drafts (from Lawtext and law XML), saving as Lawtext and standard law XML | Partial |
+| 544 | docx: MCP over HTTP (--mcp --http, ChatGPT through the Secure MCP Tunnel) | Completed |
+| 545 | docx: Web version: mincho stand-in typefaces for mincho and gothic stand-ins for gothic | Completed |
+| 546 | docx: Drawing speed (cached gradient bands, settings, text flow and menu bar widths) | Completed |
 
 ### xlsx
 
@@ -1472,6 +1507,33 @@ This document lists all features implemented in ibisOffice across Word (.docx), 
 | 944 | xlsx: Remove an entry from the recent files list with the ... menu | Completed |
 | 945 | xlsx: Color picker dialog (hue wheel) | Completed |
 | 946 | xlsx: Number field up/down arrows that keep the unit | Completed |
+| 947 | xlsx: Color scheme "Office" (Microsoft 365 defaults), Office 2013 - 2022 color schemes, and palettes that follow the file's theme | Completed |
+| 948 | xlsx: MCP versioned reads and expanded editing tools (revision, state, expected_revision) | Completed |
+| 949 | xlsx: Review > Check for leftover personal information (removes notes, comments and hidden content) | Completed |
+| 950 | xlsx: Touch screens: one finger selects, two fingers scroll, with inertia and edge bounce | Completed |
+| 951 | xlsx: Touch screens: long press opens the right-click menu | Completed |
+| 952 | xlsx: Toolbar above the soft keyboard (buttons by the place being edited) | Completed |
+| 953 | xlsx: In a narrow touch window, the menu bar and toolbar go to the bottom | Completed |
+| 954 | xlsx: Japanese marked text and emoji input with the iOS soft keyboard | Completed |
+| 955 | xlsx: Add rows to the bottom of a table (Tab in the bottom-right cell, resize handle, paste) | Completed |
+| 956 | xlsx: Grouping (outline): eight nested levels, saved collapsed state, summary row position and button sizes | Completed |
+| 957 | xlsx: List validation: ignore blank, keep the old value on a rejected entry, relative references over several cells | Completed |
+| 958 | xlsx: Hide formulas on a protected sheet (editing, copying and MCP) | Completed |
+| 959 | xlsx: Greyed Insert menu lines and column and row fitting with sheets selected together | Completed |
+| 960 | xlsx: Date entry: two-digit years (1930 to 2029) and month and year (10/2032) | Completed |
+| 961 | xlsx: Locale formats [$-locale] (ko-KR, ar-SA, th-TH and others) and Power Query dates and datetimezone | Completed |
+| 962 | xlsx: Regular expression functions (REGEXTEST, REGEXEXTRACT, REGEXREPLACE) with lookahead, lookbehind and backreferences | Completed |
+| 963 | xlsx: IBIS.FIELDMATCH and IBIS.RECORDMATCH (matching names, addresses, birth dates and numbers) | Completed |
+| 964 | xlsx: Limited grid (xlsx.grid.limited) | Completed |
+| 965 | xlsx: Import CSV, TSV, JSON, JSON Lines, Parquet, Arrow, Avro and SQLite as queries and refresh them | Completed |
+| 966 | xlsx: Drawing and printing of rotated text (Microsoft Excel's box, margins and baseline) | Partial |
+| 967 | xlsx: Print position of shapes and pictures (from the top-left to the bottom-right cell of a twoCellAnchor) | Partial |
+| 968 | xlsx: Cell editing that treats an emoji sequence as one | Completed |
+| 969 | xlsx: Formula bar at the bottom of the screen (mobile) | Completed |
+| 970 | xlsx: Reorder sheet tabs by long press (iOS) | Partial |
+| 971 | xlsx: OpenDocument Spreadsheet (.ods) import (groups, number formats, charts, shapes) | Partial |
+| 972 | xlsx: Open UKE and DPC receipt files as sheets | Partial |
+| 973 | xlsx: Drawing speed (cached sheet texts and headers) | Completed |
 
 ### pptx
 
@@ -1852,3 +1914,22 @@ This document lists all features implemented in ibisOffice across Word (.docx), 
 | 373 | pptx: Remove an entry from the recent files list with the ... menu | Completed |
 | 374 | pptx: Color picker dialog (hue wheel) | Completed |
 | 375 | pptx: Number field up/down arrows that keep the unit | Completed |
+| 376 | pptx: Color scheme "Office" (Microsoft 365 defaults), Office 2013 - 2022 color schemes, and palettes that follow the file's theme | Completed |
+| 377 | pptx: MCP versioned reads and expanded editing tools (revision, state, expected_revision) | Completed |
+| 378 | pptx: Review > Check for leftover personal information (removes notes, comments and hidden content) | Completed |
+| 379 | pptx: Touch screens: one finger selects, two fingers scroll, with inertia and edge bounce | Completed |
+| 380 | pptx: Touch screens: long press opens the right-click menu | Completed |
+| 381 | pptx: Toolbar above the soft keyboard (buttons by the place being edited) | Completed |
+| 382 | pptx: In a narrow touch window, the menu bar and toolbar go to the bottom | Completed |
+| 383 | pptx: Japanese marked text and emoji input with the iOS soft keyboard | Completed |
+| 384 | pptx: Grid and Guides dialog (spacing, snap to grid) and default shape, line and text box | Completed |
+| 385 | pptx: Handout paper choice (--print-paper), layout fitted to the paper, and black and white chart printing | Completed |
+| 386 | pptx: Transitions and animations matched to Microsoft PowerPoint recordings (crush, glitter, warp, zoom, page curl and others) | Partial |
+| 387 | pptx: Animations start after the slide transition | Completed |
+| 388 | pptx: Text, fill and hyperlink colors keep their theme reference | Completed |
+| 389 | pptx: MCP tools for grouping, copying and aligning shapes | Completed |
+| 390 | pptx: Slide show Ctrl keys (pen, laser, grid, zoom) on Windows | Completed |
+| 391 | pptx: Shortcuts for copying and pasting text format (Alt+Ctrl+C, Alt+Ctrl+V) | Completed |
+| 392 | pptx: Hide the slide list in a narrow window and round the slide show button | Completed |
+| 393 | pptx: OpenDocument Presentation (.odp) import (3-D pie chart, page links, line spacing, tab stops) | Partial |
+| 394 | pptx: Web page export draws charts and SmartArt as pictures | Completed |

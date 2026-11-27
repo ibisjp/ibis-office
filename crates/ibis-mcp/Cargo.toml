@@ -13,3 +13,5 @@ path = "src/main.rs"
 [dependencies]
 ibis-doc-service.workspace = true
 serde_json = "1"
+# The HTTP transport (`--http <port>`, GitHub issue #231): a small blocking HTTP/1.1 server (MIT OR Apache-2.0; no TLS: it listens on 127.0.0.1 only and the Secure MCP Tunnel carries the HTTPS).
+tiny_http = { version = "0.12", default-features = false }

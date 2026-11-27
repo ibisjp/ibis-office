@@ -80,9 +80,14 @@ fn cell_to_value(c: &CellValue, ty: QType) -> Value {
         CellValue::Error(_) => Value::Failed(Rc::new(ibis_m_lang::MError::expr("An error value of the cell."))),
         CellValue::Number(n) => match ty {
             QType::Date => Value::Date(epoch() + n.floor() as i64),
-            QType::DateTime | QType::DateTimeZone => {
+            QType::DateTime => {
                 let day = n.floor();
                 Value::DateTime(epoch() + day as i64, seconds(n - day))
+            }
+            // A cell has no zone: a datetimezone column is read as local time (the offset of the clock the app gave).
+            QType::DateTimeZone => {
+                let day = n.floor();
+                Value::DateTimeZone(epoch() + day as i64, seconds(n - day), ibis_calc::eval::convert::local_utc_offset_minutes().unwrap_or(0))
             }
             QType::Time => Value::Time(seconds(n - n.floor())),
             QType::Duration => Value::Duration(seconds(*n)),
@@ -106,6 +111,10 @@ fn value_to_cell(v: &Value) -> Result<CellValue, String> {
         Value::Text(s) => CellValue::Text(s.to_string()),
         Value::Date(d) => CellValue::Number((*d - epoch()) as f64),
         Value::DateTime(d, s) => CellValue::Number((*d - epoch()) as f64 + s / 86400.0),
+        // A cell has no zone: the number is the clock time as written, the offset is dropped (not taken off, not turned into the local time):
+        // Excel put 13:05:09+00:00 in the cell as 13:05:09 (`tasks/doc/requests/2026-11-20-k0039-locales-result.md`, section 6). A column that
+        // went through `DateTimeZone.ToLocal` is already the local clock time.
+        Value::DateTimeZone(d, s, _) => CellValue::Number((*d - epoch()) as f64 + s / 86400.0),
         Value::Time(s) => CellValue::Number(s / 86400.0),
         Value::Duration(s) => CellValue::Number(s / 86400.0),
         Value::Failed(_) => CellValue::Error(CellError::Value),
@@ -263,6 +272,9 @@ impl Host for QueryHost {
 fn interp() -> Interp {
     let it = Interp::new();
     it.set_host(Rc::new(QueryHost));
+    if let Some(minutes) = ibis_calc::eval::convert::local_utc_offset_minutes() {
+        it.set_utc_offset(minutes);
+    }
     if let Some(serial) = ibis_calc::eval::convert::now_serial(false) {
         let day = serial.floor();
         it.set_now(epoch() + day as i64, seconds(serial - day));

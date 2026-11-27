@@ -258,6 +258,9 @@ pub struct Marker {
     /// Points.
     pub size: u32,
     pub fill: Fill,
+    /// The line round the marker's shape. A file's marker has none in this model (the markers are drawn by their fill); the pure black and white print gives a
+    /// marker without an outline of its own a thin black one (`tasks/doc/requests/2026-11-20-225-chart-print-result.md`).
+    pub edge: Option<Stroke>,
 }
 
 /// Trendline type for a series (`c:trendlineType`).
@@ -477,6 +480,11 @@ pub struct Series {
     pub bubble_sizes: Vec<Option<Number>>,
     /// A bubble series drawn as spheres (`c:bubble3D`).
     pub bubble_3d: bool,
+    /// The series has formatting stated (a `c:spPr`); a series without any is drawn in the chart style's automatic colours, and PowerPoint's pure black and white
+    /// print draws it black, white, then striped (`tasks/doc/requests/2026-11-20-225-chart-print-result.md`).
+    pub has_format: bool,
+    /// The series' `c:spPr` has an outline element (`a:ln`, whatever it says); the pure black and white print gives a filled series without one a thin black edge.
+    pub has_outline: bool,
 }
 
 /// Series of one chart type drawn against one pair of axes.

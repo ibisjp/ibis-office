@@ -16,6 +16,7 @@ pub mod eval;
 pub mod formula;
 pub mod functions;
 pub mod input;
+pub mod japanese_date;
 pub mod numfmt;
 pub mod random;
 pub mod recalc;

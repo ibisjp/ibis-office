@@ -9,11 +9,11 @@ use super::{
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::*;
 
-#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
 thread_local! { pub static CAPTURE_URLS:std::cell::RefCell<Option<Vec<String>>>=const {std::cell::RefCell::new(None)}; }
 
 pub fn open_external_url(url: &str, cx: &mut App) {
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     if CAPTURE_URLS.with(|slot| {
         let mut s = slot.borrow_mut();
         if let Some(v) = s.as_mut() {

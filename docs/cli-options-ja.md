@@ -72,7 +72,7 @@ ibisOffice --read-only report.docx
 
 | オプション | 引数 | 説明 |
 |---|---|---|
-| `--export` | `<format>` | エクスポート形式を指定します（必須）。<br>・`pdf`: ベクターグラフィックスと埋め込みフォントを含む高品質 PDF<br>・`png`: 各ページ/スライドを PNG 画像として連番出力<br>・`pdf-image`: ページを画像化して埋め込んだ PDF<br>・`ui`: エディタの UI 画面のスナップショット |
+| `--export` | `<format>` | エクスポート形式を指定します（必須）。<br>・`pdf`: ベクターグラフィックスと埋め込みフォントを含む高品質 PDF<br>・`png`: 各ページ/スライドを PNG 画像として連番出力<br>・`pdf-image`: ページを画像化して埋め込んだ PDF<br>・`html`: 文書を 1 つの HTML ページ（グラフと SmartArt は画像）として `--out-dir` に `<名前>.html` で書き出す。表計算の場合は `--range` の最初の番号でシートを選ぶ<br>・`md`（`markdown` も可）: Markdown を `<名前>.md` で書き出す。DOCX・XLSX・PPTX・PDF・XPS・OFD・Markdown・法令 XML・Lawtext のファイルを受け付ける（[固定レイアウト文書を Markdown に書き出す](#固定レイアウト文書を-markdown-に書き出す)を参照）<br>・`txt`（`text` も可）: PDF・XPS・OFD の文字だけを `<名前>.txt` で書き出す（同じ節を参照）<br>・`lawxml`: 法令 XML を `<名前>.xml` で書き出す。入力は `md` と同じ<br>・`lawtext`: Lawtext を `<名前>.lawtext` で書き出す。入力は `md` と同じ<br>・`ui`: エディタの UI 画面のスナップショット |
 | `--out-dir` | `<dir>` | 出力先ディレクトリを指定します（デフォルト: カレントディレクトリ `.`）。ディレクトリが存在しない場合は自動作成されます。 |
 | `--width` | `<px>` | PNG エクスポート時の画像の横幅ピクセル数を指定します（デフォルト: `1920`）。アスペクト比は自動維持されます。 |
 | `--range` | `<range>` | 出力するスライドまたはページの範囲を指定します（例: `1`, `1,3-5`, `2-`）。省略時は全ページ/全スライドが出力されます。以前の名前 `--slides` も使えますが、警告が出ます。 |
@@ -121,6 +121,8 @@ ibisOffice --export pdf --print-backgrounds --no-print-markup report.docx
 | `--handout-landscape` | （なし） | 配布資料の用紙の向きを「横向き（ランドスケープ）」にします。 |
 | `--handout-order` | `horizontal` \| `vertical` | 配布資料のスライドの並び順（デフォルト: `horizontal`。PowerPoint と同じ）。`horizontal` は横に並べてから次の行へ、`vertical` は縦に並べてから次の列へ進みます（1 ページ 4・6・9 枚の場合）。 |
 | `--print-frame` | （なし） | 各スライドの外周に細い枠線を付けて出力します（「スライドに枠を付けて印刷」）。 |
+| `--print-paper <a3|a4|a5|b4|b5|letter|legal|tabloid|幅x高さmm>` | スライドの大きさ | 各ページをこの用紙に載せます（スライドは縦横から用紙の向きが決まり、ノート・縦の配布資料は縦）。用紙に合わせて拡大縮小し、中央に置きます（余白なし）。 |
+| `--no-print-fit-paper` | 用紙に合わせる | `--print-paper` と使います。用紙に合わせず 100% で中央に置きます（はみ出す分は切れます）。 |
 | `--notes-pages` | （なし） | スライド画像の下に発表者ノートを配置した「ノート ページ」形式で出力します。 |
 | `--outline-pages` | （なし） | スライド内のテキスト階層のみを箇条書きで並べた「アウトライン」形式で出力します。 |
 
@@ -231,4 +233,24 @@ ibisOffice --export pdf --handout 2 --print-color bw --print-frame \
   --handout-header "2026年10月度 経営戦略会議" \
   --handout-footer "アイビス株式会社 機密" \
   --handout-number --out-dir handouts/ strategy.pptx
+```
+
+## 固定レイアウト文書を Markdown に書き出す
+
+```sh
+ibisOffice --export md --out-dir ./out input.pdf
+```
+
+PDF・XPS（OXPS を含む）・OFD の抽出可能な本文をページ順に書き出します。パスワードなしで開ける暗号化 PDF（所有者が印刷・複写だけを制限したもの。Standard セキュリティハンドラの RC4・AES-128・AES-256）は復号して読みます。利用者パスワードが必要な PDF はその旨を報告します。行の順序は文字の位置から推定します。ビューアで復号できた図形・画像は、ページ上の配置を持つ SVG として本文に添えます。画像だけのページは OCR を行いません。段落や表の意味構造、署名、原本と同じ組版の復元には別の処理が必要です。DOCX の EMF/WMF は Markdown 内に元の画像データを保持します。一般のブラウザーでの EMF/WMF 表示は閲覧環境に依存します。
+
+表の列位置を保つには `--text-layout physical` を付けます。各ページの本文を ```` ```text ```` ブロックに入れ、文字を紙面上の位置に応じた桁に置きます（半角 1 桁・全角 2 桁、`pdftotext -layout` 相当）。Markdown のエスケープはしません。既定の `--text-layout reading` は、各行を語の間を空白 1 つで区切った Markdown として書き出します。
+
+```sh
+ibisOffice --export md --text-layout physical --out-dir ./out input.pdf
+```
+
+本文だけが要るときは `--export txt` を使います。各ページの行をそのまま書き、ページの終わりに改ページ文字（form feed、`pdftotext` と同じ）を置きます。Markdown のエスケープも図形も付けません。描画や画像の展開をしないので `--export md` より速く終わります。`--text-layout physical` も使えます。
+
+```sh
+ibisOffice --export txt --text-layout physical --out-dir ./out input.pdf
 ```

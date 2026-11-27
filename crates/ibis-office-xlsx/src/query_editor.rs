@@ -70,6 +70,14 @@ pub(crate) struct QueriesPanel {
     pub(crate) ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+pub(crate) struct ParquetSelection {
+    folder: Option<std::path::PathBuf>,
+    paths: Vec<std::path::PathBuf>,
+    columns: Vec<query::ParquetColumn>,
+    selected: Vec<bool>,
+}
+
 impl QueryEditor {
     /// The table shown.
     pub(crate) fn shown(&self) -> &QTable {
@@ -81,6 +89,23 @@ fn input(text: &str, placeholder: &str, window: &mut Window, cx: &mut Context<Sl
     let state = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder.to_string()));
     state.update(cx, |i, cx| i.set_value(text.to_string(), window, cx));
     state
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+#[derive(Clone, Copy)]
+pub(crate) enum SingleFileQuery {
+    JsonLines,
+    ArrowIpc,
+    Avro,
+    Delimited,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+pub(crate) struct RecordSourceSelection {
+    path: std::path::PathBuf,
+    choices: Vec<(String, Source)>,
+    title: &'static str,
+    selected: usize,
 }
 
 #[ibis_office_macros::editor_ext(QueryEditorExt)]
@@ -130,6 +155,357 @@ impl SlideEditor {
         self.open_query_editor(query, window, cx);
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) fn pick_parquet_query(&mut self, folder: bool, existing: Option<Query>, refresh: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let picked = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: !folder, directories: folder, extensions: if folder { Vec::new() } else { vec!["parquet".into()] },
+            multiple: !folder, prompt: Some(crate::shell::i18n::text(if folder { "xlsx.query-from-parquet-folder" } else { "query.parquet-pick-files" })),
+        });
+        let document_id = self.file_id;
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(mut paths))) = picked.await else { return };
+            if paths.is_empty() {
+                return;
+            }
+            paths.sort_by(|left, right| left.file_name().cmp(&right.file_name()).then(left.cmp(right)));
+            let folder = folder.then(|| paths[0].clone());
+            if existing.is_some() {
+                this.update_in(cx, |this, window, cx| {
+                    if this.file_id != document_id {
+                        return;
+                    }
+                    let columns = match existing.as_ref().map(|q| &q.source) {
+                        Some(Source::Parquet { columns, .. } | Source::ParquetFolder { columns, .. }) => columns.clone(),
+                        _ => return,
+                    };
+                    this.read_parquet_query(paths, folder, columns, existing, refresh, window, cx);
+                }).ok();
+                return;
+            }
+            let schema = cx.background_executor().spawn({
+                let paths = paths.clone();
+                let folder = folder.clone();
+                async move {
+                    let files = match folder {
+                        Some(root) => query::parquet_folder_files(&root)?,
+                        None => paths,
+                    };
+                    let columns = query::parquet_files_columns(&files)?;
+                    Ok::<_, String>((files, columns))
+                }
+            }).await;
+            this.update_in(cx, |this, _, cx| {
+                if this.file_id != document_id {
+                    return;
+                }
+                match schema {
+                    Ok((files, columns)) => this.choose_parquet_columns(files, folder, columns, cx),
+                    Err(error) => this.set_status(error, cx),
+                }
+            }).ok();
+        }).detach();
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    fn choose_parquet_columns(&mut self, paths: Vec<std::path::PathBuf>, folder: Option<std::path::PathBuf>, columns: Vec<query::ParquetColumn>, cx: &mut Context<Self>) {
+        let selected = columns.iter().map(|column| column.ty.is_some()).collect();
+        let state = self.wb_mut();
+        state.close_settings();
+        state.panels.parquet_selection = Some(ParquetSelection { paths, folder, columns, selected });
+        self.sidebar_open = true;
+        cx.notify();
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) fn parquet_columns_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        use gpui_kit::component::checkbox::Checkbox;
+        let p = self.sheet_state()?.panels.parquet_selection.as_ref()?;
+        let text = crate::shell::i18n::text;
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        if p.paths.len() > 1 {
+            body = body.child(crate::shell::i18n::format("query.parquet-file-count", &[("count", &p.paths.len())]));
+        }
+        for (index, column) in p.columns.iter().enumerate() {
+            let kind = column.ty
+                .and_then(|ty| query::QType::ALL.iter().position(|&candidate| candidate == ty))
+                .map(|index| text(query_ops::TYPES[index]))
+                .unwrap_or_else(|| text("query.parquet-unsupported"));
+            let label = format!("{}  ·  {kind}", column.name);
+            if column.ty.is_some() {
+                body = body.child(Checkbox::new(("parquet-column", index))
+                    .label(label)
+                    .checked(p.selected[index])
+                    .on_change(cx.listener(move |this, checked, _, cx| {
+                        if let Some(p) = this.wb_mut().panels.parquet_selection.as_mut() {
+                            p.selected[index] = *checked;
+                            cx.notify();
+                        }
+                    })));
+            } else {
+                body = body.child(div().child(label));
+            }
+        }
+        let has_selection = p.selected.iter().any(|checked| *checked);
+        if !has_selection {
+            body = body.child(text("query.parquet-select-column"));
+        }
+        let actions = crate::shell::chrome::action_bar().action(
+            crate::shell::chrome::ActionDefinition::new("parquet-columns-cancel", "", crate::shell::chrome::ActionButtonKind::Normal)
+                .label(text("_shell.close"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.wb_mut().panels.parquet_selection = None;
+                    cx.notify();
+                }))
+        );
+        let actions = if has_selection {
+            actions.action(crate::shell::chrome::ActionDefinition::new("parquet-columns-load", "", crate::shell::chrome::ActionButtonKind::Primary)
+                .label(text("_xlsx.load"))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    let Some(p) = this.wb_mut().panels.parquet_selection.take() else { return };
+                    let columns = p.columns.into_iter().zip(p.selected)
+                        .filter(|(_, checked)| *checked)
+                        .map(|(column, _)| column.name)
+                        .collect();
+                    this.read_parquet_query(p.paths, p.folder, columns, None, false, window, cx);
+                    cx.notify();
+                })))
+        } else {
+            actions
+        };
+        Some(SidebarPanel::with_footer(text("query.parquet-columns"), body.into_any_element(), actions))
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) fn pick_single_file_query(&mut self, format: SingleFileQuery, existing: Option<Query>, refresh: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let extensions: &[&str] = match format {
+            SingleFileQuery::JsonLines => &["jsonl", "ndjson"],
+            SingleFileQuery::ArrowIpc => &["arrow", "ipc", "feather"],
+            SingleFileQuery::Avro => &["avro"],
+            SingleFileQuery::Delimited => &["csv", "tsv", "txt"],
+        };
+        let picked = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: true, directories: false, extensions: extensions.iter().map(|extension| (*extension).into()).collect(),
+            multiple: false, prompt: None,
+        });
+        let document_id = self.file_id;
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else { return };
+            let Some(path) = paths.into_iter().next() else { return };
+            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let definition = match format {
+                SingleFileQuery::JsonLines => Source::JsonLines { name },
+                SingleFileQuery::ArrowIpc => Source::ArrowIpc { name },
+                SingleFileQuery::Avro => Source::Avro { name },
+                SingleFileQuery::Delimited => match existing.as_ref().map(|query| &query.source) {
+                    Some(Source::Delimited { encoding, delimiter, start_row, headers, .. }) =>
+                        Source::Delimited { name, encoding: encoding.clone(), delimiter: *delimiter, start_row: *start_row, headers: *headers },
+                    _ => return,
+                },
+            };
+            let result = cx.background_executor().spawn({
+                let definition = definition.clone();
+                async move {
+                    match definition {
+                        Source::JsonLines { .. } => query::read_json_lines(&path),
+                        Source::ArrowIpc { .. } => query::read_arrow_ipc(&path),
+                        Source::Avro { .. } => query::read_avro(&path),
+                        Source::Delimited { encoding, delimiter, start_row, headers, .. } =>
+                            crate::import_delimited::read_delimited_query(&path, &encoding, delimiter, start_row, headers),
+                        _ => Err("Unsupported file source".into()),
+                    }
+                }
+            }).await;
+            this.update_in(cx, |this, window, cx| {
+                if this.file_id == document_id {
+                    this.finish_external_query(definition, result, existing, refresh, window, cx);
+                }
+            }).ok();
+        }).detach();
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    fn read_parquet_query(&mut self, paths: Vec<std::path::PathBuf>, folder: Option<std::path::PathBuf>, columns: Vec<String>, existing: Option<Query>, refresh: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let name = |path: &std::path::Path| path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let definition = match &folder {
+            Some(root) => Source::ParquetFolder { name: name(root), columns: columns.clone() },
+            None => Source::Parquet { names: paths.iter().map(|path| name(path)).collect(), columns: columns.clone() },
+        };
+        let document_id = self.file_id;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx.background_executor().spawn(async move {
+                match folder {
+                    Some(root) => query::read_parquet_folder(&root, &columns),
+                    None => query::read_parquet_files(&paths, &columns),
+                }
+            }).await;
+            this.update_in(cx, |this, window, cx| {
+                if this.file_id != document_id {
+                    return;
+                }
+                this.finish_external_query(definition, result, existing, refresh, window, cx);
+            }).ok();
+        }).detach();
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) fn finish_external_query(&mut self, definition: Source, result: Result<QTable, String>, existing: Option<Query>, refresh: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let source = match result {
+            Ok(source) => source,
+            Err(error) => {
+                self.set_status(error, cx);
+                return;
+            }
+        };
+        let workbook = self.presentation().workbook.as_ref();
+        let mut q = existing.unwrap_or_else(|| {
+            let base = crate::shell::i18n::text("query.default-name").to_string();
+            let query_name = (1..).map(|n| format!("{base}{n}"))
+                .find(|name| workbook.is_none_or(|book| !book.queries.iter().any(|q| q.name == *name)))
+                .unwrap_or(base);
+            Query::new(&query_name, definition.clone())
+        });
+        if refresh {
+            let Some(book) = workbook else { return };
+            if !book.queries.contains(&q) {
+                return;
+            }
+            q.source = definition;
+            match query::result_from_source(self.presentation(), &q, &book.queries, &book.query_parameters, 0, source) {
+                Ok(table) => self.load_refreshed_query(q, table, cx),
+                Err(error) => self.queries_message(error, cx),
+            }
+        } else {
+            q.source = definition;
+            self.open_query_editor_with_source(q, source, window, cx);
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) fn pick_record_source(&mut self, json: bool, existing: Option<Query>, refresh: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let picked = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: true, directories: false,
+            extensions: if json { vec!["json".into()] } else { ["sqlite", "sqlite3", "db"].map(String::from).to_vec() },
+            multiple: false, prompt: None,
+        });
+        let document_id = self.file_id;
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else { return };
+            let Some(path) = paths.into_iter().next() else { return };
+            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            if let Some(query) = &existing {
+                let definition = match &query.source {
+                    Source::Sqlite { table, .. } => Source::Sqlite { name, table: table.clone() },
+                    Source::JsonArray { key, .. } => Source::JsonArray { name, key: key.clone() },
+                    _ => return,
+                };
+                this.update_in(cx, |this, window, cx| {
+                    if this.file_id == document_id {
+                        this.read_record_source(path, definition, existing, refresh, window, cx);
+                    }
+                }).ok();
+                return;
+            }
+            let choices = cx.background_executor().spawn({
+                let path = path.clone();
+                async move {
+                    if json {
+                        query::json_array_choices(&path).map(|arrays| arrays.into_iter().map(|key| {
+                            let label = key.clone().unwrap_or_else(|| "$".into());
+                            (label, Source::JsonArray { name: name.clone(), key })
+                        }).collect::<Vec<_>>())
+                    } else {
+                        query::sqlite_tables(&path).map(|tables| tables.into_iter().map(|table| {
+                            (table.clone(), Source::Sqlite { name: name.clone(), table })
+                        }).collect())
+                    }
+                }
+            }).await;
+            this.update_in(cx, |this, _, cx| {
+                if this.file_id != document_id {
+                    return;
+                }
+                let choices = match choices {
+                    Ok(choices) if !choices.is_empty() => choices,
+                    Ok(_) => {
+                        this.set_status(crate::shell::i18n::text(if json { "query.json-no-arrays" } else { "query.sqlite-no-tables" }).to_string(), cx);
+                        return;
+                    }
+                    Err(error) => {
+                        this.set_status(error, cx);
+                        return;
+                    }
+                };
+                let state = this.wb_mut();
+                state.close_settings();
+                state.panels.record_source_selection = Some(RecordSourceSelection { path, choices, title: if json { "query.json-arrays" } else { "query.sqlite-tables" }, selected: 0 });
+                this.sidebar_open = true;
+                cx.notify();
+            }).ok();
+        }).detach();
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) fn record_sources_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        use gpui_kit::component::radio::{Radio, RadioGroup};
+        use crate::shell::chrome::{ActionButtonKind, ActionDefinition, action_bar};
+
+        let selection = self.sheet_state()?.panels.record_source_selection.as_ref()?;
+        let text = crate::shell::i18n::text;
+        let choices = RadioGroup::vertical("sqlite-tables")
+            .children(selection.choices.iter().enumerate().map(|(index, (table, _))| {
+                Radio::new(("sqlite-table", index)).label(table.clone())
+            }))
+            .selected_index(Some(selection.selected))
+            .on_change(cx.listener(|this, index, _, cx| {
+                if let Some(selection) = this.wb_mut().panels.record_source_selection.as_mut() {
+                    selection.selected = *index;
+                    cx.notify();
+                }
+            }));
+        let body = v_flex().px(px(18.)).py(px(8.)).child(choices);
+        let actions = action_bar()
+            .action(ActionDefinition::new("sqlite-table-cancel", "", ActionButtonKind::Normal)
+                .label(text("_shell.close"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.wb_mut().panels.record_source_selection = None;
+                    cx.notify();
+                })))
+            .action(ActionDefinition::new("sqlite-table-load", "", ActionButtonKind::Primary)
+                .label(text("_xlsx.load"))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    let Some(selection) = this.wb_mut().panels.record_source_selection.take() else { return };
+                    let Some((_, definition)) = selection.choices.into_iter().nth(selection.selected) else { return };
+                    this.read_record_source(selection.path, definition, None, false, window, cx);
+                    cx.notify();
+                })));
+        Some(SidebarPanel::with_footer(text(selection.title), body.into_any_element(), actions))
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    fn read_record_source(&mut self, path: std::path::PathBuf, definition: Source, existing: Option<Query>, refresh: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let document_id = self.file_id;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx.background_executor().spawn({
+                let definition = definition.clone();
+                async move {
+                    match definition {
+                        Source::Sqlite { table, .. } => query::read_sqlite_table(&path, &table),
+                        Source::JsonArray { key, .. } => query::read_json_array(&path, key.as_deref()),
+                        _ => Err("Unsupported record source".into()),
+                    }
+                }
+            }).await;
+            this.update_in(cx, |this, window, cx| {
+                if this.file_id == document_id {
+                    this.finish_external_query(definition, result, existing, refresh, window, cx);
+                }
+            }).ok();
+        }).detach();
+    }
+
     /// The editor on a query (a new one, or one of the workbook's to edit).
     pub(crate) fn open_query_editor(&mut self, query: Query, window: &mut Window, cx: &mut Context<Self>) {
         let source = match query::read_source(self.presentation(), &query.source) {
@@ -139,6 +515,10 @@ impl SlideEditor {
                 return;
             }
         };
+        self.open_query_editor_with_source(query, source, window, cx);
+    }
+
+    fn open_query_editor_with_source(&mut self, query: Query, source: QTable, window: &mut Window, cx: &mut Context<Self>) {
         let parameters = self.presentation().workbook.as_ref().map(|w| w.query_parameters.clone()).unwrap_or_default();
         let name = input(&query.name, "", window, cx);
         let editor = QueryEditor {
@@ -196,7 +576,11 @@ impl SlideEditor {
             let message = crate::shell::i18n::format(&format!("query.code-error.{}", e.key), &[("detail", &e.detail)]);
             if e.line > 0 { crate::shell::i18n::format("query.code-error.at-line", &[("line", &e.line.to_string()), ("message", &message)]) } else { message }
         });
-        let result = result.and_then(|q| match query::read_source(self.presentation(), &q.source) {
+        let result = result.and_then(|q| match if matches!(q.source, Source::Parquet { .. } | Source::ParquetFolder { .. } | Source::JsonLines { .. } | Source::ArrowIpc { .. } | Source::Avro { .. } | Source::Sqlite { .. } | Source::JsonArray { .. } | Source::Delimited { .. }) && q.source == ed.query.source {
+            Ok(ed.source.clone())
+        } else {
+            query::read_source(self.presentation(), &q.source)
+        } {
             Ok(table) => Ok((q, table)),
             Err(e) => Err(crate::shell::i18n::format("query.code-source-failed", &[("error", &e)])),
         });
@@ -467,6 +851,21 @@ impl SlideEditor {
 
     pub(crate) fn edit_query(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(query) = self.presentation().workbook.as_ref().and_then(|w| w.queries.get(index)).cloned() else { return };
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if matches!(query.source, Source::Parquet { .. }) {
+            return self.pick_parquet_query(false, Some(query), false, window, cx);
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        match query.source {
+            Source::JsonLines { .. } => return self.pick_single_file_query(SingleFileQuery::JsonLines, Some(query), false, window, cx),
+            Source::ArrowIpc { .. } => return self.pick_single_file_query(SingleFileQuery::ArrowIpc, Some(query), false, window, cx),
+            Source::Avro { .. } => return self.pick_single_file_query(SingleFileQuery::Avro, Some(query), false, window, cx),
+            Source::ParquetFolder { .. } => return self.pick_parquet_query(true, Some(query), false, window, cx),
+            Source::Delimited { .. } => return self.pick_single_file_query(SingleFileQuery::Delimited, Some(query), false, window, cx),
+            Source::Sqlite { .. } => return self.pick_record_source(false, Some(query), false, window, cx),
+            Source::JsonArray { .. } => return self.pick_record_source(true, Some(query), false, window, cx),
+            _ => {}
+        }
         self.open_query_editor(query, window, cx);
     }
 
@@ -485,13 +884,32 @@ impl SlideEditor {
     }
 
     /// 更新: the query worked out again from its source and its sheet rewritten.
-    pub(crate) fn refresh_query(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_query(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(wb) = self.presentation().workbook.as_ref() else { return };
         let Some(query) = wb.queries.get(index).cloned() else { return };
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if matches!(query.source, Source::Parquet { .. }) {
+            return self.pick_parquet_query(false, Some(query), true, _window, cx);
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        match query.source {
+            Source::JsonLines { .. } => return self.pick_single_file_query(SingleFileQuery::JsonLines, Some(query), true, _window, cx),
+            Source::ArrowIpc { .. } => return self.pick_single_file_query(SingleFileQuery::ArrowIpc, Some(query), true, _window, cx),
+            Source::Avro { .. } => return self.pick_single_file_query(SingleFileQuery::Avro, Some(query), true, _window, cx),
+            Source::ParquetFolder { .. } => return self.pick_parquet_query(true, Some(query), true, _window, cx),
+            Source::Delimited { .. } => return self.pick_single_file_query(SingleFileQuery::Delimited, Some(query), true, _window, cx),
+            Source::Sqlite { .. } => return self.pick_record_source(false, Some(query), true, _window, cx),
+            Source::JsonArray { .. } => return self.pick_record_source(true, Some(query), true, _window, cx),
+            _ => {}
+        }
         let table = match query::result_of(self.presentation(), &query, &wb.queries, &wb.query_parameters, 0) {
             Ok(t) => t,
             Err(e) => return self.queries_message(crate::shell::i18n::format("query.refresh-failed", &[("name", &query.name), ("error", &e)]), cx),
         };
+        self.load_refreshed_query(query, table, cx);
+    }
+
+    fn load_refreshed_query(&mut self, query: Query, table: QTable, cx: &mut Context<Self>) {
         let rows = table.rows.len();
         let slide = self.current_slide;
         if let Err(e) = self.document.execute(vec![Command::Sheet(SheetCommand::LoadQuery { sheet: slide, query: query.clone(), table })]) {
@@ -525,6 +943,14 @@ impl SlideEditor {
         }
         for (i, q) in queries.iter().enumerate() {
             let source = match &q.source {
+                Source::JsonLines { name } => format!("JSON Lines · {name}"),
+                Source::ArrowIpc { name } => format!("Arrow IPC · {name}"),
+                Source::Avro { name } => format!("Avro · {name}"),
+                Source::Delimited { name, .. } => format!("CSV/TSV · {name}"),
+                Source::Sqlite { name, table } => format!("SQLite · {name} · {table}"),
+                Source::JsonArray { name, key } => format!("JSON · {name} · {}", key.as_deref().unwrap_or("$")),
+                Source::ParquetFolder { name, .. } => format!("Parquet · {name}"),
+                Source::Parquet { names, .. } => format!("Parquet · {}", names.join(", ")),
                 Source::Blank => crate::shell::i18n::text("query.source-blank").to_string(),
                 Source::Table(t) => t.clone(),
                 Source::Range { sheet, range } => format!("{sheet}!{range}"),
@@ -538,7 +964,7 @@ impl SlideEditor {
                         .gap_1()
                         .flex_wrap()
                         .child(mark(format!("edit-{i}"), crate::shell::chrome::action_button(SharedString::from(format!("query-edit-{i}"))).small().label(crate::shell::i18n::text("query.edit")).on_click(cx.listener(move |this, _, window, cx| this.edit_query(i, window, cx))).into_any_element()))
-                        .child(mark(format!("refresh-{i}"), crate::shell::chrome::action_button(SharedString::from(format!("query-refresh-{i}"))).small().label(crate::shell::i18n::text("query.refresh")).on_click(cx.listener(move |this, _, _, cx| this.refresh_query(i, cx))).into_any_element()))
+                        .child(mark(format!("refresh-{i}"), crate::shell::chrome::action_button(SharedString::from(format!("query-refresh-{i}"))).small().label(crate::shell::i18n::text("query.refresh")).on_click(cx.listener(move |this, _, window, cx| this.refresh_query(i, window, cx))).into_any_element()))
                         .child(mark(format!("delete-{i}"), crate::shell::chrome::destructive_button(SharedString::from(format!("query-delete-{i}")),cx).small().label(crate::shell::i18n::text("query.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_query(i, cx))).into_any_element())),
                 );
         }
@@ -802,20 +1228,22 @@ impl SlideEditor {
                         Kind::Choice(options) => {
                             let current = form.picks.get(f.id).copied().unwrap_or(0).min(options.len() - 1);
                             let id = f.id;
-                            let count = options.len();
-                            side = side.child(mark(
-                                format!("field-{id}"),
-                                crate::shell::chrome::action_button(SharedString::from(format!("query-field-{id}")))
-                                    .small()
-                                    .label(text(options[current]))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(form) = this.query_editor_mut().and_then(|e| e.form.as_mut()) {
-                                            let n = form.picks.get(id).copied().unwrap_or(0);
-                                            form.picks.insert(id, (n + 1) % count);
+                            // The shared dropdown (button and list in one): a pick is stored in the form.
+                            let items: Vec<crate::shell::chrome::DropdownItem> = options
+                                .iter()
+                                .enumerate()
+                                .map(|(n, label)| {
+                                    crate::shell::chrome::DropdownItem::new(text(label)).checked(n == current).on_select(std::rc::Rc::new(move |e: &mut SlideEditor, _, cx| {
+                                        if let Some(form) = e.query_editor_mut().and_then(|e| e.form.as_mut()) {
+                                            form.picks.insert(id, n);
                                         }
                                         cx.notify();
                                     }))
-                                    .into_any_element(),
+                                })
+                                .collect();
+                            side = side.child(mark(
+                                format!("field-{id}"),
+                                crate::shell::chrome::Dropdown::new(field_dropdown_id(id), text(options[current]), items, &cx.weak_entity()).fill_width().into_any_element(),
                             ));
                         }
                         Kind::Flag => {
@@ -885,6 +1313,14 @@ impl SlideEditor {
         self.query_recompute();
         cx.notify();
     }
+}
+
+/// The id of the dropdown of a form's choice field (`query-field-<id>`; the dropdown takes a `'static` id, so each is made once).
+fn field_dropdown_id(id: &'static str) -> &'static str {
+    use std::sync::{Mutex, OnceLock};
+    static IDS: OnceLock<Mutex<HashMap<&'static str, &'static str>>> = OnceLock::new();
+    let mut ids = IDS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    ids.entry(id).or_insert_with(|| Box::leak(format!("query-field-{id}").into_boxed_str()))
 }
 
 fn type_mark(ty: query::QType) -> &'static str {

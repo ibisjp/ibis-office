@@ -260,7 +260,7 @@ impl SlideEditor {
                             cells.push(ClipCell {
                                 row: row - range.first_row,
                                 column: column - range.first_column,
-                                cell: c.clone(),
+                                cell: if cut { c.clone() } else { sheet.copy_of(c) },
                                 style: sheet.styles[c.style as usize].clone(),
                                 orig_row: row,
                                 orig_column: column,
@@ -349,7 +349,7 @@ impl SlideEditor {
                             cells.push(ClipCell {
                                 row: v_r,
                                 column: v_c,
-                                cell: c.clone(),
+                                cell: if cut { c.clone() } else { sheet.copy_of(c) },
                                 style: sheet.styles[c.style as usize].clone(),
                                 orig_row: orig_r,
                                 orig_column: orig_c,
@@ -412,7 +412,7 @@ impl SlideEditor {
                             cells.push(ClipCell {
                                 row: v_r,
                                 column: v_c,
-                                cell: c.clone(),
+                                cell: if cut { c.clone() } else { sheet.copy_of(c) },
                                 style: sheet.styles[c.style as usize].clone(),
                                 orig_row: orig_r,
                                 orig_column: orig_c,
@@ -458,6 +458,7 @@ impl SlideEditor {
         };
 
         let spill_ghosts = spill_ghosts_in(sheet, &cells);
+        let hidden_formulas: std::collections::HashSet<(u32, u32)> = cells.iter().filter(|c| sheet.formula_is_hidden(&c.cell)).map(|c| (c.orig_row, c.orig_column)).collect();
         // Off Windows the text goes first and the HTML table beside it; on Windows all go together below (one opening).
         if !cfg!(windows) {
             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -474,8 +475,19 @@ impl SlideEditor {
             let clip = Clip { slide, range: clip_range, cells, cut, text, validations, cell_images, col_widths, comments, merges: merges.clone(), source, foreign: false, origin: Some(cx.weak_entity()), cut_elsewhere: false, spill_ghosts };
             // The cells as an HTML table beside the text, as Excel puts them (formats, formulas and merged cells go with it),
             // and as an XML Spreadsheet, which Excel for Windows pastes with the formulas and formats.
-            let html = super::clipboard_html::write(&clip, &merges);
-            let xml = super::clipboard_xmlss::write(&clip, &merges);
+            // What leaves for other programs carries a hidden formula's value only, a cut's too (the cut cells stay in `clip`, formulas
+            // and all, for pasting inside ibisOffice).
+            let external = {
+                let mut external = clip.clone();
+                for c in &mut external.cells {
+                    if hidden_formulas.contains(&(c.orig_row, c.orig_column)) {
+                        c.cell.formula = None;
+                    }
+                }
+                external
+            };
+            let html = super::clipboard_html::write(&external, &merges);
+            let xml = super::clipboard_xmlss::write(&external, &merges);
             // Windows: the text, the HTML and the XML in one opening of the clipboard (written one after the other, the
             // later ones were lost and only the text stayed, #187).
             if !crate::native_shape_clipboard::write_cells(&clip.text, &html, xml.as_deref()) {
@@ -948,6 +960,7 @@ impl SlideEditor {
                 // The rows not fixed by hand fit to the wrapping text pasted (in the paste's undo step).
                 self.fit_wrapped_rows(range, cx);
                 self.set_selected_ranges(&[range]);
+                self.grow_table_for_paste(range, cx);
                 let undo_len = self.document.undo_len();
                 self.wb_mut().last_paste = Some(LastPaste { slide, range, undo_len });
             }

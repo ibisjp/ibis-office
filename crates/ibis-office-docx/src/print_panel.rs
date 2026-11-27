@@ -408,7 +408,7 @@ impl SlideEditor {
 
     /// 現在のキャレット位置の通算ページ番号 (1-based) を取得する
     pub(crate) fn current_flow_page(&self) -> usize {
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         if let Some((_, caret)) = self.text_selection() {
             if let Some(line) = Self::line_of(&lines, caret) {
                 return line.page + 1;
@@ -423,9 +423,9 @@ impl SlideEditor {
         if anchor == caret {
             return None;
         }
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let mut pages = Vec::new();
-        for line in &lines {
+        for line in lines.iter() {
             // 行の範囲が選択範囲と重なるか判定
             if line.para >= anchor.para && line.para <= caret.para {
                 let pg = line.page + 1;

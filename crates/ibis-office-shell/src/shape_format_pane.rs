@@ -270,8 +270,8 @@ fn dash_dropdown(prefix: &'static str, ui: DashUi, hooks: ShapeFormatHooks, cx: 
             .bg(popover_bg)
             .shadow_md()
             .occlude()
-            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                gpui_kit::component::popup_guard::note_outside_dismiss();
+            .on_mouse_down_out(cx.listener(move |this, _, window, cx| {
+                gpui_kit::component::popup_guard::note_outside_dismiss(window);
                 if let Some(ui) = (hooks.dash_ui)(this) {
                     ui.open = false;
                     ui.hovered = None;
@@ -333,7 +333,7 @@ fn dash_dropdown(prefix: &'static str, ui: DashUi, hooks: ShapeFormatHooks, cx: 
     wrap.into_any_element()
 }
 
-#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
 thread_local! {
     /// The id prefix (`docx`, `pptx`, `xlsx`) and the tab of the pane built last: the scenarios check that every screen builds this pane.
     pub static LAST_BUILT: std::cell::RefCell<Option<(&'static str, usize, bool)>> = const { std::cell::RefCell::new(None) };
@@ -344,7 +344,7 @@ thread_local! {
 pub fn shape_format_panel(spec: ShapeFormatSpec<'_>, cx: &Context<SlideEditor>) -> SidebarPanel {
     let ShapeFormatSpec { id, plain_title_key, tab, fields, hooks, dash, effects, lead, after_place, after_line, tail } = spec;
     let tab = if effects.is_some() { tab.min(2) } else { 0 };
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     LAST_BUILT.with(|l| *l.borrow_mut() = Some((id, tab, effects.is_some())));
     let body = match (&effects, tab) {
         (Some(e), 1) => v_flex().gap_2().child(effect_editor::panel(e.editor, &e.enabled, &[0, 1, 2, 3, 4], e.hooks, e.scroll.clone(), cx)),

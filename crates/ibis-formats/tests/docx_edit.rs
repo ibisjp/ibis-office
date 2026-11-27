@@ -6429,8 +6429,8 @@ fn text_box_text_effects_are_saved_as_w14_and_read_again() {
     };
     document.execute(vec![Command::Flow(FlowCommand::InsertTextBox { at, size: ibis_doc_model::EmuSize::new(1_828_800, 914_400), text: "abcdef".into() })]).unwrap();
     let outline = (Color::opaque(Rgb(0x112233)), 25_400);
-    let glow = (Color { rgb: Rgb(0x4472c4), alpha: 102 }, 63_500);
-    let shadow = Shadow::simple(Color { rgb: Rgb(0), alpha: 102 }, 50_800, 38_100, 2_700_000);
+    let glow = (Color { rgb: Rgb(0x4472c4), alpha: 102, theme: None }, 63_500);
+    let shadow = Shadow::simple(Color { rgb: Rgb(0), alpha: 102, theme: None }, 50_800, 38_100, 2_700_000);
     // The first three characters only.
     document.execute(vec![Command::Flow(FlowCommand::SetShapeCharacterFormat {
         at,
@@ -7940,7 +7940,7 @@ fn test_docx_ink_stroke_and_effects_roundtrip() {
             text_rect: None,
         }),
     });
-    let mut stroke = Stroke::solid(Color { rgb: Rgb(0xFF0000), alpha: 128 }, 57_150);
+    let mut stroke = Stroke::solid(Color { rgb: Rgb(0xFF0000), alpha: 128, theme: None }, 57_150);
     stroke.cap = LineCap::Round;
     stroke.join = LineJoin::Round;
     stroke.fill = Some(Fill::Linear {
@@ -8527,4 +8527,110 @@ fn text_direction_names() {
         assert_eq!(D::from_name(d.name()), d);
     }
     assert_eq!(D::from_section_name("tbRlV"), D::TbRl);
+}
+
+// ----- K0063: 原稿用紙設定 (Word's header drawing `Genko:…`) ----------------------------------------------------------------------
+
+/// The XML of a part of a saved file.
+fn part_xml(data: &[u8], name: &str) -> String {
+    String::from_utf8(ibis_ooxml::Package::open(data.to_vec()).unwrap().read(name).unwrap()).unwrap()
+}
+
+/// The (x, y, cx, cy) of each `wps:wsp` of Word's drawing, in order.
+fn genko_parts(header: &str) -> Vec<(i64, i64, i64, i64)> {
+    let doc = roxmltree::Document::parse(header).unwrap();
+    let choice = doc.descendants().find(|n| n.has_tag_name("Choice")).unwrap();
+    choice
+        .descendants()
+        .filter(|n| n.has_tag_name("wsp"))
+        .map(|w| {
+            let off = w.descendants().find(|n| n.has_tag_name("off")).unwrap();
+            let ext = w.descendants().find(|n| n.has_tag_name("ext")).unwrap();
+            let v = |n: roxmltree::Node, a: &str| n.attribute(a).unwrap().parse::<i64>().unwrap();
+            (v(off, "x"), v(off, "y"), v(ext, "cx"), v(ext, "cy"))
+        })
+        .collect()
+}
+
+#[test]
+fn genko_word_samples_are_read_and_kept() {
+    use ibis_doc_model::{GenkoStyle, Rgb};
+    // (file, style, chars, lines, colour)
+    for (file, style, chars, lines, color) in [
+        ("k0063/genkou-grid-a4-20x20.docx", GenkoStyle::Grid, 20, 20, 0x009300),
+        ("k0063/genkou-frame-a4-20x20.docx", GenkoStyle::Frame, 20, 20, 0x009300),
+        ("k0063/genkou-underline-a4-20x10.docx", GenkoStyle::Underline, 20, 10, 0x009300),
+        ("k0063/genkou-grid-a4-20x20-red.docx", GenkoStyle::Grid, 20, 20, 0xFF0000),
+        ("k0063/genkou-grid-a4-20x20-portrait-horizontal.docx", GenkoStyle::Grid, 20, 20, 0x009300),
+    ] {
+        let data = std::fs::read(path(file)).unwrap();
+        let opened = ibis_formats::open(data.clone()).unwrap();
+        let doc = flow(&opened.presentation);
+        let g = doc.genko.as_ref().unwrap_or_else(|| panic!("{file}: no genko"));
+        assert_eq!((g.style, g.chars, g.lines, g.color), (style, chars, lines, Rgb(color)), "{file}");
+        // The drawing is the document's genko, not a shape of the header's text.
+        let shapes = doc.header.iter().filter(|b| matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Shape(_))))).count();
+        assert_eq!(shapes, 0, "{file}: the header holds the drawing as a shape too");
+        // Saved as it was: the file again.
+        assert!(opened.source.save(&opened.presentation, SaveOptions::default()).unwrap() == data, "{file}: not the same file");
+    }
+    // A document without it has none.
+    let opened = ibis_formats::open(std::fs::read(path("k0063/page-vertical-landscape.docx")).unwrap()).unwrap();
+    assert!(flow(&opened.presentation).genko.is_none());
+}
+
+#[test]
+fn genko_parts_are_those_of_words_drawing() {
+    // The shapes' places in Word's own files (`wps:wsp` in order) and the places the model draws, within a point (Word rounds its
+    // positions to a grid of its own: a part of a point).
+    for file in ["k0063/genkou-grid-a4-20x20.docx", "k0063/genkou-underline-a4-20x10.docx", "k0063/genkou-frame-a4-20x20.docx", "k0063/genkou-grid-a4-20x20-portrait-horizontal.docx"] {
+        let data = std::fs::read(path(file)).unwrap();
+        let opened = ibis_formats::open(data.clone()).unwrap();
+        let doc = flow(&opened.presentation);
+        let word = genko_parts(&part_xml(&data, "word/header1.xml"));
+        let vertical = doc.page.direction == ibis_doc_model::CellDirection::TbRl;
+        let width = doc.page.size.width - doc.page.left - doc.page.right;
+        let height = doc.page.size.height - doc.page.top - doc.page.bottom;
+        let ours = doc.genko.as_ref().unwrap().parts(width, height, vertical);
+        assert_eq!(ours.len(), word.len(), "{file}: the number of parts");
+        for (i, (part, w)) in ours.iter().zip(&word).enumerate() {
+            let (x, y, cx, cy) = match *part {
+                ibis_doc_model::GenkoPart::Rect { x, y, w, h, .. } => (x, y, w, h),
+                ibis_doc_model::GenkoPart::Line { x, y, w, h } => (x, y, w, h),
+            };
+            for (a, b, what) in [(x, w.0, "x"), (y, w.1, "y"), (cx, w.2, "cx"), (cy, w.3, "cy")] {
+                // The drawing's own extent is a twip or two beyond the text area, and the lines of the underlined paper are placed from the
+                // frame: a point is the bound.
+                assert!((a - b).abs() <= 12_700, "{file}: part {i} {what}: model {a}, Word {b}");
+            }
+        }
+    }
+}
+
+#[test]
+fn genko_changed_and_removed_in_the_header() {
+    use ibis_doc_model::{GenkoPaper, GenkoStyle, Rgb};
+    let paper = GenkoPaper { style: GenkoStyle::Underline, chars: 20, lines: 10, color: Rgb(0xFF0000), paper: "A4".into() };
+    let out = scenario("k0063/genkou-grid-a4-20x20.docx", &["word/header1.xml"], |_| vec![FlowCommand::SetGenko { genko: Some(paper.clone()) }]);
+    let header = part_xml(&out.saved, "word/header1.xml");
+    assert_eq!(header.matches("Genko:").count(), 1);
+    assert!(header.contains("Genko:A4:20:10:L:1::") && header.contains("FF0000") && !header.contains("009300"), "{header}");
+    assert_eq!(flow(&ibis_formats::read(&out.saved).unwrap()).genko.as_ref(), Some(&paper));
+    // Gone.
+    let out = scenario("k0063/genkou-grid-a4-20x20.docx", &["word/header1.xml"], |_| vec![FlowCommand::SetGenko { genko: None }]);
+    assert!(!part_xml(&out.saved, "word/header1.xml").contains("Genko:"));
+    assert!(flow(&ibis_formats::read(&out.saved).unwrap()).genko.is_none());
+}
+
+#[test]
+fn genko_in_a_document_without_a_header() {
+    use ibis_doc_model::{GenkoPaper, GenkoStyle, Rgb};
+    let paper = GenkoPaper { style: GenkoStyle::Grid, chars: 20, lines: 20, color: GenkoPaper::DEFAULT_COLOR, paper: "A4".into() };
+    let out = scenario("editing/docx-index-basic.docx", &["*"], |d| {
+        assert!(d.header.is_empty());
+        vec![FlowCommand::AddHeader { footer: false }, FlowCommand::SetGenko { genko: Some(paper.clone()) }]
+    });
+    let reread = ibis_formats::read(&out.saved).unwrap();
+    assert_eq!(flow(&reread).genko.as_ref(), Some(&paper));
+    let _ = Rgb(0);
 }

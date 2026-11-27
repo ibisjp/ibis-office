@@ -243,6 +243,21 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
         Axis::Columns => &mut sheet.outline_columns,
     };
     *outline = std::mem::take(outline).into_iter().filter_map(|(i, l)| Some((move_index(i, at, count)?, l))).collect();
+    // Lines inserted take the outline level of the line above them (Excel's insert keeps the format of the line above; measured on Windows,
+    // GitHub issue #291 W6): inside a group they join it, right below a group (its summary line's place) they join it too, above a group's first
+    // line (the line above is level 0) they do not.
+    if count > 0 && at > 0 {
+        if let Some(&above) = outline.get(&(at - 1)) {
+            for line in at..at + count as u32 {
+                outline.insert(line, above);
+            }
+        }
+    }
+    let collapsed = match axis {
+        Axis::Rows => &mut sheet.collapsed_rows,
+        Axis::Columns => &mut sheet.collapsed_columns,
+    };
+    *collapsed = std::mem::take(collapsed).into_iter().filter_map(|i| move_index(i, at, count)).collect();
     if axis == Axis::Columns {
         sheet.custom_columns = std::mem::take(&mut sheet.custom_columns).into_iter().filter_map(|i| move_index(i, at, count)).collect();
         sheet.widened_columns = std::mem::take(&mut sheet.widened_columns).into_iter().filter_map(|i| move_index(i, at, count)).collect();

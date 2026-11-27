@@ -5,7 +5,7 @@
 //! a repeated effect plays the same motion again (it is not stretched), an effect that runs back plays back and ends where it began, and an
 //! effect repeating until the next click or the end of the slide goes on. Frames are read as pixels (the red box's width and height).
 use crate::shell::scenario::Scenario;
-use crate::slideshow::SlideshowExt;
+use crate::ext::*;
 use ibis_doc_model::{AnimationLook, AnimationRepeat, Color, Command, Fill, Rgb};
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {

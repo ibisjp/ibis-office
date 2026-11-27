@@ -198,9 +198,9 @@ fn rotated_square(
 }
 
 fn measured(control: Stateful<Div>, id: ElementId) -> Stateful<Div> {
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     let control = crate::scenario::button_probe::observe_control(control, id).absolute();
-    #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+    #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))))]
     let _ = id;
     control
 }

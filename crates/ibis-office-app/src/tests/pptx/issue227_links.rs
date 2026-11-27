@@ -41,7 +41,7 @@ fn options(dir: &Path, name: &str) -> crate::export::Options {
     crate::export::Options {
         format: crate::export::Format::Pdf, out_dir: dir.into(), name: name.into(), width: 960, slides: Vec::new(), layout: false,
         file_name: None, print_backgrounds: true, print_hidden_text: false, print_markup: false, color: Default::default(), handout: None,
-        frame: false, handout_landscape: false, notes_pages: false, outline_pages: false, notes_source: None, handout_marks: Default::default(),
+        frame: false, handout_landscape: false, paper: None, fit_paper: true, notes_pages: false, outline_pages: false, notes_source: None, handout_marks: Default::default(),
     }
 }
 

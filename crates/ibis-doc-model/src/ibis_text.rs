@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn a_continuation_has_no_bullet_no_space_before_and_no_indent() {
         let mut first = paragraph(&"x".repeat(25));
-        first.bullet = Some(crate::text::Bullet { text: "•".into(), picture: None, size: 100_000, color: None, auto: None, symbol: None, font: None });
+        first.bullet = Some(crate::text::Bullet { text: "•".into(), picture: None, size: 100_000, color: None, color_theme: None, auto: None, symbol: None, font: None });
         first.space_before = 600;
         first.indent = -300;
         let flowed = flow_text(vec![first.clone()], &[2.0, 10.0], &mut measure);

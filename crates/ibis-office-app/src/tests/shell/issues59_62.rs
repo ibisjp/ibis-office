@@ -22,6 +22,8 @@ fn recent_remove(){
     let _probe=buttons::Probe::new();let mut s=Scenario::start_view();
     let keep=s.screenshot_path("history-keep").with_extension("docx");let remove=s.screenshot_path("history-remove").with_extension("docx");let missing=s.screenshot_path("history-missing").with_extension("docx");
     let bytes=ibis_formats::blank_file(ibis_formats::Kind::Document).unwrap();std::fs::write(&keep,&bytes).unwrap();std::fs::write(&remove,&bytes).unwrap();
+    // recent_files::add stores the canonical path: compare with it (target/ may be a symlink, as in daily.sh's check-main tree).
+    let keep=keep.canonicalize().unwrap();let remove=remove.canonicalize().unwrap();
     s.update(|e,_,cx|{e.recent_files=crate::shell::recent_files::add(&keep);e.recent_files=crate::shell::recent_files::add(&remove);cx.notify();});
     let b=buttons::bounds("row-actions-0").unwrap();s.hover(center(b));let shot=s.screenshot("recent-hover");let image=image::open(shot).unwrap().to_rgba8();let viewport=s.update(|_,w,_|f32::from(w.viewport_size().width));let scale=image.width()as f32/viewport;
     let mut ink=0;for y in (f32::from(b.origin.y)*scale)as u32..(f32::from(b.bottom())*scale)as u32{for x in (f32::from(b.origin.x)*scale)as u32..(f32::from(b.right())*scale)as u32{let p=image.get_pixel(x,y);if p[0]<100&&p[1]<100&&p[2]<100{ink+=1;}}}assert!(ink>5,"the overflow dots must be visible");buttons::click(&mut s,"row-actions-0");
@@ -35,7 +37,7 @@ fn recent_remove(){
 fn recent_missing_alert(){
     let _probe=buttons::Probe::new();let mut s=Scenario::start_view();
     let good=s.screenshot_path("recent-good").with_extension("docx");let gone=s.screenshot_path("recent-gone").with_extension("docx");let broken=s.screenshot_path("recent-broken").with_extension("docx");
-    std::fs::write(&good,ibis_formats::blank_file(ibis_formats::Kind::Document).unwrap()).unwrap();std::fs::write(&broken,b"locked").unwrap();{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&broken,std::fs::Permissions::from_mode(0)).unwrap();}let _=std::fs::remove_file(&gone);
+    std::fs::write(&good,ibis_formats::blank_file(ibis_formats::Kind::Document).unwrap()).unwrap();std::fs::write(&broken,b"locked").unwrap();#[cfg(unix)]{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&broken,std::fs::Permissions::from_mode(0)).unwrap();}let _=std::fs::remove_file(&gone);
     s.update(|e,_,cx|{e.recent_files=vec![good.clone(),gone.clone(),broken.clone()];e.recent_exists.clear();cx.notify();});
     s.wait(300);s.settle();
     assert_eq!(s.with(|e,_|e.recent_exists.get(&gone).copied()),Some(false),"the missing file is found once");
@@ -52,7 +54,7 @@ fn recent_missing_alert(){
     row_click(&mut s,2);s.wait(500);s.settle();
     let (a,d,l)=s.with(|e,_|(e.alert.clone(),e.has_document,e.loading));assert!(a.is_some(),"an unreadable file shows the message box (has_document {d}, loading {l})");assert!(!s.with(|e,_|e.has_document));
     s.screenshot("recent-unreadable-alert");
-    buttons::click(&mut s,"alert-ok");{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&broken,std::fs::Permissions::from_mode(0o644)).unwrap();}
+    buttons::click(&mut s,"alert-ok");#[cfg(unix)]{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&broken,std::fs::Permissions::from_mode(0o644)).unwrap();}
     // A good one still opens.
     row_click(&mut s,0);s.wait(800);s.settle();
     assert!(s.with(|e,_|e.has_document)&&s.with(|e,_|e.alert.is_none()),"a readable file opens");

@@ -87,6 +87,7 @@ pub fn library() -> HashMap<&'static str, Value> {
     crate::lib_date::register(&mut l);
     crate::lib_date::register_more(&mut l);
     crate::lib_date::register_clock(&mut l);
+    crate::lib_zone::register(&mut l);
     func!(l, "#table", 2, 2, |it, a| {
         let cols_v = list_items(it, &a[0])?;
         let columns: Vec<String> = match &a[0] {
@@ -273,10 +274,10 @@ pub fn library() -> HashMap<&'static str, Value> {
             crate::table::scalar_text_in(v, c).map(Value::text).ok_or_else(|| MError::expr(format!("We cannot convert a value of type {} to type Text.", v.type_name())))
         }
     });
-    func!(l, "Number.From", 1, 2, |_, a| number_from(&a[0]));
-    func!(l, "Number.FromText", 1, 2, |_, a| match &a[0] {
+    func!(l, "Number.From", 1, 2, |it, a| number_from(&a[0], culture_arg(it, a.get(1))?));
+    func!(l, "Number.FromText", 1, 2, |it, a| match &a[0] {
         Value::Null => Ok(Value::Null),
-        Value::Text(s) => crate::culture::parse_number(s).map(Value::Number).ok_or_else(|| MError::format(format!("We couldn't convert to Number: \"{s}\"."))),
+        Value::Text(s) => crate::culture::parse_number_in(s, culture_arg(it, a.get(1))?).map(Value::Number).ok_or_else(|| MError::format(format!("We couldn't convert to Number: \"{s}\"."))),
         v => Err(MError::expr(format!("We cannot convert a value of type {} to type Text.", v.type_name()))),
     });
     func!(l, "Number.ToText", 1, 3, |it, a| match &a[0] {
@@ -284,8 +285,8 @@ pub fn library() -> HashMap<&'static str, Value> {
         Value::Number(n) => {
             let c = culture_arg(it, a.get(2))?;
             match a.get(1) {
-                None | Some(Value::Null) => Ok(Value::text(crate::culture::number_text(*n))),
-                Some(Value::Text(f)) if f.is_empty() => Ok(Value::text(crate::culture::number_text(*n))),
+                None | Some(Value::Null) => Ok(Value::text(crate::culture::number_text_in(*n, c))),
+                Some(Value::Text(f)) if f.is_empty() => Ok(Value::text(crate::culture::number_text_in(*n, c))),
                 Some(Value::Text(f)) => crate::format::format_number(*n, f, c).map(Value::text),
                 Some(v) => Err(MError::expr(format!("We cannot convert a value of type {} to type Text.", v.type_name()))),
             }
@@ -376,9 +377,9 @@ pub fn days_in_month(y: i64, m: i64) -> i64 {
 pub fn culture_arg(it: &Interp, v: Option<&Value>) -> Result<crate::culture::Culture, MError> {
     match v {
         None | Some(Value::Null) => Ok(it.culture()),
-        Some(Value::Text(s)) => crate::culture::Culture::parse(s),
+        Some(Value::Text(s)) => Ok(crate::culture::Culture::parse(s).unwrap_or_else(|| it.culture())),
         Some(r @ Value::Record(_)) => match it.field(r, "Culture", true)? {
-            Value::Text(s) => crate::culture::Culture::parse(&s),
+            Value::Text(s) => Ok(crate::culture::Culture::parse(&s).unwrap_or_else(|| it.culture())),
             _ => Ok(it.culture()),
         },
         Some(v) => Err(MError::expr(format!("We cannot convert a value of type {} to a culture name.", v.type_name()))),
@@ -387,13 +388,13 @@ pub fn culture_arg(it: &Interp, v: Option<&Value>) -> Result<crate::culture::Cul
 
 /// `Number.From`: a number, a logical (1 or 0), a text read as a number, a date or datetime as its serial number (days since 1899-12-30),
 /// a time as the part of a day.
-pub fn number_from(v: &Value) -> R {
+pub fn number_from(v: &Value, c: crate::culture::Culture) -> R {
     let frac = |s: f64| s / 86400.0;
     match v {
         Value::Null => Ok(Value::Null),
         Value::Number(n) => Ok(Value::Number(*n)),
         Value::Logical(b) => Ok(Value::Number(if *b { 1.0 } else { 0.0 })),
-        Value::Text(s) => match crate::culture::parse_number(s) {
+        Value::Text(s) => match crate::culture::parse_number_in(s, c) {
             Some(n) => Ok(Value::Number(n)),
             None if s.trim().is_empty() => Ok(Value::Null),
             None => Err(MError::format(format!("We couldn't convert to Number: \"{s}\"."))),

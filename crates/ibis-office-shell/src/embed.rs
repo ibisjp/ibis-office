@@ -120,6 +120,10 @@ extern "C" {
     /// `"download"` with the file's name and bytes).
     #[wasm_bindgen(js_name = ibisOfficeEmbedAction)]
     fn embed_action_js(kind: &str, name: &str, bytes: Option<Vec<u8>>);
+    #[wasm_bindgen(js_name = ibisOfficeDownloadDocx)]
+    fn download_docx_js(name: &str, bytes: Vec<u8>);
+    #[wasm_bindgen(js_name = ibisOfficeDownloadHtml)]
+    fn download_html_js(name: &str, bytes: Vec<u8>);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -135,10 +139,41 @@ impl SlideEditor {
         embed_action_js("close", "", None);
     }
 
+    /// Download only the content currently recognized from the read-only JTD.
+    pub(crate) fn export_jtd_docx(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_jtd_read_only() || self.jtd_gallery { return; }
+        match ibis_jtd::export_docx(self.presentation()) {
+            Ok(bytes) => {
+                let name = self.file_name.as_deref().unwrap_or("document.jtd");
+                let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+                download_docx_js(&format!("{stem}.docx"), bytes);
+                self.set_status(crate::i18n::text("file.docx-done").to_string(), cx);
+            }
+            Err(err) => self.set_status(crate::i18n::format("file.save-failed", &[("error", &err.to_string())]), cx),
+        }
+    }
+
+    /// Download the content currently recognized from the read-only JTD as HTML.
+    pub(crate) fn export_jtd_html(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_jtd_read_only() { return; }
+        match ibis_jtd::export_html(self.presentation()) {
+            Ok(bytes) => {
+                let name = self.file_name.as_deref().unwrap_or("document.jtd");
+                let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+                download_html_js(&format!("{stem}.html"), bytes);
+                self.set_status(crate::i18n::text("file.html-done").to_string(), cx);
+            }
+            Err(err) => self.set_status(crate::i18n::format("file.save-failed", &[("error", &err.to_string())]), cx),
+        }
+    }
+
     /// The download button: the document as it is now, in its own format, goes to the embedding page.
     pub(crate) fn embed_download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // What is typed in a cell is entered first, as a save does (`commit_pending_edit`): the file is the workbook as it is now.
         self.commit_pending_edit(window, cx);
+        if let Some(bytes) = self.jtd_original.as_ref() {
+            embed_action_js("download", self.file_name.as_deref().unwrap_or(""), Some(bytes.to_vec()));
+            return;
+        }
         let Some(source) = self.source.clone() else {
             self.status = Some(crate::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
             return cx.notify();

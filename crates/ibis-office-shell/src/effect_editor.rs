@@ -107,7 +107,7 @@ fn num(v: f64) -> String {
     format!("{v:.4}").trim_end_matches('0').trim_end_matches('.').to_string()
 }
 fn default_shadow() -> Shadow {
-    Shadow::simple(Color { rgb: Rgb(0), alpha: 102 }, 50800, 38100, 2700000)
+    Shadow::simple(Color { rgb: Rgb(0), alpha: 102, theme: None }, 50800, 38100, 2700000)
 }
 fn shadow_values(prefix: &str, s: &Shadow) -> Vec<(String, String)> {
     vec![

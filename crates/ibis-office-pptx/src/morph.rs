@@ -153,7 +153,7 @@ fn lerp_color(a: Color, b: Color, t: f64) -> Color {
     let channel = |x: u32, y: u32| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round().clamp(0.0, 255.0) as u32;
     let (Rgb(x), Rgb(y)) = (a.rgb, b.rgb);
     let rgb = channel((x >> 16) & 0xff, (y >> 16) & 0xff) << 16 | channel((x >> 8) & 0xff, (y >> 8) & 0xff) << 8 | channel(x & 0xff, y & 0xff);
-    Color { rgb: Rgb(rgb), alpha: channel(u32::from(a.alpha), u32::from(b.alpha)) as u8 }
+    Color { rgb: Rgb(rgb), alpha: channel(u32::from(a.alpha), u32::from(b.alpha)) as u8, theme: None }
 }
 
 /// The shape `b` with the colours (fill, outline and its width, text) part of the way from those of `a`, when the two are
@@ -219,9 +219,10 @@ impl SlideEditor {
                 page = page.child(layer(1.0 - t, shape_element(olds[i], olds[i].frame, scale, &self.resources, None)));
                 continue;
             }
-            let (frame, rotation) = between(olds[i], news[j], t as f64);
             // The words or characters move by themselves; the shape without its text is faded or blended as it is.
             let moves = unit.and_then(|u| self.text_moves(olds[i], news[j], u, scale));
+            // The shape moves on the same curve as its words (else the words leave the shape they belong to on the way).
+            let (frame, rotation) = between(olds[i], news[j], if moves.is_some() { crate::morph_text::move_curve(progress) as f64 } else { t as f64 });
             let (old_shape, new_shape);
             let (a, b) = match &moves {
                 Some(moves) => {
@@ -278,7 +279,31 @@ impl SlideEditor {
         let text = self.resources.window_text_system();
         let tokens = |shape: &Shape, body: &ibis_doc_model::TextBody| {
             let area = shape.frame.width - body.insets.left - body.insets.right;
-            let boxes = self.resources.char_boxes(body, area as f64, scale * 12_700.0, &text);
+            let mut boxes = self.resources.char_boxes(body, area as f64, scale * 12_700.0, &text);
+            if !body.wrap {
+                // A text that does not wrap is laid out as one long line from the left; PowerPoint aligns each line on the text area (it may
+                // stick out of it on both sides when centred), so each line is moved by how its alignment leaves room in the area.
+                let area_px = area as f32 * scale;
+                let mut lines: Vec<(usize, f32, f32, f32)> = Vec::new();
+                for b in &boxes {
+                    match lines.iter_mut().find(|l| l.0 == b.paragraph && (l.1 - b.y).abs() < 0.5) {
+                        Some(l) => {
+                            l.2 = l.2.min(b.x);
+                            l.3 = l.3.max(b.x + b.width);
+                        }
+                        None => lines.push((b.paragraph, b.y, b.x, b.x + b.width)),
+                    }
+                }
+                for b in &mut boxes {
+                    let Some(&(_, _, left, right)) = lines.iter().find(|l| l.0 == b.paragraph && (l.1 - b.y).abs() < 0.5) else { continue };
+                    let room = area_px - (right - left);
+                    b.x += match body.paragraphs.get(b.paragraph).and_then(|p| p.align) {
+                        Some(ibis_doc_model::text::TextAlign::Center) => room / 2.0,
+                        Some(ibis_doc_model::text::TextAlign::Right) => room,
+                        _ => 0.0,
+                    };
+                }
+            }
             let mut tokens = crate::morph_text::tokens(body, &boxes, unit)?;
             // The text's place on the slide: the shape's, inside its insets, anchored as the shape says.
             let height = boxes.iter().map(|b| b.y + b.height).fold(0.0f32, f32::max);
@@ -300,14 +325,14 @@ impl SlideEditor {
     }
 }
 
-/// The text of a shape when it is plain enough to be moved word by word: horizontal, in one column, not turned, not warped.
+/// The text of a shape when it is plain enough to be moved word by word: horizontal, in one column, not turned, not warped (wrapping or not).
 fn plain_body(shape: &Shape) -> Option<&ibis_doc_model::TextBody> {
     let body = match &shape.kind {
         ShapeKind::TextBox(body) => body,
         ShapeKind::Auto(auto) => auto.text.as_ref()?,
         _ => return None,
     };
-    let plain = shape.rotation == 0 && !body.vertical && body.sideways == 0 && body.rotation == 0 && body.columns <= 1 && body.warp.is_none() && body.wrap && body.autofit != ibis_doc_model::TextAutofit::ResizeShape;
+    let plain = shape.rotation == 0 && !body.vertical && body.sideways == 0 && body.rotation == 0 && body.columns <= 1 && body.warp.is_none() && body.autofit != ibis_doc_model::TextAutofit::ResizeShape;
     (plain && !body.text().trim().is_empty()).then_some(body)
 }
 

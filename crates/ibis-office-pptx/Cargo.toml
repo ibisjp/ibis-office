@@ -18,6 +18,8 @@ ibis-formats.workspace = true
 ibis-odf.workspace = true
 gpui-kit.workspace = true
 log = "0.4"
+# The browser version waits for the pictures of the Web page export (`export_html.rs`); the same crate as the shell's.
+futures = { version = "0.3", default-features = false, features = ["std"] }
 
 # The PNG writer of the zoom cards (zoom_cards.rs); the same crate as ibis-office-app's, already in the tree.
 image = { version = "0.25", default-features = false, features = ["png"] }

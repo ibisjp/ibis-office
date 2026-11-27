@@ -28,7 +28,7 @@ fn shot(geometry: Geometry, rotation: i32, fill_of: &dyn Fn(ibis_doc_model::Medi
     s.update(|e, _, cx| {
         let size = e.presentation().size_of(e.slide());
         let back = e.document.ids().new_shape_id();
-        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255 }), None);
+        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255, theme: None }), None);
         e.insert_shape(Shape::new(back, EmuRect::new(0, 0, size.width, size.height), ShapeKind::Auto(white)), cx);
         let data = png();
         let media = e.document.ids().add_media(ibis_doc_model::MediaFormat::Png, data.clone());
@@ -36,7 +36,7 @@ fn shot(geometry: Geometry, rotation: i32, fill_of: &dyn Fn(ibis_doc_model::Medi
         let id = e.document.ids().new_shape_id();
         let mut auto = ibis_doc_model::AutoShape::new(geometry, fill_of(media), None);
         if shadow {
-            auto.shadow = Some(ibis_doc_model::Shadow::simple(Color { rgb: Rgb(0), alpha: 255 }, 0, 9 * 12_700, 2_700_000));
+            auto.shadow = Some(ibis_doc_model::Shadow::simple(Color { rgb: Rgb(0), alpha: 255, theme: None }, 0, 9 * 12_700, 2_700_000));
         }
         let mut shape = Shape::new(id, EmuRect::new(FRAME.0, FRAME.1, FRAME.2, FRAME.3), ShapeKind::Auto(auto));
         shape.rotation = rotation;

@@ -56,7 +56,7 @@ pub fn bounds(id: &str) -> Option<Bounds<Pixels>> {
     BOUNDS.with(|m| m.borrow().get(id).copied())
 }
 /// Measurement for canvas-based controls which do not contain a Div.
-pub(crate) fn record_bounds(id: &str, bounds: Bounds<Pixels>) {
+pub fn record_bounds(id: &str, bounds: Bounds<Pixels>) {
     if ENABLED.with(|enabled| enabled.get()) {
         BOUNDS.with(|all| { all.borrow_mut().insert(id.to_owned(), bounds); });
     }
@@ -96,6 +96,9 @@ pub fn click(s: &mut Scenario, id: &str) {
         let dialog = s.with(|e, _| e.dialog.bounds);
         // A button outside the dialog (a confirmation box over it) is not scrolled with the dialog.
         let dialog = dialog.filter(|d| b.origin.x < d.origin.x + d.size.width && b.origin.x + b.size.width > d.origin.x);
+        // An item of a dropdown's list (`searchable-item-…`) lies over the dialog in a popup of its own: the dialog's scrolling does not move it, and it is
+        // in reach where it is drawn (a dropdown opened low in a dialog lists its items below the dialog's bottom edge).
+        let dialog = dialog.filter(|_| !id.contains("searchable-item-"));
         if let Some(d) = dialog {
             if b.origin.y + b.size.height > d.origin.y + d.size.height - px(5.) {
                 s.wheel(

@@ -163,6 +163,15 @@ pub fn run(args: &[String], all: fn() -> Vec<(&'static str, fn())>, ignored: fn(
         println!("scenario {name} ... ignored");
     }
     let mut failed = Vec::new();
+    // The settings are the scenarios' own and are kept between runs (target/scenario-user-data/settings.txt): a run starts from none, or
+    // what an earlier run (or the app run by hand against this folder) left there changes what the scenarios draw (K0020: a formula-bar font
+    // left in it drew the bar's text bold and the pixel test of the thick line failed in one worktree and not in another).
+    if std::env::var_os("IBIS_SETTINGS_DIR").is_none()
+        && std::env::var_os("IBIS_DATA_DIR").is_none()
+        && let Some(base) = crate::app_data::base()
+    {
+        let _ = std::fs::remove_file(base.join("settings.txt"));
+    }
     // The test files must come out as they went in (a scenario works on
     // copies of them, `Scenario::open`). One scenario's after is the next
     // one's before (listing them takes 0.1 s, twice per scenario was a
@@ -180,7 +189,9 @@ pub fn run(args: &[String], all: fn() -> Vec<(&'static str, fn())>, ignored: fn(
         let started = crate::clock::Instant::now();
         let pool = AutoreleasePool::new();
         crate::links::CAPTURE_URLS.with(|s|*s.borrow_mut()=Some(Vec::new()));
+        let watchdog = Watchdog::start(name);
         let result = std::panic::catch_unwind(f);
+        drop(watchdog);
         crate::links::CAPTURE_URLS.with(|s|*s.borrow_mut()=None);
         drop(pool);
         let took = started.elapsed();
@@ -322,6 +333,17 @@ pub fn repo_root() -> PathBuf {
     crate::plain_path::canonical(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("the repository")
 }
 
+/// The folder name of a scenario (its test's name, `xlsx::sec002_protect_sheet`): `:` is not allowed in a Windows file name.
+pub fn folder_name(test: &str) -> String {
+    if cfg!(windows) { test.replace("::", "__") } else { test.to_string() }
+}
+
+/// The scenario's folder, `target/scenario/<test>/`: the same path the scenario itself writes to (use it, not a path written out, in a test that reads
+/// what the scenario saved).
+pub fn scenario_dir(test: &str) -> PathBuf {
+    repo_root().join("target/scenario").join(folder_name(test))
+}
+
 /// What a toolbar button shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToolState {
@@ -343,6 +365,12 @@ pub struct Scenario {
 
 impl Drop for Scenario {
     fn drop(&mut self) {
+        // A scenario that failed inside `update` unwinds while its editor is still leased: updating it again here would
+        // panic during the unwind and abort the whole run (Windows 0xc0000409, 2026-11-26). Leave the clean-up out then;
+        // only that scenario's memory stays.
+        if std::thread::panicking() {
+            return;
+        }
         // Close the window and let the application release the editor (its document, the pictures decoded for it and the
         // render caches): otherwise each scenario's whole world stays in memory (hundreds of MB for a document with pictures).
         let editor = self.editor.clone();
@@ -367,7 +395,11 @@ impl Scenario {
         let original = repo_root().join(path);
         let mut s = Self::start_sized(width);
         let full = s.dir().join(original.file_name().expect("a file name"));
-        std::fs::copy(&original, &full).unwrap_or_else(|e| panic!("{path}: {e}"));
+        // A file saved into this scenario's own folder (`save_as`) and reopened is already the copy: copying a file onto itself fails on Windows
+        // (sharing violation) and could truncate it elsewhere.
+        if std::fs::canonicalize(&original).ok() != std::fs::canonicalize(&full).ok() {
+            std::fs::copy(&original, &full).unwrap_or_else(|e| panic!("{path}: {e}"));
+        }
         let mut loaded = crate::read_file::read_file(&full).unwrap_or_else(|e| panic!("{path}: {e}"));
         // The scenarios' points are for the zoom a format opens at (fit the slide, 141% for a page): the zoom a file was saved at (GitHub issue #237) is
         // not used here, so that the scenarios do not depend on how the test files were last zoomed; it has a scenario of its own.
@@ -428,6 +460,11 @@ impl Scenario {
         // The zoom the last window was at is kept in the scenarios' own settings file, which stays between runs: a file with no zoom of its own would
         // open at what an earlier scenario left (337% made the points of pptx scenarios miss the slide; GitHub issue #237). Each scenario starts from none.
         crate::settings::remove(crate::editor::LAST_ZOOM_KEY);
+        // The formula bar's font is a setting too: shell::settings_dropdown_mouse_matrix picks one in the list (the second item, which is a font
+        // when shell::dialog_font_and_color_staging has put one in the recent fonts first) and leaves it, and the pixel test of the thick line
+        // (xlsx::k0020_the_formula_bar_thick_line...) then drew the bar's text in it and failed in a whole run only (2026-11-24, found by
+        // reducing the whole run's order to those two scenarios). Each scenario starts from the app's font.
+        crate::settings::remove(crate::settings_dialog::FORMULA_BAR_FONT_KEY);
         // A second Scenario opened while the first is alive (in one test) waits for it for ever: say so after 30 s.
         let mut waits = 0u32;
         let lock = loop {
@@ -445,14 +482,19 @@ impl Scenario {
         // language and the user's setting.
         crate::i18n::show(crate::i18n::Language::Japanese);
         let name = CURRENT.with(|c| c.borrow().clone());
+        let name = folder_name(&name);
         let name = if name.is_empty() { "scenario".to_string() } else { name };
         // One text system for all the scenarios of the process: a new one for each (its fonts and glyph caches)
         // stayed in memory after the scenario, about 55 MB each, 5 GB in 90 scenarios.
         thread_local! {
-            static TEXT_SYSTEM: Arc<dyn gpui_kit::PlatformTextSystem> =
-                Arc::new(drawn_text::Logging { inner: gpui_kit::platform::current_platform(true).text_system() });
+            // The platform is kept as long as its text system (on Windows it is the full one: the headless one has no DirectWrite).
+            static TEXT_SYSTEM: (std::rc::Rc<dyn gpui_kit::Platform>, Arc<dyn gpui_kit::PlatformTextSystem>) = {
+                let platform = gpui_kit::platform::current_platform(cfg!(not(windows)));
+                let text_system: Arc<dyn gpui_kit::PlatformTextSystem> = Arc::new(drawn_text::Logging { inner: platform.text_system() });
+                (platform, text_system)
+            };
         }
-        let text_system = TEXT_SYSTEM.with(|t| t.clone());
+        let text_system = TEXT_SYSTEM.with(|t| t.1.clone());
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(crate::icons::Assets::new("")), crate::headless::headless_renderer);
         cx.allow_parking();
         cx.update(crate::app_hooks::app_init);
@@ -778,14 +820,29 @@ impl Scenario {
 
     /// A key, as GPUI writes it: `"cmd-b"`, `"enter"`, `"shift-tab"`.
     pub fn key(&mut self, keystroke: &str) {
-        let keystroke = Keystroke::parse(keystroke).unwrap_or_else(|e| panic!("{keystroke}: {e:?}"));
+        let keystroke = platform_keystroke(keystroke);
+        let keystroke = Keystroke::parse(&keystroke).unwrap_or_else(|e| panic!("{keystroke}: {e:?}"));
         self.cx.update_window(self.window.into(), |_, window, app| window.dispatch_keystroke(keystroke, app)).ok();
+        self.settle();
+    }
+
+    /// A key press with every field of the keystroke given (`key_char` as the OS delivers it: Windows gives `Some("f")` for Alt+F),
+    /// as `key` cannot say it.
+    pub fn key_stroke(&mut self, keystroke: Keystroke) {
+        self.cx.update_window(self.window.into(), |_, window, app| window.dispatch_keystroke(keystroke, app)).ok();
+        self.settle();
+    }
+
+    /// The modifier keys change to `modifiers` (Alt pressed or released on its own; the OS says so with no key press).
+    pub fn modifiers_changed(&mut self, modifiers: Modifiers) {
+        self.cx.update_window(self.window.into(), |_, window, app| { window.dispatch_event(PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers, capslock: Capslock::default() }), app); }).ok();
         self.settle();
     }
 
     /// The release of a key (a focused button clicks on Enter/Space when the key is released).
     pub(crate) fn key_up(&mut self, keystroke: &str) {
-        let keystroke = Keystroke::parse(keystroke).unwrap_or_else(|e| panic!("{keystroke}: {e:?}"));
+        let keystroke = platform_keystroke(keystroke);
+        let keystroke = Keystroke::parse(&keystroke).unwrap_or_else(|e| panic!("{keystroke}: {e:?}"));
         self.cx.update_window(self.window.into(), |_, window, app| { window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), app); }).ok();
         self.settle();
     }
@@ -929,6 +986,11 @@ impl Scenario {
             e.set_file_path(Some(path));
         });
         self.settle();
+    }
+
+    /// The formats the save dialog offers for this file now: (the name shown, the extensions).
+    pub fn save_format_choices(&mut self) -> Vec<(String, Vec<String>)> {
+        self.with(|e, _| e.save_formats().into_iter().map(|f| (f.label.to_string(), f.extensions)).collect())
     }
 
     /// The saved file (the file's path now) read again, as a new window would.
@@ -1133,5 +1195,58 @@ mod drawn_text {
             .lock()
             .map(|drawn| drawn.iter().filter(|s| crate::i18n::is_known_id(s)).cloned().collect())
             .unwrap_or_default()
+    }
+}
+
+/// The scenarios are written on macOS (`"cmd-z"`). On Windows the same shortcut is Ctrl, so the leading `cmd` modifier
+/// reads as `secondary` (GPUI: cmd on macOS, ctrl elsewhere). macOS and Linux keystrokes are left as written.
+#[cfg(windows)]
+fn platform_keystroke(keystroke: &str) -> String {
+    let mut rest = keystroke;
+    let mut out = String::new();
+    // Modifiers come first, each followed by '-'; the key (which may itself be "-") is what remains.
+    while let Some((head, tail)) = rest.split_once('-') {
+        if tail.is_empty() || !matches!(head, "cmd" | "ctrl" | "alt" | "shift" | "secondary" | "fn") {
+            break;
+        }
+        out.push_str(if head == "cmd" { "secondary" } else { head });
+        out.push('-');
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
+#[cfg(not(windows))]
+fn platform_keystroke(keystroke: &str) -> String {
+    keystroke.to_string()
+}
+
+/// A scenario that does not end within `IBIS_SCENARIO_TIMEOUT` seconds (default 900) stops the process, saying which one (a wait that never ends held a run
+/// for 1 h 27 min once: k0065 q6b on a Mac). It counts seconds by sleeping, not with the clock the scenarios fake.
+struct Watchdog(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Watchdog {
+    fn start(name: &str) -> Self {
+        let limit: u64 = std::env::var("IBIS_SCENARIO_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(900);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (flag, name) = (done.clone(), name.to_string());
+        std::thread::spawn(move || {
+            for _ in 0..limit {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+            }
+            println!("scenario {name} ... TIMED OUT after {limit} s (IBIS_SCENARIO_TIMEOUT)");
+            std::process::exit(2);
+        });
+        Self(done)
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }

@@ -1013,6 +1013,7 @@ pptx.theme-colors	Theme Colors and Fonts…
 pptx.theme.palette	Theme Color Palette
 pptx.theme.palette-selected	Apply Theme Colors to Selected Slides
 pptx.theme.palette.office	Office (Standard)
+pptx.theme.palette.office_2013_2022	Office 2013 - 2022
 pptx.theme.palette.aspect	Aspect
 pptx.theme.palette.apex	Apex
 pptx.theme.palette.slate	Slate
@@ -1956,6 +1957,7 @@ pptx.photo-album.frame.center-shadow	Center Shadow
 pptx.photo-album.frame.soft-edge	Soft Edge
 pptx.photo-album.create	Create
 pptx.photo-album.create-success	Photo album created successfully
+pptx.photo-album.no-pictures	Add pictures to the album first.
 pptx.animation.chart-build	Chart Animation
 pptx.animation.chart.whole	As One Object
 pptx.animation.chart.series	By Series
@@ -2714,3 +2716,12 @@ pptx.html-no-slides	There are no slides to export (all are hidden)
 pptx.html-too-large	The pictures are too large to export as a Web page
 pptx.html-exported	Exported to {path}
 pptx.html-export-failed	Couldn't export: {error}
+pptx.grid-guides.settings	Grid and Guides Settings...
+pptx.grid-guides-panel.snap-to-grid	Snap objects to grid
+pptx.grid-guides-panel.snap-to-objects	Snap objects to other objects
+pptx.grid-guides-panel.spacing-cm	Grid spacing
+pptx.grid-guides-panel.show-grid	Display grid on screen
+pptx.grid-guides-panel.show-guides	Display drawing guides on screen
+pptx.grid-guides-panel.smart-guides	Display smart guides when shapes are aligned
+pptx.grid-guides-panel.spacing-error	Enter the grid spacing as a number from 0.03 cm to 14.2 cm
+pptx.links.enter-address	Enter the address of the link, or choose a place in this document.

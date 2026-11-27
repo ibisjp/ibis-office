@@ -348,33 +348,10 @@ impl SlideEditor {
 
     /// 均等に配置: equal gaps between three or more shapes.
     pub(crate) fn distribute_selected(&mut self, horizontal: bool, cx: &mut Context<Self>) {
-        let mut shapes: Vec<(ShapeId, EmuRect, EmuRect)> = self.selected_shapes().into_iter().map(|s| (s.id, s.frame, interaction::bounds(s))).collect();
-        if shapes.len() < 3 {
-            return;
-        }
-        let key = |b: &EmuRect| if horizontal { b.x } else { b.y };
-        let len = |b: &EmuRect| if horizontal { b.width } else { b.height };
-        shapes.sort_by_key(|s| key(&s.2));
-        let slide_size = self.presentation().size_of(self.slide());
-        let to_slide = self.shape_edit.align_to_slide;
-        let (first, last) = if to_slide {
-            (0, if horizontal { slide_size.width } else { slide_size.height })
-        } else {
-            let first = key(&shapes[0].2);
-            (first, shapes.last().map(|s| key(&s.2) + len(&s.2)).unwrap_or(first))
-        };
-        let total: i64 = shapes.iter().map(|s| len(&s.2)).sum();
-        let gap = (last - first - total) as f64 / (shapes.len() - 1) as f64;
-        let slide = self.current_slide;
-        let mut at = first as f64;
-        let mut commands = Vec::new();
-        for (id, frame, b) in shapes {
-            let d = at.round() as i64 - key(&b);
-            if d != 0 {
-                commands.push(Command::SetFrame { slide, frames: vec![(id, if horizontal { frame.translated(d, 0) } else { frame.translated(0, d) })], with_attached: true });
-            }
-            at += len(&b) as f64 + gap;
-        }
+        use ibis_doc_model::shape_arrange::{self, Arranged};
+        let shapes: Vec<Arranged> = self.selected_shapes().into_iter().map(Arranged::of).collect();
+        let size = self.presentation().size_of(self.slide());
+        let commands = shape_arrange::distribute(self.current_slide, &shapes, horizontal, if horizontal { size.width } else { size.height }, self.shape_edit.align_to_slide);
         self.run(commands, cx);
     }
 
@@ -717,7 +694,7 @@ impl SlideEditor {
 
     pub(crate) fn default_text_shadow() -> ibis_doc_model::Shadow {
         ibis_doc_model::Shadow {
-            color: ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 102 },
+            color: ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0), alpha: 102, theme: None },
             blur: 25_400,
             distance: 19_050,
             direction: 5_400_000,
@@ -854,7 +831,7 @@ impl SlideEditor {
         style.bold = preset.bold;
 
         let shadow = preset.shadow.map(|(dir, dist, blur)| ibis_doc_model::Shadow {
-            color: Color { rgb: Rgb(0), alpha: 102 },
+            color: Color { rgb: Rgb(0), alpha: 102, theme: None },
             blur,
             distance: dist,
             direction: dir,
@@ -919,8 +896,7 @@ impl SlideEditor {
             strike: Some(run.strike), caps: Some(run.caps), shadow: Some(run.shadow), glow: Some(run.glow), link: None, link_tooltip: None,
             lang: Some(run.lang.clone()), tate_chu_yoko: None, char_scale: None,
             // Copying a run's format resets nothing; it sets what the run has.
-            reset: Default::default(),
-        };
+            reset: Default::default(), color_theme: look.color_theme };
         if self.is_presentation() { self.shape_edit.character_format_copy = Some(format); }
         cx.notify();
     }
@@ -1163,19 +1139,25 @@ impl SlideEditor {
         let Some(shape) = self.selected_shapes().into_iter().next().cloned() else { return };
         let defaults = match &shape.kind {
             ShapeKind::Auto(a) if is_connector_geometry(&a.geometry) => {
-                Some(ObjectDefaults { shape: None, line: a.stroke.clone() })
+                Some(ObjectDefaults { shape: None, line: a.stroke.clone(), text_box: None })
             }
             ShapeKind::Auto(a) => {
-                let text = a.text.as_ref().map(|t| t.style.clone()).unwrap_or_default();
-                Some(ObjectDefaults { shape: Some(ShapeDefault { fill: a.fill.clone(), stroke: a.stroke.clone(), text, shadow: a.shadow, glow: a.glow, reflection: a.reflection, soft_edge: a.soft_edge }), line: None })
+                let body = a.text.as_ref();
+                let text = body.map(default_text_style).unwrap_or_default();
+                let (anchor, insets, wrap) = body.map(|b| (b.anchor, b.insets, b.wrap)).unwrap_or((ibis_doc_model::VerticalAnchor::Middle, ibis_doc_model::Insets::default(), true));
+                Some(ObjectDefaults { shape: Some(ShapeDefault { fill: a.fill.clone(), stroke: a.stroke.clone(), text, shadow: a.shadow, glow: a.glow, reflection: a.reflection, soft_edge: a.soft_edge, anchor, insets, wrap }), line: None, text_box: None })
             }
-            ShapeKind::Line(stroke) => Some(ObjectDefaults { shape: None, line: Some(stroke.clone()) }),
+            ShapeKind::TextBox(body) => {
+                Some(ObjectDefaults { shape: None, line: None, text_box: Some(ShapeDefault { fill: Fill::None, stroke: None, text: default_text_style(body), shadow: None, glow: None, reflection: None, soft_edge: None, anchor: body.anchor, insets: body.insets, wrap: body.wrap }) })
+            }
+            ShapeKind::Line(stroke) => Some(ObjectDefaults { shape: None, line: Some(stroke.clone()), text_box: None }),
             _ => None,
         };
         let Some(new) = defaults else { return };
         let mut merged = self.presentation().object_defaults.clone();
         if new.shape.is_some() { merged.shape = new.shape; }
         if new.line.is_some() { merged.line = new.line; }
+        if new.text_box.is_some() { merged.text_box = new.text_box; }
         if self.is_presentation() {
             self.shape_edit.defaults = merged.clone();
         }
@@ -1195,7 +1177,12 @@ impl SlideEditor {
                     a.glow = d.glow;
                     a.reflection = d.reflection;
                     a.soft_edge = d.soft_edge;
-                    if let Some(t) = a.text.as_mut() { t.style = d.text.clone(); }
+                    if let Some(t) = a.text.as_mut() {
+                        t.style = d.text.clone();
+                        t.anchor = d.anchor;
+                        t.insets = d.insets;
+                        t.wrap = d.wrap;
+                    }
                 }
             }
             ShapeKind::Auto(a) if is_connector_geometry(&a.geometry) => {
@@ -2282,7 +2269,7 @@ impl SlideEditor {
                 VideoStylePreset::DropShadow => {
                     pic.stroke = None;
                     pic.corner = 0;
-                    pic.shadow = Some(Shadow::simple(Color { rgb: Rgb(0), alpha: 128 }, 50_800, 50_800, 2_700_000));
+                    pic.shadow = Some(Shadow::simple(Color { rgb: Rgb(0), alpha: 128, theme: None }, 50_800, 50_800, 2_700_000));
                     pic.reflection = None;
                     pic.soft_edge = None;
                 }
@@ -2303,7 +2290,7 @@ impl SlideEditor {
                 VideoStylePreset::RoundedShadow => {
                     pic.stroke = None;
                     pic.corner = 20_000;
-                    pic.shadow = Some(Shadow::simple(Color { rgb: Rgb(0), alpha: 128 }, 50_800, 50_800, 2_700_000));
+                    pic.shadow = Some(Shadow::simple(Color { rgb: Rgb(0), alpha: 128, theme: None }, 50_800, 50_800, 2_700_000));
                     pic.reflection = None;
                     pic.soft_edge = None;
                 }
@@ -2775,3 +2762,12 @@ impl SlideEditor {
 }
 
 
+
+/// The look of a shape's text that 既定の図形に設定 keeps: the body's style with the first run's own over it (text formatted by hand is what a
+/// user means), and the first paragraph's alignment.
+fn default_text_style(body: &TextBody) -> TextStyle {
+    let paragraph = body.paragraphs.first();
+    let run = paragraph.and_then(|p| p.runs.iter().find(|r| !r.text.is_empty()).or_else(|| p.runs.first()));
+    let style = run.map(|r| body.style.with_run(&r.style)).unwrap_or_else(|| body.style.clone());
+    TextStyle { align: paragraph.and_then(|p| p.align).unwrap_or(body.style.align), ..style }
+}

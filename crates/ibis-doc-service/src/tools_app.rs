@@ -5,6 +5,8 @@
 
 use std::io::Write;
 
+use sha2::{Digest, Sha256};
+
 use ibis_doc_model::Document;
 use ibis_formats::Kind;
 use serde_json::{Value, json};
@@ -14,27 +16,50 @@ use crate::error::ToolError;
 use std::path::PathBuf;
 
 use crate::paths::{self, DOCUMENT_EXTENSIONS};
-use crate::service::{Args, Fingerprint, Open, Service};
+use crate::service::{Args, Fingerprint, Open, RevisionInfo, Service, hex};
 
 pub(crate) fn tools() -> Vec<Tool> {
     vec![
-        Tool { name: "app_get_version", description: "The version of ibisOffice this server runs.", access: Access::Read, returns_content: false, schema: || object(&[], &[]), run: get_version },
-        Tool { name: "app_list_documents", description: "The documents that are open.", access: Access::Read, returns_content: false, schema: || object(&[], &[]), run: list_documents },
+        Tool { name: "app_get_version", description: "The version of ibisOffice this server runs.", access: Access::Read, returns_content: false, schema: &|| object(&[], &[]), run: get_version },
+        Tool { name: "app_list_documents", description: "The documents that are open.", access: Access::Read, returns_content: false, schema: &|| object(&[], &[]), run: list_documents },
         Tool {
             name: "app_open_document",
             description: "Open a docx, xlsx or pptx file (under an allowed folder) and get its document_id. Nothing is run and nothing outside the file is fetched.",
             access: Access::Read,
             returns_content: false,
-            schema: || object(&[("path", string("The file's path.")), ("password", string("The password of an encrypted file."))], &["path"]),
+            schema: &|| {
+                object(
+                    &[
+                        ("path", string("The file's path: absolute, or from `folder` (with only one folder allowed, from that). Not needed with revision.kind open_document.")),
+                        ("folder", string("An allowed folder the path is from (needed for a relative path when several folders are allowed).")),
+                        (
+                            "revision",
+                            json!({
+                                "type": "object",
+                                "description": "Which version to read (default: the file as it is on disk now). The result's `revision` says which version was read.",
+                                "properties": {
+                                    "kind": { "enum": ["working_tree", "git", "open_document"], "description": "working_tree: the file on disk now. git: the file in a commit (read only: it cannot be saved over its own path). open_document: a copy of a document this server has open, as it is now with its unsaved changes." },
+                                    "commit": string("With git: the commit's SHA, 4 to 64 hexadecimal digits (not a branch or tag name). The result gives the full SHA."),
+                                    "document_id": string("With open_document: the document to copy."),
+                                },
+                                "required": ["kind"],
+                                "additionalProperties": false,
+                            }),
+                        ),
+                        ("password", string("The password of an encrypted file.")),
+                    ],
+                    &[],
+                )
+            },
             run: open_document,
         },
-        Tool { name: "app_get_document_info", description: "The kind, size, state (unsaved changes, signature, macros) and undo state of an open document.", access: Access::Read, returns_content: false, schema: || object(&[document_id()], &["document_id"]), run: get_document_info },
+        Tool { name: "app_get_document_info", description: "The kind, size, state (unsaved changes, signature, macros) and undo state of an open document.", access: Access::Read, returns_content: false, schema: &|| object(&[document_id()], &["document_id"]), run: get_document_info },
         Tool {
             name: "app_save_document",
             description: "Save an open document to `path`. A new name is the default; writing over an existing file needs overwrite: true (\"force\" also when the file changed since it was opened).",
             access: Access::File,
             returns_content: false,
-            schema: || {
+            schema: &|| {
                 object(
                     &[document_id(), ("path", string("Where to save.")), ("overwrite", json!({ "description": "true to replace an existing file; \"force\" to replace even one changed on disk since it was opened.", "enum": [true, false, "force"] }))],
                     &["document_id", "path"],
@@ -47,7 +72,7 @@ pub(crate) fn tools() -> Vec<Tool> {
             description: "Close an open document. A document with unsaved changes is closed only with discard: true.",
             access: Access::Read,
             returns_content: false,
-            schema: || object(&[document_id(), ("discard", boolean("Drop the unsaved changes."))], &["document_id"]),
+            schema: &|| object(&[document_id(), ("discard", boolean("Drop the unsaved changes."))], &["document_id"]),
             run: close_document,
         },
         Tool {
@@ -55,7 +80,7 @@ pub(crate) fn tools() -> Vec<Tool> {
             description: "Write an open document (as it is now, saved or not) as a PDF, or as PNG pictures (one a page: path name-01.png, name-02.png, ...). Needs the ibisOffice program next to this server.",
             access: Access::File,
             returns_content: false,
-            schema: || {
+            schema: &|| {
                 object(
                     &[
                         document_id(),
@@ -64,14 +89,16 @@ pub(crate) fn tools() -> Vec<Tool> {
                         ("range", string("The pages or slides, from 1: 1,3-5.")),
                         ("width", crate::catalog::integer("PNG width in pixels (16 to 8192).")),
                         ("overwrite", boolean("Replace files that are there.")),
+                        ("paper", string("The paper the pages are printed on, as `--print-paper`: a3, a4, a5, b4, b5, letter, legal, tabloid or <width>x<height>mm (a presentation's pages and handouts are put on it as PowerPoint prints). Default: the pages' own size.")),
+                        ("fit_paper", boolean("With paper: scale the pages to fit it (default true); false puts them at 100 %.")),
                     ],
                     &["document_id", "format", "path"],
                 )
             },
             run: export_document,
         },
-        Tool { name: "app_undo_document", description: "Undo the last edits (one tool call is one step).", access: Access::Edit, returns_content: false, schema: || object(&[document_id(), ("count", crate::catalog::integer("How many steps (default 1)."))], &["document_id"]), run: undo_document },
-        Tool { name: "app_redo_document", description: "Redo what was undone.", access: Access::Edit, returns_content: false, schema: || object(&[document_id(), ("count", crate::catalog::integer("How many steps (default 1)."))], &["document_id"]), run: redo_document },
+        Tool { name: "app_undo_document", description: "Undo the last edits (one tool call is one step).", access: Access::Edit, returns_content: false, schema: &|| object(&[document_id(), ("count", crate::catalog::integer("How many steps (default 1)."))], &["document_id"]), run: undo_document },
+        Tool { name: "app_redo_document", description: "Redo what was undone.", access: Access::Edit, returns_content: false, schema: &|| object(&[document_id(), ("count", crate::catalog::integer("How many steps (default 1)."))], &["document_id"]), run: redo_document },
     ]
 }
 
@@ -99,16 +126,31 @@ fn describe(id: &str, open: &Open) -> Value {
         "has_macros": open.has_macros,
         "can_undo": open.document.can_undo(),
         "can_redo": open.document.can_redo(),
+        "revision": open.revision_json(),
     });
     match open.kind {
         Kind::Document => {
             if let Some(flow) = presentation.flow.as_ref() {
                 info["paragraphs"] = json!(flow.body.iter().filter(|b| matches!(b, ibis_doc_model::flow::Block::Paragraph(_))).count());
                 info["tables"] = json!(flow.body.iter().filter(|b| matches!(b, ibis_doc_model::flow::Block::Table(_))).count());
+                info["properties"] = crate::tools_xlsx_read::properties_json(&flow.properties);
+                info["tracking_changes"] = json!(flow.track_changes);
             }
         }
-        Kind::Workbook => info["sheets"] = json!(presentation.slides.len()),
-        _ => info["slides"] = json!(presentation.slides.len()),
+        Kind::Workbook => {
+            info["sheets"] = json!(presentation.slides.len());
+            if let Some(w) = presentation.workbook.as_ref() {
+                info["calculation"] = json!({ "mode": match w.calc_mode { ibis_doc_model::sheet::CalcMode::Manual => "manual", ibis_doc_model::sheet::CalcMode::AutoNoTable => "automatic_except_tables", _ => "automatic" }, "iterative": w.iterate, "max_iterations": w.max_iterations, "max_change": w.max_change.0 });
+                info["properties"] = crate::tools_xlsx_read::properties_json(&w.properties);
+            }
+        }
+        _ => {
+            info["slides"] = json!(presentation.slides.len());
+            info["slide_size"] = json!({ "width": presentation.slide_size.width as f64 / 12700.0, "height": presentation.slide_size.height as f64 / 12700.0 });
+            info["properties"] = crate::tools_xlsx_read::properties_json(&presentation.properties);
+            let m = &presentation.header_footer;
+            info["header_footer"] = json!({ "date": m.date, "slide_number": m.number, "footer": m.footer, "hide_on_title": !m.on_title_slides });
+        }
     }
     info
 }
@@ -118,16 +160,87 @@ fn list_documents(service: &mut Service, _: &Value) -> Result<Value, ToolError> 
     Ok(json!({ "documents": documents }))
 }
 
+/// Which version a call asks for.
+enum Version {
+    WorkingTree,
+    Git(String),
+    OpenDocument(String),
+}
+
+fn parse_version(args: &Value) -> Result<Version, ToolError> {
+    let revision = match args.get("revision") {
+        None | Some(Value::Null) => return Ok(Version::WorkingTree),
+        Some(r) if r.is_object() => r,
+        Some(_) => return Err(ToolError::invalid("revision is an object: { \"kind\": \"working_tree\" | \"git\" | \"open_document\", ... }")),
+    };
+    if let Some(map) = revision.as_object()
+        && let Some(key) = map.keys().find(|k| !["kind", "commit", "document_id"].contains(&k.as_str()))
+    {
+        return Err(ToolError::invalid(format!("revision.{key} is not an argument")));
+    }
+    match revision.str_arg("kind").map_err(|_| ToolError::invalid("revision.kind is working_tree, git or open_document"))? {
+        "working_tree" => Ok(Version::WorkingTree),
+        "git" => Ok(Version::Git(revision.opt_str("commit")?.ok_or_else(|| ToolError::invalid("revision.commit is required with git"))?.to_string())),
+        "open_document" => Ok(Version::OpenDocument(revision.opt_str("document_id")?.ok_or_else(|| ToolError::invalid("revision.document_id is required with open_document"))?.to_string())),
+        other => Err(ToolError::invalid(format!("revision.kind {other:?} is not working_tree, git or open_document"))),
+    }
+}
+
 fn open_document(service: &mut Service, args: &Value) -> Result<Value, ToolError> {
-    let path = paths::resolve(&service.allow_dirs, args.str_arg("path")?, DOCUMENT_EXTENSIONS, true)?;
+    let version = parse_version(args)?;
+    if let Version::OpenDocument(from) = &version {
+        // A copy of a document this server has open, as it is now (its unsaved changes too).
+        if service.documents.len() >= service.limits.max_documents {
+            return Err(ToolError::new("out_of_range", format!("{} documents are open already; close one first", service.documents.len())));
+        }
+        let Some(source) = service.documents.get(from) else {
+            return Err(ToolError::new("unsupported_revision", format!("{from} is not a document this server has open (a document open in the ibisOffice window is another program's: it cannot be read from here yet)")));
+        };
+        let mut document = Document::new(source.document.presentation().clone());
+        document.set_file(Some(paths::shown(&source.path)));
+        if source.document.is_dirty() {
+            document.mark_dirty();
+        }
+        let open = Open {
+            kind: source.kind,
+            document,
+            source: source.source.clone(),
+            path: source.path.clone(),
+            fingerprint: source.fingerprint.clone(),
+            signed: source.signed,
+            has_macros: source.has_macros,
+            revision: RevisionInfo { kind: "open_document", commit: source.revision.commit.clone(), path: source.revision.path.clone() },
+            states: vec![source.state().to_string()],
+            redo_states: Vec::new(),
+            pinned: source.pinned,
+        };
+        let id = service.new_document_id();
+        let info = describe(&id, &open);
+        service.documents.insert(id, open);
+        return Ok(info);
+    }
+    let git = matches!(version, Version::Git(_));
+    let located = paths::locate(&service.allow_dirs, args.opt_str("folder")?, args.str_arg("path")?, DOCUMENT_EXTENSIONS, !git)?;
+    let path = located.real.clone();
     if service.documents.len() >= service.limits.max_documents {
         return Err(ToolError::new("out_of_range", format!("{} documents are open already; close one first", service.documents.len())));
     }
-    let size = std::fs::metadata(&path).map_err(|e| ToolError::new("file_not_found", e.to_string()))?.len();
-    if size > service.limits.max_file_size {
-        return Err(ToolError::new("file_too_large", format!("{size} bytes; the limit is {} (--max-file-size)", service.limits.max_file_size)));
-    }
-    let data = std::fs::read(&path).map_err(|e| ToolError::new("file_not_found", e.to_string()))?;
+    let (data, commit) = if let Version::Git(commit) = &version {
+        let file = crate::git_read::read_commit(&service.allow_dirs, &path, commit, service.limits.max_file_size)?;
+        (file.data, Some(file.commit))
+    } else {
+        let size = std::fs::metadata(&path).map_err(|e| ToolError::new("file_not_found", e.to_string()))?.len();
+        if size > service.limits.max_file_size {
+            return Err(ToolError::new("file_too_large", format!("{size} bytes; the limit is {} (--max-file-size)", service.limits.max_file_size)));
+        }
+        (std::fs::read(&path).map_err(|e| ToolError::new("file_not_found", e.to_string()))?, None)
+    };
+    let revision = RevisionInfo { kind: if git { "git" } else { "working_tree" }, commit, path: Some(located.relative()) };
+    open_data(service, data, path, revision, git)
+}
+
+/// The bytes of a file read as the version `revision` says, opened as a new document.
+fn open_data(service: &mut Service, data: Vec<u8>, path: PathBuf, revision: RevisionInfo, pinned: bool) -> Result<Value, ToolError> {
     if let Some(expanded) = paths::expanded_size(&data)
         && expanded > (data.len() as u64).saturating_mul(service.limits.max_expansion).max(1 << 20)
     {
@@ -151,7 +264,8 @@ fn open_document(service: &mut Service, args: &Value) -> Result<Value, ToolError
     let mut document = Document::new(opened.presentation);
     document.set_file(Some(paths::shown(&path)));
     let id = service.new_document_id();
-    let open = Open { kind, document, source: opened.source, path, fingerprint, signed, has_macros };
+    let states = vec![Open::first_state(&fingerprint)];
+    let open = Open { kind, document, source: opened.source, path, fingerprint, signed, has_macros, revision, states, redo_states: Vec::new(), pinned };
     let info = describe(&id, &open);
     service.documents.insert(id, open);
     Ok(info)
@@ -203,7 +317,17 @@ fn save_document(service: &mut Service, args: &Value) -> Result<Value, ToolError
     let target = paths::resolve(&service.allow_dirs, args.str_arg("path")?, DOCUMENT_EXTENSIONS, false)?;
     let open = service.open_document(id)?;
     let same_file = target == open.path;
+    if same_file && open.pinned {
+        return Err(ToolError::new("read_only", "this is a version read from a Git commit: it is not written over its own path (save it under another name)"));
+    }
     if target.exists() {
+        // The file on disk must be the one the caller read (design 159, 3.3); `overwrite: "force"` does not skip it.
+        if let Some(expected) = args.opt_str("expected_revision")? {
+            let on_disk = std::fs::read(&target).map(|d| hex(&Sha256::digest(&d))).unwrap_or_default();
+            if !on_disk.eq_ignore_ascii_case(expected) {
+                return Err(ToolError::new("revision_mismatch", format!("the file on disk has file_sha256 {on_disk} but expected_revision is {expected}: read it again")));
+            }
+        }
         if overwrite == "no" {
             return Err(ToolError::new("not_allowed_path", format!("{} exists: pass overwrite: true to replace it", target.display())));
         }
@@ -240,6 +364,12 @@ fn write_replacing(target: &std::path::Path, bytes: &[u8]) -> Result<(), ToolErr
     })
 }
 
+/// A paper name `--print-paper` takes (`<width>x<height>mm` is 10 to 5000 mm each, as the program takes it): letters, digits, `x` and `.` only, so nothing else is passed on.
+fn valid_paper(text: &str) -> bool {
+    matches!(text, "a3" | "a4" | "a5" | "b4" | "b5" | "letter" | "legal" | "tabloid")
+        || text.strip_suffix("mm").and_then(|n| n.split_once('x')).is_some_and(|(w, h)| [w, h].iter().all(|v| !v.is_empty() && v.len() <= 7 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.') && v.parse::<f32>().is_ok_and(|n| (10.0..=5000.0).contains(&n))))
+}
+
 fn export_document(service: &mut Service, args: &Value) -> Result<Value, ToolError> {
     use std::process::{Command, Stdio};
 
@@ -258,11 +388,26 @@ fn export_document(service: &mut Service, args: &Value) -> Result<Value, ToolErr
     if width.is_some_and(|w| !(16..=8192).contains(&w)) {
         return Err(ToolError::invalid("width is 16 to 8192 pixels"));
     }
+    let paper = args.opt_str("paper")?.map(|p| p.trim().to_ascii_lowercase());
+    if paper.as_deref().is_some_and(|p| !valid_paper(p)) {
+        return Err(ToolError::invalid("paper is a3, a4, a5, b4, b5, letter, legal, tabloid or <width>x<height>mm"));
+    }
+    let fit_paper_given = args.opt_bool("fit_paper")?;
+    let fit_paper = fit_paper_given.unwrap_or(true);
+    if paper.is_some() && format == "png" {
+        return Err(ToolError::invalid("paper is for pdf: a picture has no paper"));
+    }
+    if fit_paper_given.is_some() && paper.is_none() {
+        return Err(ToolError::invalid("fit_paper needs paper"));
+    }
     let exporter = service.exporter.clone().ok_or_else(|| ToolError::new("unsupported_operation", "this server has no ibisOffice program to export with"))?;
     let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("document").to_string();
     let open = service.open_document(id)?;
     let bytes = open.source.save(open.document.presentation(), ibis_formats::SaveOptions::default()).map_err(|e| ToolError::new("internal", e.to_string()))?;
     let extension = open.path.extension().and_then(|e| e.to_str()).unwrap_or("docx").to_string();
+    if paper.is_some() && !matches!(extension.as_str(), "pptx" | "ppt" | "odp") {
+        return Err(ToolError::new("unsupported_operation", "paper is for a presentation: the page of a document or a sheet is its own page setup's"));
+    }
     // The document as it is now is written to a folder of its own, drawn there, and what is drawn is moved to where it was asked.
     let work = std::env::temp_dir().join(format!("ibisoffice-export-{}", id.trim_start_matches('d')));
     let _ = std::fs::remove_dir_all(&work);
@@ -279,6 +424,12 @@ fn export_document(service: &mut Service, args: &Value) -> Result<Value, ToolErr
         command.arg("--export").arg(format).arg("--out-dir").arg(&out_dir);
         if let Some(range) = &range {
             command.arg("--range").arg(range);
+        }
+        if let Some(paper) = &paper {
+            command.arg("--print-paper").arg(paper);
+            if !fit_paper {
+                command.arg("--no-print-fit-paper");
+            }
         }
         if let (Some(width), "png") = (width, format) {
             command.arg("--width").arg(width.to_string());

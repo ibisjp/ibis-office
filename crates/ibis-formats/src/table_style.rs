@@ -504,3 +504,138 @@ mod tests {
         assert!(pivot.contains_key("headerRow") && pivot.contains_key("firstRowSubheading"));
     }
 }
+
+
+/// What a cell holds, to be put back as it is.
+fn cell_input(cell: Option<&ibis_doc_model::SheetCell>) -> ibis_doc_model::sheet_command::CellInput {
+    use ibis_doc_model::sheet_command::CellInput;
+    match cell {
+        Some(c) => match &c.formula {
+            Some(f) => CellInput::Formula(f.clone()),
+            None => CellInput::Value(c.value.clone()),
+        },
+        None => CellInput::Value(ibis_doc_model::CellValue::Empty),
+    }
+}
+
+/// The cells to put so `sheet` shows `table` in its style: each cell of the
+/// range whose format differs from that of `base` (the sheet as it will be,
+/// a grown table's old edge taken off) with the style laid on, or whose
+/// content `contents` gives, with its content.
+pub fn styled_cells(sheet: &Sheet, base: &Sheet, table: &ibis_doc_model::SheetTable, theme: &[(String, ibis_doc_model::Rgb)], contents: &[(u32, u32, ibis_doc_model::sheet_command::CellInput)]) -> Vec<ibis_doc_model::sheet_command::PutCell> {
+    let styled = styled_with_table(base, table, theme);
+    let r = table.range;
+    let mut out = Vec::new();
+    for row in r.first_row..=r.last_row {
+        for column in r.first_column..=r.last_column {
+            let before = sheet.cell(row, column);
+            let after = styled.cell(row, column);
+            let style_before = before.map(|c| &sheet.styles[c.style as usize]);
+            let style_after = after.map(|c| &styled.styles[c.style as usize]);
+            let content = contents.iter().find(|(a, b, _)| (*a, *b) == (row, column)).map(|(_, _, i)| i.clone());
+            if style_before == style_after && content.is_none() {
+                continue;
+            }
+            out.push(ibis_doc_model::sheet_command::PutCell { row, column, input: content.unwrap_or_else(|| cell_input(before)), style: style_after.cloned() });
+        }
+    }
+    out
+}
+
+
+/// The formats the old style laid on `sheet`'s cells taken off: each of a
+/// cell's fill, borders, bold and colour that is what the style gives it.
+fn without_style(sheet: &Sheet, table: &ibis_doc_model::SheetTable, theme: &[(String, ibis_doc_model::Rgb)]) -> Sheet {
+    let r = table.range;
+    let mut bare = sheet.clone();
+    for c in bare.cells.iter_mut().filter(|c| (r.first_row..=r.last_row).contains(&c.row) && (r.first_column..=r.last_column).contains(&c.column)) {
+        let mut st = sheet.styles[c.style as usize].clone();
+        st.fill = None;
+        st.left = None;
+        st.right = None;
+        st.top = None;
+        st.bottom = None;
+        st.bold = false;
+        st.color = ibis_doc_model::Rgb::BLACK;
+        bare.styles.push(st);
+        c.style = (bare.styles.len() - 1) as u32;
+    }
+    let overlay = styled_with_table(&bare, table, theme);
+    let mut out = sheet.clone();
+    for row in r.first_row..=r.last_row {
+        for column in r.first_column..=r.last_column {
+            let (Some(cell), Some(o)) = (sheet.cell(row, column), overlay.cell(row, column)) else { continue };
+            let o = &overlay.styles[o.style as usize];
+            let mut st = sheet.styles[cell.style as usize].clone();
+            let before = st.clone();
+            if o.fill.is_some() && st.fill == o.fill {
+                st.fill = None;
+            }
+            let strip = |side: &mut Option<ibis_doc_model::Border>, given: &Option<ibis_doc_model::Border>| {
+                if given.is_some() && side == given {
+                    *side = None;
+                }
+            };
+            strip(&mut st.left, &o.left);
+            strip(&mut st.right, &o.right);
+            strip(&mut st.top, &o.top);
+            strip(&mut st.bottom, &o.bottom);
+            if o.bold && st.bold {
+                st.bold = false;
+            }
+            if o.color != ibis_doc_model::Rgb::BLACK && st.color == o.color {
+                st.color = ibis_doc_model::Rgb::BLACK;
+            }
+            if st != before {
+                let id = out.style_index(st);
+                if let Some(c) = out.cells.iter_mut().find(|c| (c.row, c.column) == (row, column)) {
+                    c.style = id;
+                }
+            }
+        }
+    }
+    out
+}
+
+
+/// The cells to put when `old` became `table` (its style, its options, its range): the cells of both ranges whose look differs from what the new style
+/// gives them (the old style's fills, borders, bold and colour taken off first), or that `contents` puts. A cell that loses its look gets the sheet's
+/// first style.
+pub fn restyled_cells(sheet: &Sheet, old: &ibis_doc_model::SheetTable, table: &ibis_doc_model::SheetTable, theme: &[(String, ibis_doc_model::Rgb)], contents: &[(u32, u32, ibis_doc_model::sheet_command::CellInput)]) -> Vec<ibis_doc_model::sheet_command::PutCell> {
+    let mut base = without_style(sheet, old, theme);
+        for (row, column, input) in contents {
+            if matches!(input, ibis_doc_model::sheet_command::CellInput::Clear) {
+                // A row the table leaves (its 集計行, its headings) loses its look.
+                if let Some(c) = base.cells.iter_mut().find(|c| (c.row, c.column) == (*row, *column)) {
+                    c.style = 0;
+                }
+            }
+        }
+        let styled = styled_with_table(&base, table, theme);
+        let area = |r: ibis_doc_model::CellRange| (r.first_row..=r.last_row).flat_map(move |row| (r.first_column..=r.last_column).map(move |c| (row, c)));
+        let mut cells: Vec<ibis_doc_model::sheet_command::PutCell> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (row, column) in area(old.range).chain(area(table.range)) {
+            if !seen.insert((row, column)) {
+                continue;
+            }
+            let inside = (table.range.first_row..=table.range.last_row).contains(&row) && (table.range.first_column..=table.range.last_column).contains(&column);
+            let style_before = sheet.cell(row, column).map(|c| sheet.styles[c.style as usize].clone());
+            let style_after: Option<ibis_doc_model::CellStyle> = if inside { styled.cell(row, column).map(|c| styled.styles[c.style as usize].clone()) } else { base.cell(row, column).map(|c| base.styles[c.style as usize].clone()) };
+            let content = contents.iter().find(|(a, b, _)| (*a, *b) == (row, column)).map(|(_, _, i)| i.clone());
+            if style_before == style_after && content.is_none() {
+                continue;
+            }
+            let input = content.unwrap_or_else(|| match sheet.cell(row, column) {
+                Some(c) => match &c.formula {
+                    Some(f) => ibis_doc_model::sheet_command::CellInput::Formula(f.clone()),
+                    None if c.value.is_empty() => ibis_doc_model::sheet_command::CellInput::Clear,
+                    None => ibis_doc_model::sheet_command::CellInput::Value(c.value.clone()),
+                },
+                None => ibis_doc_model::sheet_command::CellInput::Clear,
+            });
+            cells.push(ibis_doc_model::sheet_command::PutCell { row, column, input, style: Some(style_after.unwrap_or_else(|| sheet.styles.first().cloned().unwrap_or_default())) });
+        }
+    cells
+}
+

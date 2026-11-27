@@ -63,7 +63,9 @@ impl SlideEditor {
             let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
             panel.origin = (shape.frame.x + xs.get(p.location.last_column as usize + 1).copied().unwrap_or(0) + GAP, shape.frame.y + ys.get(p.location.first_row as usize).copied().unwrap_or(0));
         } else {
-            panel.message = text("xlsx.slicer-insert.select-table").to_string();
+            // Nothing to make a slicer of: told in a message box with one OK (as Excel does), not in a panel whose OK does nothing (#261).
+            self.show_alert(text("xlsx.insert-slicer").trim_end_matches('…').to_string().into(), text("xlsx.slicer-insert.select-table"), cx);
+            return;
         }
         panel.checked = vec![false; panel.fields.len()];
         let state = self.wb_mut();

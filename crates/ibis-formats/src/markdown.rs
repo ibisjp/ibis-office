@@ -1205,6 +1205,14 @@ fn parse_blocks(
             }
         }
 
+        if trimmed.ends_with(" -->")
+            && (trimmed.starts_with("<!-- fixed-layout-page: ")
+                || trimmed.starts_with("<!-- fixed-layout-diagnostic: "))
+        {
+            i += 1;
+            continue;
+        }
+
         // Page break & Column break & TOC directives
         if matches!(
             trimmed,
@@ -1301,6 +1309,10 @@ fn parse_blocks(
                 }
                 "mermaid" => {
                     blocks.push(build_mermaid_block(&content, ctx)?);
+                }
+                "plantuml" | "puml" => {
+                    let fence_lang = lang.split_whitespace().next().unwrap_or("plantuml");
+                    blocks.push(build_plantuml_block(fence_lang, &content, ctx));
                 }
                 _ => {
                     blocks.push(build_code_block(&content, ctx));
@@ -1470,6 +1482,12 @@ fn parse_blocks(
                 break;
             }
             para_lines.push(l_raw);
+            i += 1;
+        }
+        // A line that starts with a marker no branch above handles (e.g. an unknown `::: name` line) made no progress here and the loop never ended;
+        // it is a paragraph line.
+        if para_lines.is_empty() && i < lines.len() {
+            para_lines.push(lines[i]);
             i += 1;
         }
 
@@ -2198,10 +2216,36 @@ fn build_mermaid_block(content: &str, ctx: &mut ParseContext<'_>) -> Result<Bloc
     }
 }
 
+/// A `plantuml` / `puml` fence: drawn offline as SVG (the Mermaid renderers are shared), its source kept in the picture's
+/// description and its fence word in the title (`__plantuml__:<word>`), so a save writes the same fence back. A source with
+/// a macro, a timing diagram it cannot draw or an unknown diagram type stays a code block.
+fn build_plantuml_block(fence_lang: &str, content: &str, ctx: &mut ParseContext<'_>) -> Block {
+    let rendered = crate::mermaid::render_plantuml(content);
+    let has_blocking = rendered.unsupported.iter().any(|u| matches!(u.kind, "macro" | "timing" | "diagram-type"));
+    if !has_blocking
+        && let Some(crate::mermaid::MermaidOutput::Svg { bytes, width_px, height_px }) = rendered.output
+    {
+        let marker = format!("__plantuml__:{fence_lang}");
+        return build_diagram_svg_paragraph(bytes, width_px, height_px, &marker, content, ctx);
+    }
+    build_code_block(content, ctx)
+}
+
 fn build_mermaid_svg_paragraph(
     bytes: Vec<u8>,
     width_px: u32,
     height_px: u32,
+    content: &str,
+    ctx: &mut ParseContext<'_>,
+) -> Block {
+    build_diagram_svg_paragraph(bytes, width_px, height_px, "__mermaid__", content, ctx)
+}
+
+fn build_diagram_svg_paragraph(
+    bytes: Vec<u8>,
+    width_px: u32,
+    height_px: u32,
+    marker_title: &str,
     content: &str,
     ctx: &mut ParseContext<'_>,
 ) -> Block {
@@ -2222,7 +2266,7 @@ fn build_mermaid_svg_paragraph(
         data: bytes.into(),
     });
     let mut look = PictureLook::default();
-    look.alt_text.title = "__mermaid__".to_string();
+    look.alt_text.title = marker_title.to_string();
     look.alt_text.description = content.to_string();
     let mut p = FlowParagraph {
         id: ctx.fresh_id(),
@@ -2305,6 +2349,8 @@ fn build_chart_block_from_spec(
                     trendline: None,
                     error_bars: None,
                     bubble_3d: false,
+                    has_format: false,
+                    has_outline: false,
                 })
                 .collect();
             let temp_chart = Chart {
@@ -3065,6 +3111,8 @@ fn decode_data_uri_image(uri: &str) -> Option<(MediaFormat, Vec<u8>)> {
         "gif" => MediaFormat::Gif,
         "bmp" => MediaFormat::Bmp,
         "svg+xml" | "svg" => MediaFormat::Svg,
+        "x-emf" | "emf" => MediaFormat::Emf,
+        "x-wmf" | "wmf" => MediaFormat::Wmf,
         _ => return None,
     };
     let bytes = decode_base64(b64.trim())?;
@@ -3124,6 +3172,8 @@ fn detect_image_format(bytes: &[u8], path: &std::path::Path) -> Option<MediaForm
         Some("gif") => Some(MediaFormat::Gif),
         Some("bmp") => Some(MediaFormat::Bmp),
         Some("svg") => Some(MediaFormat::Svg),
+        Some("emf") => Some(MediaFormat::Emf),
+        Some("wmf") => Some(MediaFormat::Wmf),
         _ => None,
     }
 }
@@ -3551,6 +3601,25 @@ fn serialize_paragraph(
                 out.push_str("```\n\n");
                 return;
             }
+            FlowRunKind::Picture { look, .. }
+                if look.alt_text.title == "__plantuml__" || look.alt_text.title.starts_with("__plantuml__:") =>
+            {
+                let fence = look
+                    .alt_text
+                    .title
+                    .strip_prefix("__plantuml__:")
+                    .filter(|lang| !lang.is_empty())
+                    .unwrap_or("plantuml");
+                out.push_str("```");
+                out.push_str(fence);
+                out.push('\n');
+                out.push_str(&look.alt_text.description);
+                if !look.alt_text.description.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str("```\n\n");
+                return;
+            }
             _ => {}
         }
     }
@@ -3891,6 +3960,8 @@ fn serialize_runs(
                         MediaFormat::Gif => "gif",
                         MediaFormat::Bmp => "bmp",
                         MediaFormat::Svg => "svg+xml",
+                        MediaFormat::Emf => "x-emf",
+                        MediaFormat::Wmf => "x-wmf",
                         _ => "png",
                     };
                     let b64 = encode_base64(&m.data);
@@ -3980,6 +4051,36 @@ fn format_text_run(text: &str, fmt: &RunFormat, is_link: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn office_markdown_round_trip_preserves_metafile_bytes() {
+        for (format, mime, original) in [
+            (MediaFormat::Emf, "x-emf", include_bytes!("../../ibis-emf/tests/fixtures/shapes.emf").as_slice()),
+            (MediaFormat::Wmf, "x-wmf", include_bytes!("../../ibis-emf/tests/fixtures/shapes.wmf").as_slice()),
+        ] {
+            let snippet = format!(
+                "![drawing](data:image/{mime};base64,{}){{width=40mm height=30mm}}\n",
+                encode_base64(original)
+            );
+            let package = import_markdown_to_docx_bytes(snippet.as_bytes()).unwrap();
+            let opened = crate::open(package).unwrap();
+            let markdown = export_presentation_to_markdown(&opened.presentation).unwrap();
+            assert!(markdown.contains(&format!("data:image/{mime};base64,")));
+            let rebuilt = crate::open(import_markdown_to_docx_bytes(markdown.as_bytes()).unwrap()).unwrap();
+            assert!(rebuilt.presentation.media.iter().any(|media| {
+                media.format == format && media.data.as_ref() == original
+            }));
+        }
+    }
+
+    #[test]
+    fn fixed_layout_markdown_comments_do_not_become_document_text() {
+        let markdown = b"<!-- fixed-layout-page: 1 -->\n\nShared document\n\n<!-- fixed-layout-diagnostic: Page 1: no extractable text -->\n";
+        let opened = crate::open(import_markdown_to_docx_bytes(markdown).unwrap()).unwrap();
+        let flow = opened.presentation.flow.unwrap();
+        let text = ibis_doc_model::flow_command::all_paragraphs(&flow).iter().map(|p| p.text()).collect::<Vec<_>>();
+        assert_eq!(text, ["Shared document"]);
+    }
 
     #[test]
     fn detects_markdown_vs_csv() {
@@ -4294,5 +4395,18 @@ pie showData
         assert!(exported.contains("```mermaid\nsequenceDiagram"));
         assert!(exported.contains("```mermaid\nflowchart LR"));
         assert!(exported.contains("```chart\ntype: pie"));
+    }
+
+    #[test]
+    fn plantuml_fences_are_drawn_as_svg_and_written_back() {
+        let md = "# PlantUML\n\n```plantuml\n@startuml\nAlice -> Bob: Hello\nBob --> Alice: Hi\n@enduml\n```\n\n```puml\n@startmindmap\n* Root\n** Child\n@endmindmap\n```\n";
+        let opened = open_markdown(md.as_bytes().to_vec()).expect("open_markdown");
+        let pres = &opened.presentation;
+        let flow = pres.flow.as_ref().unwrap();
+        let svg_count = pres.media.iter().filter(|m| m.format == MediaFormat::Svg).count();
+        assert_eq!(svg_count, 2, "both PlantUML blocks should be drawn as SVG");
+        let exported = export_markdown(flow, &pres.media);
+        assert!(exported.contains("```plantuml\n@startuml\nAlice -> Bob: Hello"), "{exported}");
+        assert!(exported.contains("```puml\n@startmindmap"), "{exported}");
     }
 }

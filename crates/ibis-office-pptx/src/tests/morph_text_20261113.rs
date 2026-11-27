@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 2026-11-13 (#88): the morph of a long English text (about 2000 characters, the second slide's text a changed copy of the first's) by
 //! word and by character: the words and characters both texts have move from where they were to where they are, the others fade.
-use crate::morph::MorphCrate as _;
+use crate::ext::*;
 use crate::morph_text::{at, Move, Unit};
 use crate::shell::scenario::Scenario;
 use ibis_doc_model::{EmuRect, Shape, ShapeKind, TextBody};

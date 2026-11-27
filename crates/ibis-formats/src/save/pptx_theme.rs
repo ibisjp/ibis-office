@@ -125,8 +125,111 @@ fn effect_list_xml(x: &Prefixes, shape: &ShapeDefault) -> Result<String, Error> 
     Ok(if effects.is_empty() { effects } else { format!("<{a}effectLst>{effects}</{a}effectLst>") })
 }
 
+/// `a:spDef` (the shape) or `a:txDef` (the text box) of `a:objectDefaults`: the fill, line and effects in `a:spPr`, the anchor, margins and wrapping
+/// in `a:bodyPr`, the text in `a:lstStyle`. A shape's definition gets the `a:style` PowerPoint's own has (the theme's references for the line, fill,
+/// effects and font; the values above are explicit, so the references only stand behind them); a text box's has none.
+fn write_shape_default(doc: &mut ibis_ooxml::XmlDocument, x: &Prefixes, obj_def_node: NodeId, name: &str, shape_def: &ShapeDefault, text_box: bool) -> Result<(), Error> {
+    let a = &x.a;
+    let def_node = if let Some(n) = doc.child(obj_def_node, name) {
+        n
+    } else {
+        let n = x.import(doc, &format!("<{a}{name}><{a}spPr/><{a}bodyPr/><{a}lstStyle/></{a}{name}>"))?;
+        // spDef, lnDef, txDef, in that order (CT_ObjectStyleDefaults).
+        let order = ["spDef", "lnDef", "txDef"];
+        let rank = order.iter().position(|o| *o == name).unwrap_or(0);
+        let before = doc.elements(obj_def_node).find(|&c| order.iter().position(|o| *o == doc.local_name(c)).is_some_and(|r| r > rank));
+        match before {
+            Some(next) => doc.insert_before(next, n),
+            None => {
+                let count = doc.children(obj_def_node).len();
+                doc.insert(obj_def_node, count, n);
+            }
+        }
+        n
+    };
+
+    let sp_pr_node = match doc.child(def_node, "spPr") {
+        Some(n) => n,
+        None => doc.append_element(def_node, &format!("{a}spPr")),
+    };
+    let to_remove: Vec<NodeId> = doc.elements(sp_pr_node).filter(|&c| matches!(doc.local_name(c), "noFill" | "solidFill" | "gradFill" | "blipFill" | "pattFill" | "ln" | "effectLst")).collect();
+    for n in to_remove {
+        doc.detach(n);
+    }
+    let fill_node = x.import(doc, &fill_xml(x, &shape_def.fill)?)?;
+    doc.insert(sp_pr_node, doc.children(sp_pr_node).len(), fill_node);
+    let ln_node = x.import(doc, &line_xml(x, shape_def.stroke.as_ref()))?;
+    doc.insert(sp_pr_node, doc.children(sp_pr_node).len(), ln_node);
+    let effects_str = effect_list_xml(x, shape_def)?;
+    if !effects_str.is_empty() {
+        let effect_node = x.import(doc, &effects_str)?;
+        doc.insert(sp_pr_node, doc.children(sp_pr_node).len(), effect_node);
+    }
+
+    // The body: its attributes are set, what else the file has in it (an autofit) stays.
+    let body_pr = match doc.child(def_node, "bodyPr") {
+        Some(n) => n,
+        None => doc.append_element(def_node, &format!("{a}bodyPr")),
+    };
+    let i = shape_def.insets;
+    doc.set_attr(body_pr, "wrap", if shape_def.wrap { "square" } else { "none" });
+    doc.set_attr(body_pr, "lIns", &i.left.to_string());
+    doc.set_attr(body_pr, "tIns", &i.top.to_string());
+    doc.set_attr(body_pr, "rIns", &i.right.to_string());
+    doc.set_attr(body_pr, "bIns", &i.bottom.to_string());
+    doc.set_attr(body_pr, "rtlCol", "0");
+    doc.set_attr(body_pr, "anchor", match shape_def.anchor {
+        ibis_doc_model::VerticalAnchor::Top => "t",
+        ibis_doc_model::VerticalAnchor::Middle => "ctr",
+        ibis_doc_model::VerticalAnchor::Bottom => "b",
+    });
+
+    let lst_style_node = match doc.child(def_node, "lstStyle") {
+        Some(n) => {
+            let old: Vec<NodeId> = doc.children(n).to_vec();
+            for c in old {
+                doc.detach(c);
+            }
+            n
+        }
+        None => doc.append_element(def_node, &format!("{a}lstStyle")),
+    };
+    let algn_attr = match shape_def.text.align {
+        ibis_doc_model::TextAlign::Left => " algn=\"l\"",
+        ibis_doc_model::TextAlign::Right => " algn=\"r\"",
+        ibis_doc_model::TextAlign::Justify => " algn=\"just\"",
+        _ => " algn=\"ctr\"",
+    };
+    let bold_attr = if shape_def.text.bold { " b=\"1\"" } else { " b=\"0\"" };
+    let italic_attr = if shape_def.text.italic { " i=\"1\"" } else { " i=\"0\"" };
+    let size_attr = format!(" sz=\"{}\"", shape_def.text.font_size);
+    let mut text_colour = ibis_doc_model::Color::opaque(shape_def.text.color);
+    text_colour.theme = shape_def.text.color_theme;
+    let color_xml = format!("<{a}solidFill>{}</{a}solidFill>", color_xml(x, text_colour));
+    let font_xml = shape_def.text.font.as_deref().map(|f| format!("<{a}latin typeface=\"{}\"/>", xml_escape_attr(f))).unwrap_or_default();
+    let def_p_pr_str = format!("<{a}defPPr{algn_attr}><{a}defRPr{bold_attr}{italic_attr}{size_attr}>{color_xml}{font_xml}</{a}defRPr></{a}defPPr>");
+    let def_p_pr_node = x.import(doc, &def_p_pr_str)?;
+    doc.insert(lst_style_node, 0, def_p_pr_node);
+
+    // `a:style` (optional; when there it must hold all four references).
+    match doc.child(def_node, "style") {
+        Some(n) if doc.children(n).is_empty() => doc.detach(n),
+        _ => {}
+    }
+    if !text_box && doc.child(def_node, "style").is_none() {
+        let style = x.import(doc, &format!("<{a}style><{a}lnRef idx=\"1\"><{a}schemeClr val=\"accent1\"/></{a}lnRef><{a}fillRef idx=\"3\"><{a}schemeClr val=\"accent1\"/></{a}fillRef><{a}effectRef idx=\"2\"><{a}schemeClr val=\"accent1\"/></{a}effectRef><{a}fontRef idx=\"minor\"><{a}schemeClr val=\"lt1\"/></{a}fontRef></{a}style>"))?;
+        let count = doc.children(def_node).len();
+        doc.insert(def_node, count, style);
+    }
+    Ok(())
+}
+
+fn xml_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;")
+}
+
 pub(crate) fn write_object_defaults(doc: &mut ibis_ooxml::XmlDocument, defaults: &ObjectDefaults) -> Result<(), Error> {
-    if defaults.shape.is_none() && defaults.line.is_none() {
+    if defaults.shape.is_none() && defaults.line.is_none() && defaults.text_box.is_none() {
         return Ok(());
     }
     let Some(root) = doc.root_element() else { return Ok(()) };
@@ -148,85 +251,26 @@ pub(crate) fn write_object_defaults(doc: &mut ibis_ooxml::XmlDocument, defaults:
     };
 
     if let Some(shape_def) = &defaults.shape {
-        let sp_def_node = if let Some(n) = doc.child(obj_def_node, "spDef") {
-            n
-        } else {
-            let sp_def_str = format!("<{a}spDef><{a}spPr/><{a}bodyPr/><{a}lstStyle/><{a}style/></{a}spDef>");
-            let n = x.import(doc, &sp_def_str)?;
-            let count = doc.children(obj_def_node).len();
-            doc.insert(obj_def_node, count, n);
-            n
-        };
-
-        let sp_pr_node = if let Some(n) = doc.child(sp_def_node, "spPr") {
-            n
-        } else {
-            doc.append_element(sp_def_node, &format!("{a}spPr"))
-        };
-
-        let to_remove: Vec<NodeId> = doc.elements(sp_pr_node).filter(|&c| {
-            let local = doc.local_name(c);
-            matches!(local, "noFill" | "solidFill" | "gradFill" | "blipFill" | "pattFill" | "ln" | "effectLst")
-        }).collect();
-        for n in to_remove {
-            doc.detach(n);
-        }
-
-        let fill_str = fill_xml(&x, &shape_def.fill)?;
-        let fill_node = x.import(doc, &fill_str)?;
-        doc.insert(sp_pr_node, doc.children(sp_pr_node).len(), fill_node);
-
-        let ln_str = line_xml(&x, shape_def.stroke.as_ref());
-        let ln_node = x.import(doc, &ln_str)?;
-        doc.insert(sp_pr_node, doc.children(sp_pr_node).len(), ln_node);
-
-        let effects_str = effect_list_xml(&x, shape_def)?;
-        if !effects_str.is_empty() {
-            let effect_node = x.import(doc, &effects_str)?;
-            doc.insert(sp_pr_node, doc.children(sp_pr_node).len(), effect_node);
-        }
-
-        if doc.child(sp_def_node, "bodyPr").is_none() {
-            doc.append_element(sp_def_node, &format!("{a}bodyPr"));
-        }
-
-        let lst_style_node = if let Some(n) = doc.child(sp_def_node, "lstStyle") {
-            let to_remove: Vec<NodeId> = doc.children(n).to_vec();
-            for c in to_remove {
-                doc.detach(c);
-            }
-            n
-        } else {
-            doc.append_element(sp_def_node, &format!("{a}lstStyle"))
-        };
-
-        let algn_attr = match shape_def.text.align {
-            ibis_doc_model::TextAlign::Left => " algn=\"l\"",
-            ibis_doc_model::TextAlign::Right => " algn=\"r\"",
-            ibis_doc_model::TextAlign::Justify => " algn=\"just\"",
-            _ => " algn=\"ctr\"",
-        };
-        let bold_attr = if shape_def.text.bold { " b=\"1\"" } else { " b=\"0\"" };
-        let italic_attr = if shape_def.text.italic { " i=\"1\"" } else { " i=\"0\"" };
-        let size_attr = format!(" sz=\"{}\"", shape_def.text.font_size);
-        let color_xml = format!("<{a}solidFill><{a}srgbClr val=\"{:06X}\"/></{a}solidFill>", shape_def.text.color.0);
-        let def_p_pr_str = format!("<{a}defPPr{algn_attr}><{a}defRPr{bold_attr}{italic_attr}{size_attr}>{color_xml}</{a}defRPr></{a}defPPr>");
-        let def_p_pr_node = x.import(doc, &def_p_pr_str)?;
-        doc.insert(lst_style_node, 0, def_p_pr_node);
-
-        if doc.child(sp_def_node, "style").is_none() {
-            doc.append_element(sp_def_node, &format!("{a}style"));
-        }
+        write_shape_default(doc, &x, obj_def_node, "spDef", shape_def, false)?;
+    }
+    if let Some(text_box) = &defaults.text_box {
+        write_shape_default(doc, &x, obj_def_node, "txDef", text_box, true)?;
     }
 
     if let Some(stroke) = &defaults.line {
         let ln_def_node = if let Some(n) = doc.child(obj_def_node, "lnDef") {
             n
         } else {
-            let ln_def_str = format!("<{a}lnDef><{a}spPr/><{a}bodyPr/><{a}lstStyle/><{a}style/></{a}lnDef>");
+            let ln_def_str = format!("<{a}lnDef><{a}spPr/><{a}bodyPr/><{a}lstStyle/></{a}lnDef>");
             let n = x.import(doc, &ln_def_str)?;
-            let count = doc.children(obj_def_node).len();
-            doc.insert(obj_def_node, count, n);
+            // After spDef, before txDef.
+            match doc.child(obj_def_node, "txDef") {
+                Some(next) => doc.insert_before(next, n),
+                None => {
+                    let count = doc.children(obj_def_node).len();
+                    doc.insert(obj_def_node, count, n);
+                }
+            }
             n
         };
 
@@ -251,8 +295,14 @@ pub(crate) fn write_object_defaults(doc: &mut ibis_ooxml::XmlDocument, defaults:
         if doc.child(ln_def_node, "lstStyle").is_none() {
             doc.append_element(ln_def_node, &format!("{a}lstStyle"));
         }
+        match doc.child(ln_def_node, "style") {
+            Some(n) if doc.children(n).is_empty() => doc.detach(n),
+            _ => {}
+        }
         if doc.child(ln_def_node, "style").is_none() {
-            doc.append_element(ln_def_node, &format!("{a}style"));
+            let style = x.import(doc, &format!("<{a}style><{a}lnRef idx=\"1\"><{a}schemeClr val=\"accent1\"/></{a}lnRef><{a}fillRef idx=\"0\"><{a}schemeClr val=\"accent1\"/></{a}fillRef><{a}effectRef idx=\"0\"><{a}schemeClr val=\"accent1\"/></{a}effectRef><{a}fontRef idx=\"minor\"><{a}schemeClr val=\"tx1\"/></{a}fontRef></{a}style>"))?;
+            let count = doc.children(ln_def_node).len();
+            doc.insert(ln_def_node, count, style);
         }
     }
 

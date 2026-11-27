@@ -758,6 +758,25 @@ mod tests {
         assert_eq!(filled, vec![true, false, false, true]);
     }
 
+    /// GitHub #245: the caret of a cell typed into reads the fill the cell is drawn with, a rule's included.
+    #[test]
+    fn the_fill_under_the_caret_is_the_one_a_rule_draws() {
+        let mut sheet = Sheet::default();
+        sheet.rows = vec![20]; sheet.columns = vec![80; 2];
+        sheet.styles = vec![CellStyle::default()];
+        for c in 0..2u32 {
+            sheet.put_cell(0, c, Some(ibis_doc_model::SheetCell { runs: None, phonetic: None, row: 0, column: c, value: CellValue::Number(c as f64), text: c.to_string(), kind: ibis_doc_model::CellKind::Number, formula: None, style: 0 }));
+        }
+        sheet.conditional = vec![ConditionalFormat {
+            source_index: None,
+            ranges: vec![CellRange { first_row: 0, last_row: 0, first_column: 0, last_column: 0 }],
+            rules: vec![CfRule { kind: CfKind::Expression("TRUE".into()), priority: 1, stop: false, style: Some(CfStyle { fill: Some(Rgb(0x203864)), ..Default::default() }) }],
+        }];
+        let sheet = std::sync::Arc::new(sheet);
+        assert_eq!(crate::sheet_view::drawn_fill(&sheet, None, 0, 0), Some(Rgb(0x203864)), "a dark rule fill: the caret is white over it");
+        assert_eq!(crate::sheet_view::drawn_fill(&sheet, None, 0, 1), None, "outside the rule's range");
+    }
+
     #[test]
     fn overlapping_expression_priority_and_stop_control_property_merging() {
         let mut sheet = Sheet::default();

@@ -33,6 +33,10 @@ fn bad(message: &str) -> Error {
 }
 
 /// Whether `data` is an OpenDocument presentation or template (a zip whose `mimetype` says so).
+/// The default text style of the presentation: pair kerning on (`style:letter-kerning` has no default in ODF 1.3; PowerPoint's `-SaveAs pptx` of an
+/// .odp writes `kern="1200"` on all nine levels of `p:defaultTextStyle` and on every run whose style does not say otherwise).
+const DEFAULT_LEVELS: &str = r#"<a:lvl1pPr><a:defRPr kern="1200"/></a:lvl1pPr><a:lvl2pPr><a:defRPr kern="1200"/></a:lvl2pPr><a:lvl3pPr><a:defRPr kern="1200"/></a:lvl3pPr><a:lvl4pPr><a:defRPr kern="1200"/></a:lvl4pPr><a:lvl5pPr><a:defRPr kern="1200"/></a:lvl5pPr><a:lvl6pPr><a:defRPr kern="1200"/></a:lvl6pPr><a:lvl7pPr><a:defRPr kern="1200"/></a:lvl7pPr><a:lvl8pPr><a:defRPr kern="1200"/></a:lvl8pPr><a:lvl9pPr><a:defRPr kern="1200"/></a:lvl9pPr>"#;
+
 pub fn is_odp(data: &[u8]) -> bool {
     if !data.starts_with(b"PK") {
         return false;
@@ -64,6 +68,10 @@ pub(crate) struct Cx<'s, 'a, 'i> {
     next_rel: u32,
     next_id: u32,
     links: HashMap<String, String>,
+    /// The slide (1-based) of each page name: `text:a xlink:href="#Slide4273"` is a jump to that page.
+    pub(crate) page_numbers: HashMap<String, usize>,
+    /// The relationships of `links` that are jumps to a slide (`ppaction://hlinksldjump`).
+    slide_links: std::collections::HashSet<String>,
     /// The rotation of the shape being written (degrees, clockwise): a gradient on the page turns with it in DrawingML.
     pub(crate) shape_rotation: f64,
     /// The shapes of the page by their `draw:id` or `xml:id`, for what the animations name.
@@ -72,13 +80,17 @@ pub(crate) struct Cx<'s, 'a, 'i> {
 
 impl<'s, 'a, 'i> Cx<'s, 'a, 'i> {
     fn new(st: &'s Styles<'a, 'i>, archive: &'s ibis_formats::zip::Archive<'s>, media: &'s std::cell::RefCell<MediaStore>, first_rel: u32) -> Self {
-        Cx { st, archive, media, rels: Vec::new(), next_rel: first_rel, next_id: 2, links: HashMap::new(), shape_rotation: 0.0, shape_ids: HashMap::new() }
+        Cx { st, archive, media, rels: Vec::new(), next_rel: first_rel, next_id: 2, links: HashMap::new(), page_numbers: HashMap::new(), slide_links: Default::default(), shape_rotation: 0.0, shape_ids: HashMap::new() }
     }
 
     pub(crate) fn next_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         id
+    }
+
+    pub(crate) fn is_slide_link(&self, id: &str) -> bool {
+        self.slide_links.contains(id)
     }
 
     fn add_rel(&mut self, kind: &str, target: String, external: bool) -> String {
@@ -172,7 +184,19 @@ impl<'s, 'a, 'i> Cx<'s, 'a, 'i> {
 
     /// The relationship of a hyperlink to an address outside the presentation.
     pub(crate) fn link_rel(&mut self, url: &str) -> Option<String> {
-        if url.is_empty() || url.starts_with('#') {
+        if let Some(name) = url.strip_prefix('#') {
+            // A link to a page by its name (PowerPoint's ODP: `#Slide4273`): a relationship to that slide, action `hlinksldjump`.
+            let n = *self.page_numbers.get(name)?;
+            let key = format!("#{n}");
+            if let Some(id) = self.links.get(&key) {
+                return Some(id.clone());
+            }
+            let id = self.add_rel("slide", format!("slide{n}.xml"), false);
+            self.slide_links.insert(id.clone());
+            self.links.insert(key, id.clone());
+            return Some(id);
+        }
+        if url.is_empty() {
             return None;
         }
         if let Some(id) = self.links.get(url) {
@@ -398,12 +422,14 @@ pub fn to_pptx(data: &[u8]) -> Result<Vec<u8>, Error> {
     let mut have_notes = false;
     let mut notes_box: Option<Geom> = None;
     let mut slide_rels_all: Vec<Rel> = Vec::new();
+    let page_numbers: HashMap<String, usize> = pages.iter().enumerate().filter_map(|(i, p)| attr(*p, DRAW, "name").map(|n| (n.to_string(), i + 1))).collect();
     for (i, page) in pages.iter().enumerate() {
         let n = i + 1;
         let master_name = attr(*page, DRAW, "master-page-name").unwrap_or("");
         let master_i = masters.iter().position(|m| m == master_name).unwrap_or(0);
         let node = master_node(master_name);
         let mut cx = Cx::new(&st, &archive, &media, 2);
+        cx.page_numbers = page_numbers.clone();
         let shapes = objects(&mut cx, *page, false, &|class| master_box(node, class));
         let has = |class: &str| page.children().any(|c| is(c, DRAW, "frame") && attr(c, PRESENTATION, "class") == Some(class));
         let layout = if has("subtitle") { 0 } else if has("title") || has("outline") { 1 } else { 2 };
@@ -495,7 +521,7 @@ pub fn to_pptx(data: &[u8]) -> Result<Vec<u8>, Error> {
         notes_master_list = format!(r#"<p:notesMasterIdLst><p:notesMasterId r:id="rId{}"/></p:notesMasterIdLst>"#, extra + 4);
     }
     let presentation_xml = format!(
-        r#"{HEAD}<p:presentation xmlns:a="{A}" xmlns:r="{R}" xmlns:p="{P}" saveSubsetFonts="1"><p:sldMasterIdLst>{master_ids}</p:sldMasterIdLst>{notes_master_list}<p:sldIdLst>{slide_ids}</p:sldIdLst><p:sldSz cx="{width}" cy="{height}"/><p:notesSz cx="6858000" cy="9144000"/><p:defaultTextStyle><a:defPPr><a:defRPr lang="en-US"/></a:defPPr></p:defaultTextStyle></p:presentation>"#
+        r#"{HEAD}<p:presentation xmlns:a="{A}" xmlns:r="{R}" xmlns:p="{P}" saveSubsetFonts="1"><p:sldMasterIdLst>{master_ids}</p:sldMasterIdLst>{notes_master_list}<p:sldIdLst>{slide_ids}</p:sldIdLst><p:sldSz cx="{width}" cy="{height}"/><p:notesSz cx="6858000" cy="9144000"/><p:defaultTextStyle><a:defPPr><a:defRPr lang="en-US"/></a:defPPr>{DEFAULT_LEVELS}</p:defaultTextStyle></p:presentation>"#
     );
     let mut defaults = String::from(r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>"#);
     for ext in &media.borrow().extensions {

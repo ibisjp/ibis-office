@@ -154,3 +154,21 @@ fn x14_data_validations_are_read_and_saved_once_issue_260() {
     let saved = opened.source.save(d.presentation(), ibis_formats::SaveOptions::default()).unwrap();
     assert_eq!(rules(&ibis_formats::read(&saved).unwrap()).len(), read.len());
 }
+
+/// A file that has `_xlnm.Print_Titles` before `_xlnm.Print_Area` in its `definedNames` keeps both (Windows ODF team's finding, 2026-11-20).
+#[test]
+fn print_titles_before_print_area_are_both_read() {
+    use ibis_formats::ibis_ooxml::package::{Package, SaveOptions as PackageSave};
+    let original = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-sales.xlsx")).unwrap();
+    let mut package = Package::open(original).unwrap();
+    let xml = String::from_utf8(package.read("xl/workbook.xml").unwrap()).unwrap();
+    let names = r#"<definedNames><definedName name="_xlnm.Print_Titles" localSheetId="0">月次売上!$1:$1</definedName><definedName name="_xlnm.Print_Area" localSheetId="0">月次売上!$A$1:$E$10</definedName></definedNames>"#;
+    let at = xml.find("<calcPr").unwrap();
+    package.set_bytes("xl/workbook.xml", format!("{}{names}{}", &xml[..at], &xml[at..]).into_bytes());
+    let p = ibis_formats::read(&package.save(PackageSave::default()).unwrap()).unwrap();
+    let wb = p.workbook.as_deref().unwrap();
+    let found: Vec<&str> = wb.names.iter().map(|n| n.name.as_str()).collect();
+    assert!(found.contains(&"_xlnm.Print_Titles") && found.contains(&"_xlnm.Print_Area"), "{found:?}");
+    let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&p.slides[0]).unwrap();
+    assert!(sheet.print_area.is_some(), "the print area is read");
+}

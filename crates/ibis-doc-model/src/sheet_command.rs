@@ -21,6 +21,9 @@ use std::sync::Arc;
 use crate::command::{Command, EditError};
 use crate::drawing::Rgb;
 use crate::geometry::{Emu, EmuRect, EmuSize};
+
+/// The deepest outline level (`outlineLevel`) of a group Excel makes (its buttons number one more).
+pub const MAX_OUTLINE_LEVEL: u8 = 7;
 pub use ibis_calc::formula::Axis;
 
 use crate::model::{Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId};
@@ -271,10 +274,16 @@ pub enum SheetCommand {
     /// deleted, those below or to the right moving in; formulas referring
     /// to the cells that move follow (the cells deleted become `#REF!`).
     InsertOrDeleteCells { sheet: SlideId, range: CellRange, down: bool, insert: bool },
-    /// グループ化 of rows or columns `first`–`last`: their outline level one more (up to 7).
+    /// グループ化 of rows or columns `first`–`last`: their outline level one more (up to [`MAX_OUTLINE_LEVEL`], Excel's limit).
     Group { sheet: SlideId, axis: Axis, first: u32, last: u32 },
     /// グループ解除 of rows or columns `first`–`last`: their outline level one less.
     Ungroup { sheet: SlideId, axis: Axis, first: u32, last: u32 },
+    /// The −/+ button of the group of rows (columns) `first`–`last` (the lines of one run of outline levels): collapse it (its lines hidden, the line
+    /// after it marked collapsed), or show it again as Excel does: the lines of a deeper group that is collapsed on its own stay hidden.
+    CollapseGroup { sheet: SlideId, axis: Axis, first: u32, last: u32, collapse: bool },
+    /// The level button `level` (1, 2, …) of the outline: the lines of the groups of that level and deeper are hidden (and those groups marked
+    /// collapsed), the others shown.
+    ShowOutlineLevel { sheet: SlideId, axis: Axis, level: u8 },
     /// A hyperlink on `range` (the links there replaced), or (`None`) the
     /// links there taken off.
     SetHyperlink { sheet: SlideId, range: CellRange, link: Option<crate::sheet::Hyperlink> },
@@ -398,6 +407,9 @@ pub enum SheetCommand {
     ResetIgnoredErrors { sheet: SlideId },
     /// The sheet tab's colour (`None`: none).
     SetTabColor { sheet: SlideId, color: Option<Rgb> },
+    /// The outline's settings (データ > アウトライン の設定): whether the totals of the row groups are above their details and those of the column groups at
+    /// the left (`outlinePr/@summaryBelow`, `@summaryRight` = 0). The collapsed marks move to the new summary lines.
+    SetOutlineSummary { sheet: SlideId, above: bool, left: bool },
     /// 目盛線 (the grid lines between cells) shown or not.
     SetGridLines { sheet: SlideId, shown: bool },
     /// 見出し (row numbers and column letters) shown or not.
@@ -719,6 +731,8 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::SetColumnWidthFitted { sheet: slide, first, last, size } => set_size_marked(presentation, slide, Axis::Columns, first, last, size, WidthMark::Fitted),
         SheetCommand::SetRowHeightFitted { sheet: slide, first, last, size } => set_size_marked(presentation, slide, Axis::Rows, first, last, size, WidthMark::Fitted),
         SheetCommand::SetSize { sheet: slide, axis, first, last, size } => set_size_marked(presentation, slide, axis, first, last, size, WidthMark::Fixed),
+        SheetCommand::CollapseGroup { sheet: slide, axis, first, last, collapse } => collapse_group(presentation, slide, axis, first, last, collapse),
+        SheetCommand::ShowOutlineLevel { sheet: slide, axis, level } => show_outline_level(presentation, slide, axis, level),
         SheetCommand::SetHidden { sheet: slide, axis, first, last, hidden } => hide(presentation, slide, axis, first, last, hidden),
         SheetCommand::MoveCells { sheet: slide, from, row, column } => move_cells(presentation, slide, from, row, column),
         SheetCommand::HideSheet { sheet: slide, index: sheet, hidden, shape } => hide_sheet(presentation, slide, sheet, hidden, shape),
@@ -888,10 +902,15 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
                 Axis::Rows => &mut sheet.outline_rows,
                 Axis::Columns => &mut sheet.outline_columns,
             };
+            // Excel's deepest group is `outlineLevel` 7 (its buttons count 8; COM's `OutlineLevel` starts at 1). A file with 8 does not open in Excel
+            // (#291, measured on Windows). Grouping rows already at the deepest level does nothing, with no message, as Excel.
+            if deeper && (first..=last).any(|i| levels.get(&i).copied().unwrap_or(0) >= MAX_OUTLINE_LEVEL) {
+                return Err(EditError::IndexOutOfRange);
+            }
             let mut changed = false;
             for i in first..=last {
                 let level = levels.get(&i).copied().unwrap_or(0);
-                let new = if deeper { (level + 1).min(7) } else { level.saturating_sub(1) };
+                let new = if deeper { level + 1 } else { level.saturating_sub(1) };
                 if new != level {
                     changed = true;
                     if new == 0 {
@@ -1170,6 +1189,30 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::SetTabColor { sheet: slide, color } => {
             let inverse = snapshot(presentation);
             sheet_mut(presentation, slide)?.tab_color = color;
+            Ok(inverse)
+        }
+        SheetCommand::SetOutlineSummary { sheet: slide, above, left } => {
+            let inverse = snapshot(presentation);
+            let sheet = sheet_mut(presentation, slide)?;
+            for (axis, now) in [(Axis::Rows, above), (Axis::Columns, left)] {
+                let (levels, marks, before) = match axis {
+                    Axis::Rows => (&sheet.outline_rows, &mut sheet.collapsed_rows, &mut sheet.outline_summary_above),
+                    Axis::Columns => (&sheet.outline_columns, &mut sheet.collapsed_columns, &mut sheet.outline_summary_left),
+                };
+                if *before != now {
+                    // A group's collapsed mark is on its summary line: move each to the line the new setting puts it on.
+                    let deepest = levels.values().copied().max().unwrap_or(0);
+                    let moves: Vec<(u32, Option<u32>)> = (1..=deepest)
+                        .flat_map(|l| outline_runs(levels, l))
+                        .filter_map(|(a, b)| Some((outline_summary_line(a, b, *before).filter(|o| marks.contains(o))?, outline_summary_line(a, b, now))))
+                        .collect();
+                    for (old, _) in &moves {
+                        marks.remove(old);
+                    }
+                    marks.extend(moves.into_iter().filter_map(|(_, new)| new));
+                    *before = now;
+                }
+            }
             Ok(inverse)
         }
         SheetCommand::SetGridLines { sheet: slide, shown } => {
@@ -5865,6 +5908,130 @@ fn hide(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32,
     Ok(inverse)
 }
 
+/// The runs of consecutive lines whose outline level is `level` or deeper.
+fn outline_runs(levels: &std::collections::BTreeMap<u32, u8>, level: u8) -> Vec<(u32, u32)> {
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for (&line, &l) in levels {
+        if l < level {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if last.1 + 1 == line => last.1 = line,
+            _ => out.push((line, line)),
+        }
+    }
+    out
+}
+
+/// Hide (`true`) or show (`false`) the lines named in `wanted` and set the collapsed marks in `flags`, as one edit. Refused when nothing changes.
+fn set_outline_state(presentation: &mut Presentation, slide: SlideId, axis: Axis, wanted: &[(u32, bool)], flags: &std::collections::BTreeMap<u32, bool>) -> Result<Command, EditError> {
+    let inverse = snapshot(presentation);
+    {
+        let sheet = sheet_mut(presentation, slide)?;
+        let (sizes, hidden, default, marks) = match axis {
+            Axis::Rows => (&mut sheet.rows, &mut sheet.hidden_rows, sheet.default_row, &mut sheet.collapsed_rows),
+            Axis::Columns => (&mut sheet.columns, &mut sheet.hidden_columns, sheet.default_column, &mut sheet.collapsed_columns),
+        };
+        let default = if default > 0 { default } else { sizes.iter().copied().find(|&s| s > 0).unwrap_or(EMPTY_ROW) };
+        let mut changed = false;
+        for &(i, hide) in wanted {
+            let Some(size) = sizes.get_mut(i as usize) else { continue };
+            if hide && *size > 0 {
+                hidden.insert(i, *size);
+                *size = 0;
+                changed = true;
+            } else if !hide && *size == 0 {
+                *size = hidden.remove(&i).filter(|&s| s > 0).unwrap_or(default);
+                changed = true;
+            }
+        }
+        for (&line, &on) in flags {
+            changed |= if on { marks.insert(line) } else { marks.remove(&line) };
+        }
+        if !changed {
+            return Err(EditError::IndexOutOfRange);
+        }
+    }
+    fit_frame(presentation, slide);
+    if axis == Axis::Rows {
+        let all = crate::sheet_calc::BookView::new(presentation).formula_cells();
+        recalculate_cells(presentation, &all)?;
+    }
+    Ok(inverse)
+}
+
+/// Whether the totals of `axis`'s groups are before their details (`outlinePr/@summaryBelow`/`@summaryRight` = 0).
+fn summary_before(presentation: &mut Presentation, slide: SlideId, axis: Axis) -> Result<bool, EditError> {
+    let sheet = sheet_mut(presentation, slide)?;
+    Ok(match axis {
+        Axis::Rows => sheet.outline_summary_above,
+        Axis::Columns => sheet.outline_summary_left,
+    })
+}
+
+/// The line a group `first..=last` has its summary at, which carries the collapsed mark and the - / + button: the one after the group, or the one before it
+/// when the totals are above (none, for a group at the very first line).
+pub fn outline_summary_line(first: u32, last: u32, before: bool) -> Option<u32> {
+    if before { first.checked_sub(1) } else { Some(last + 1) }
+}
+
+fn outline_levels(presentation: &mut Presentation, slide: SlideId, axis: Axis) -> Result<std::collections::BTreeMap<u32, u8>, EditError> {
+    let sheet = sheet_mut(presentation, slide)?;
+    Ok(match axis {
+        Axis::Rows => sheet.outline_rows.clone(),
+        Axis::Columns => sheet.outline_columns.clone(),
+    })
+}
+
+/// The group of lines `first`–`last` collapsed or shown (`SheetCommand::CollapseGroup`).
+fn collapse_group(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, last: u32, collapse: bool) -> Result<Command, EditError> {
+    let levels = outline_levels(presentation, slide, axis)?;
+    let before = summary_before(presentation, slide, axis)?;
+    let marks: std::collections::BTreeSet<u32> = {
+        let sheet = sheet_mut(presentation, slide)?;
+        match axis {
+            Axis::Rows => sheet.collapsed_rows.clone(),
+            Axis::Columns => sheet.collapsed_columns.clone(),
+        }
+    };
+    if first > last || (first..=last).any(|i| !levels.contains_key(&i)) {
+        return Err(EditError::IndexOutOfRange);
+    }
+    let own = (first..=last).filter_map(|i| levels.get(&i).copied()).min().unwrap_or(1);
+    let deepest = levels.values().copied().max().unwrap_or(0);
+    let wanted: Vec<(u32, bool)> = (first..=last)
+        .map(|i| {
+            // Shown again, a line stays hidden when a deeper group it is in is collapsed on its own.
+            let kept = !collapse
+                && (own + 1..=deepest).any(|l| outline_runs(&levels, l).into_iter().any(|(a, b)| (a..=b).contains(&i) && outline_summary_line(a, b, before).is_some_and(|m| marks.contains(&m))));
+            (i, collapse || kept)
+        })
+        .collect();
+    let flags: std::collections::BTreeMap<u32, bool> = outline_summary_line(first, last, before).map(|m| (m, collapse)).into_iter().collect();
+    set_outline_state(presentation, slide, axis, &wanted, &flags)
+}
+
+/// The level button `level` (`SheetCommand::ShowOutlineLevel`).
+fn show_outline_level(presentation: &mut Presentation, slide: SlideId, axis: Axis, level: u8) -> Result<Command, EditError> {
+    let levels = outline_levels(presentation, slide, axis)?;
+    let before = summary_before(presentation, slide, axis)?;
+    let deepest = levels.values().copied().max().unwrap_or(0);
+    if level == 0 || levels.is_empty() {
+        return Err(EditError::IndexOutOfRange);
+    }
+    let wanted: Vec<(u32, bool)> = levels.iter().map(|(&i, &l)| (i, l >= level)).collect();
+    // The groups of the deepest level first, so that the line two groups end on is marked by the outer one.
+    let mut flags = std::collections::BTreeMap::new();
+    for l in (1..=deepest).rev() {
+        for (a, b) in outline_runs(&levels, l) {
+            if let Some(m) = outline_summary_line(a, b, before) {
+                flags.insert(m, l >= level);
+            }
+        }
+    }
+    set_outline_state(presentation, slide, axis, &wanted, &flags)
+}
+
 fn merge(presentation: &mut Presentation, slide: SlideId, range: CellRange, center: bool, tidy: bool) -> Result<Command, EditError> {
     if range.first_row > range.last_row || range.first_column > range.last_column || (range.first_row == range.last_row && range.first_column == range.last_column) {
         return Err(EditError::IndexOutOfRange);
@@ -6294,6 +6461,40 @@ mod tests {
         set(&mut d, s1, 0, 0, CellInput::Formula("1+1".into()));
         let sheet = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s1).unwrap()).unwrap();
         assert!(!sheet.web_images.contains_key(&(0, 0)));
+    }
+
+    /// The outline's buttons as Excel's do (measured on Windows, GitHub issue #291): a group shown again leaves a deeper group that was collapsed on its own
+    /// collapsed, and the level buttons show the groups down to a level.
+    #[test]
+    fn outline_buttons_collapse_and_show_groups_as_excel_does() {
+        let (mut d, s) = workbook();
+        let run = |d: &mut Document, c: SheetCommand| d.execute(vec![Command::Sheet(c)]).unwrap();
+        for (first, last) in [(2, 5), (3, 4), (8, 11)] {
+            run(&mut d, SheetCommand::Group { sheet: s, axis: Axis::Rows, first, last });
+        }
+        let hidden = |d: &Document| -> Vec<u32> {
+            let sheet = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
+            (0..14).filter(|&r| sheet.rows.get(r as usize) == Some(&0)).collect()
+        };
+        let collapse = |d: &mut Document, first, last, collapse| run(d, SheetCommand::CollapseGroup { sheet: s, axis: Axis::Rows, first, last, collapse });
+        collapse(&mut d, 3, 4, true);
+        assert_eq!(hidden(&d), vec![3, 4]);
+        collapse(&mut d, 2, 5, true);
+        assert_eq!(hidden(&d), vec![2, 3, 4, 5]);
+        // Shown again, the inner group is still collapsed.
+        collapse(&mut d, 2, 5, false);
+        assert_eq!(hidden(&d), vec![3, 4]);
+        // Level buttons: 1 hides every group, 3 shows all, 2 hides only the inner one.
+        run(&mut d, SheetCommand::ShowOutlineLevel { sheet: s, axis: Axis::Rows, level: 1 });
+        assert_eq!(hidden(&d), vec![2, 3, 4, 5, 8, 9, 10, 11]);
+        run(&mut d, SheetCommand::ShowOutlineLevel { sheet: s, axis: Axis::Rows, level: 3 });
+        assert!(hidden(&d).is_empty());
+        run(&mut d, SheetCommand::ShowOutlineLevel { sheet: s, axis: Axis::Rows, level: 2 });
+        assert_eq!(hidden(&d), vec![3, 4]);
+        // One undo each; a line that is no group is refused.
+        assert!(d.undo());
+        assert!(hidden(&d).is_empty());
+        assert!(d.execute(vec![Command::Sheet(SheetCommand::CollapseGroup { sheet: s, axis: Axis::Rows, first: 6, last: 7, collapse: true })]).is_err());
     }
 
     /// Undo and redo give back the picture IMAGE asked for along with the formula.

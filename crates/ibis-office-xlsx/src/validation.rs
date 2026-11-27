@@ -166,14 +166,20 @@ pub(crate) fn list_items(sheet: &Sheet, rule: &Validation) -> Vec<String> {
     let mut out = Vec::new();
     for row in r.0..=r.2 {
         for column in r.1..=r.3 {
-            if let Some(c) = sheet.cell(row, column)
-                && !c.text.is_empty()
-            {
-                out.push(c.text.clone());
-            }
+            out.push(sheet.cell(row, column).map(|c| c.text.clone()).unwrap_or_default());
         }
     }
     out
+}
+
+/// A list rule's source formula (no `=`) for the cell (`row`, `column`): the rule is written for the first cell of its ranges
+/// ([`Validation::base`]), and a relative reference moves with the cell as Excel's does.
+pub(crate) fn list_formula_at(rule: &Validation, row: u32, column: u32) -> String {
+    let f = rule.formula1.as_deref().unwrap_or("").trim().trim_start_matches('=').trim().to_string();
+    match rule.base() {
+        Some((base_row, base_column)) if (row, column) != (base_row, base_column) => ibis_calc::formula::shift(&f, i64::from(row) - i64::from(base_row), i64::from(column) - i64::from(base_column)),
+        _ => f,
+    }
 }
 
 /// A value of a list a formula gave, as the list shows it.
@@ -429,28 +435,33 @@ impl SlideEditor {
     }
 
     pub(crate) fn validation_list_items_in_book(&self, rule: &Validation) -> Vec<String> {
+        let (column, row) = self.current_cell().unwrap_or((0, 0));
+        self.validation_list_items_at(rule, row, column)
+    }
+
+    /// The list of `rule` for the cell (`row`, `column`).
+    pub(crate) fn validation_list_items_at(&self, rule: &Validation, row: u32, column: u32) -> Vec<String> {
         let Some(f) = rule.formula1.as_deref() else { return Vec::new() };
         let f = f.trim();
         if let Some(inner) = f.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
             return inner.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         }
-        let clean = f.trim_start_matches('=').trim();
+        // The rule is written for its first cell: the relative references move to the cell the list is for (GitHub issue #284: a rule set on
+        // D2:E2 with `1-D3*2` reads E3 in E2).
+        let moved = list_formula_at(rule, row, column);
+        let clean = moved.as_str();
         if let Ok(resolved) = self.resolve_range(clean) {
             let mut out = Vec::new();
             for row in resolved.range.first_row..=resolved.range.last_row {
                 for column in resolved.range.first_column..=resolved.range.last_column {
-                    if let Some(c) = resolved.sheet.cell(row, column)
-                        && !c.text.is_empty()
-                    {
-                        out.push(c.text.clone());
-                    }
+                    // An empty cell of the range stays an empty item (Excel; GitHub issue #284).
+                    out.push(resolved.sheet.cell(row, column).map(|c| c.text.clone()).unwrap_or_default());
                 }
             }
             return out;
         }
         // A formula (`OFFSET(..)`, `INDIRECT(..)`, a defined name, ...; GitHub issue #154): its values, worked out for the cell.
         if let Some(index) = self.presentation().workbook.as_ref().and_then(|w| w.sheets.iter().position(|s| s.slide == Some(self.current_slide))) {
-            let (column, row) = self.current_cell().unwrap_or((0, 0));
             let view = ibis_doc_model::sheet_calc::BookView::new(self.presentation());
             if let Some(values) = ibis_calc::recalc::evaluate_list(&view, (index, row, column), clean) {
                 return values.iter().map(list_text).filter(|t| !t.is_empty()).collect();
@@ -511,7 +522,7 @@ impl SlideEditor {
                     CellValue::Error(e) => e.as_str().to_string(),
                     CellValue::Empty => String::new(),
                 };
-                { let items = self.validation_list_items_in_book(rule); let half = ibis_calc::functions::to_half_width(&text); items.iter().any(|i| i.eq_ignore_ascii_case(&text) || i.eq_ignore_ascii_case(&half)) }
+                { let items = self.validation_list_items_at(rule, row, column); let half = ibis_calc::functions::to_half_width(&text); items.iter().any(|i| i.eq_ignore_ascii_case(&text) || i.eq_ignore_ascii_case(&half)) }
             }
             "whole" => matches!(value, CellValue::Number(n) if n.fract() == 0.0 && compare(*n)),
             "decimal" | "date" | "time" => matches!(value, CellValue::Number(n) if compare(*n)),
@@ -1140,7 +1151,18 @@ impl SlideEditor {
 
 #[cfg(test)]
 mod tests {
-    use super::{CellValue, Sheet, Validation, keeps};
+    use super::{CellValue, Sheet, Validation, keeps, list_formula_at};
+
+    /// GitHub issue #284: a list rule set on D2:E2 over `TAKE($A$2:$B$22,,1-D3*2)` reads D3 in D2 and E3 in E2.
+    #[test]
+    fn a_list_formula_moves_with_the_cell_from_the_rules_first_cell() {
+        let range = |first_column, last_column| ibis_doc_model::CellRange { first_row: 1, last_row: 1, first_column, last_column };
+        let rule = Validation { kind: "list".into(), ranges: vec![range(3, 4)], formula1: Some("TAKE($A$2:$B$22,,1-D3*2)".into()), ..Default::default() };
+        assert_eq!(list_formula_at(&rule, 1, 3), "TAKE($A$2:$B$22,,1-D3*2)");
+        assert_eq!(list_formula_at(&rule, 1, 4), "TAKE($A$2:$B$22,,1-E3*2)");
+        let text = Validation { kind: "list".into(), ranges: vec![range(3, 4)], formula1: Some("\"a,b\"".into()), ..Default::default() };
+        assert_eq!(list_formula_at(&text, 1, 4), "\"a,b\"");
+    }
 
     #[test]
     fn lists_and_numbers() {
@@ -1206,5 +1228,17 @@ mod tests {
         let items = super::column_pick_list_items(&sheet, 4, 0);
         // Should be sorted alphabetically (case-insensitive) and deduplicated
         assert_eq!(items, vec!["Nagoya", "Osaka", "Tokyo"]);
+    }
+
+    /// GitHub issue #284: an empty cell of a range source stays an empty item of the list (Excel); the comma separated list has none.
+    #[test]
+    fn range_list_keeps_an_empty_cell_as_an_empty_item() {
+        let mut sheet = ibis_doc_model::Sheet::default();
+        for (row, text) in [(0, "a"), (1, "b"), (3, "c")] {
+            sheet.cells.push(ibis_doc_model::SheetCell { row, column: 0, text: text.into(), value: CellValue::Text(text.into()), runs: None, phonetic: None, kind: ibis_doc_model::CellKind::Text, formula: None, style: 0 });
+        }
+        let rule = |f: &str| Validation { kind: "list".into(), formula1: Some(f.into()), ..Default::default() };
+        assert_eq!(super::list_items(&sheet, &rule("$A$1:$A$4")), vec!["a", "b", "", "c"]);
+        assert_eq!(super::list_items(&sheet, &rule("\"a,b,c\"")), vec!["a", "b", "c"]);
     }
 }

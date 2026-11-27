@@ -16,6 +16,8 @@ pub enum PiiFindingKind {
     SlideComment,
     HiddenWorksheet,
     SensitiveNumericPattern,
+    /// The comments of a document (a flowing one).
+    DocumentComment,
 }
 
 /// One preflight finding detected in a [`Presentation`].
@@ -117,6 +119,47 @@ pub fn inspect_presentation_pii(presentation: &Presentation) -> PiiPreflightRepo
         }
     }
 
+    // A document: its comments, and the numbers of the text of its paragraphs (the body's, and its tables').
+    if let Some(flow) = &presentation.flow {
+        if !flow.comments.is_empty() {
+            report.comments_count += flow.comments.len();
+            report.findings.push(PiiFinding {
+                kind: PiiFindingKind::DocumentComment,
+                location: crate::words::text("medical.pii.location.document"),
+                detail: crate::words::format("medical.pii.detail.comments", &[("count", &flow.comments.len())]),
+            });
+        }
+        let mut number = 0usize;
+        let mut check = |p: &ibis_doc_model::FlowParagraph, report: &mut PiiPreflightReport| {
+            number += 1;
+            let text: String = p.runs.iter().filter_map(|r| if let ibis_doc_model::FlowRunKind::Text(t) = &r.kind { Some(t.as_str()) } else { None }).collect();
+            if let Some(reason) = detect_sensitive_text(&text) {
+                report.sensitive_pattern_hits += 1;
+                report.findings.push(PiiFinding {
+                    kind: PiiFindingKind::SensitiveNumericPattern,
+                    location: crate::words::format("medical.pii.location.paragraph", &[("no", &number)]),
+                    detail: reason,
+                });
+            }
+        };
+        for block in &flow.body {
+            match block {
+                ibis_doc_model::Block::Paragraph(p) => check(p, &mut report),
+                ibis_doc_model::Block::Table(t) => {
+                    for row in &t.rows {
+                        for cell in &row.cells {
+                            for b in &cell.blocks {
+                                if let ibis_doc_model::Block::Paragraph(p) = b {
+                                    check(p, &mut report);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if let Some(wb) = &presentation.workbook {
         for sheet_ref in &wb.sheets {
             if sheet_ref.state != SheetState::Visible {
@@ -172,6 +215,49 @@ pub fn sanitize_presentation_pii(presentation: &mut Presentation) -> PiiSanitize
     }
 
     summary
+}
+
+/// What taking the leftovers out is, as commands (so it is one undo step on the screen): the same as [`sanitize_presentation_pii`] but for the comments of a flowing
+/// document too. The summary says what the commands remove. Hidden slides are deleted unless that would leave none (a document keeps one page); hidden sheets go
+/// through the workbook's own delete (which keeps one sheet shown).
+pub fn plan_pii_sanitize(presentation: &Presentation) -> (Vec<ibis_doc_model::Command>, PiiSanitizeSummary) {
+    use ibis_doc_model::{Command, SheetCommand};
+    let mut summary = PiiSanitizeSummary::default();
+    let mut commands = Vec::new();
+    for slide in &presentation.slides {
+        if !slide.notes.is_empty() {
+            summary.cleared_notes += 1;
+            commands.push(Command::SetNotes { slide: slide.id, notes: String::new() });
+        }
+        if !slide.comments.is_empty() {
+            summary.removed_comments += slide.comments.len();
+            commands.push(Command::SetComments { slide: slide.id, comments: Vec::new() });
+        }
+    }
+    if let Some(flow) = &presentation.flow {
+        if !flow.comments.is_empty() {
+            summary.removed_comments += flow.comments.len();
+            commands.push(Command::Flow(ibis_doc_model::FlowCommand::SetComments(Vec::new())));
+        }
+    }
+    if let Some(wb) = &presentation.workbook {
+        let shown = wb.sheets.iter().filter(|s| s.slide.is_some()).count();
+        let hidden: Vec<_> = wb.sheets.iter().filter(|s| s.state != SheetState::Visible).filter_map(|s| s.slide).collect();
+        let kept_visible = wb.sheets.iter().filter(|s| s.state == SheetState::Visible && s.slide.is_some()).count();
+        if kept_visible > 0 && shown > 0 {
+            for slide in hidden {
+                summary.removed_hidden_sheets += 1;
+                commands.push(Command::Sheet(SheetCommand::DeleteSheet { sheet: slide }));
+            }
+        }
+    } else {
+        let hidden: Vec<_> = presentation.slides.iter().filter(|s| s.hidden).map(|s| s.id).collect();
+        if !hidden.is_empty() && hidden.len() < presentation.slides.len() {
+            summary.removed_hidden_slides = hidden.len();
+            commands.extend(hidden.into_iter().map(|slide| Command::DeleteSlide { slide }));
+        }
+    }
+    (commands, summary)
 }
 
 fn detect_sensitive_text(text: &str) -> Option<String> {

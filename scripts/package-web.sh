@@ -17,16 +17,16 @@
 #
 #   scripts/package-web.sh <version>      e.g. scripts/package-web.sh 0.8.5
 #
-# <version> must be the wasm line of version.txt. Build www/ first:
+# <version> must be the wasm line of build-version.txt. Build www/ first:
 #   scripts/build-web.sh --release
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=${1:-}
 [[ -n $VERSION ]] || { echo "usage: scripts/package-web.sh <version>" >&2; exit 1; }
-WANT=$(awk -F'\t' '$1 == "wasm" { sub(/\r$/, "", $2); print $2 }' version.txt)
+WANT=$(awk -F'\t' '$1 == "wasm" { sub(/\r$/, "", $2); print $2 }' crates/build-version.txt)
 [[ $VERSION == "$WANT" ]] || {
-  echo "version $VERSION is not the wasm line of version.txt ($WANT); fix version.txt or the argument" >&2
+  echo "version $VERSION is not the wasm line of build-version.txt ($WANT); fix build-version.txt or the argument" >&2
   exit 1
 }
 

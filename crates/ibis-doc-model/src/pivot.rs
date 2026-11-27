@@ -3219,6 +3219,8 @@ pub fn update_chart_from_pivot(chart: &mut Chart, pivot: &PivotTable, built: &Pi
             x_values: Vec::new(),
             bubble_sizes: Vec::new(),
             bubble_3d: false,
+            has_format: false,
+            has_outline: false,
         });
     }
 

@@ -217,6 +217,19 @@ impl Styles {
         None
     }
     /// Whether `s` or one of its parents sets the paragraph property `key`.
+    /// The `fo:margin-left` (twips) a style gives its paragraphs, from the nearest style of its chain that sets one. ODF tab stops
+    /// (`style:position`) are relative to it; `w:tab w:pos` is measured from the margin of the text area.
+    fn chain_margin_left(&self, s: &StyleDef) -> i64 {
+        let mut cur = Some(s);
+        for _ in 0..16 {
+            let Some(c) = cur else { break };
+            if let Some(v) = c.para.get("margin-left").and_then(|v| twips(v)) {
+                return v;
+            }
+            cur = c.parent.as_deref().and_then(|p| self.get(&c.family, p));
+        }
+        0
+    }
     fn chain_has_para(&self, s: &StyleDef, key: &str) -> bool {
         let mut cur = Some(s);
         let mut guard = 0;
@@ -265,6 +278,18 @@ impl Styles {
             }
         }
         out
+    }
+    /// `style:writing-mode` of a graphic style (its `style:paragraph-properties`), looked up through the parents.
+    fn graphic_writing_mode(&self, name: &str) -> Option<String> {
+        let mut cur = self.get("graphic", name);
+        for _ in 0..16 {
+            let c = cur?;
+            if let Some(v) = c.para.get("writing-mode") {
+                return Some(v.clone());
+            }
+            cur = c.parent.as_deref().and_then(|p| self.get("graphic", p));
+        }
+        None
     }
     fn font(&self, name: &str) -> String {
         self.fonts.get(name).cloned().unwrap_or_else(|| name.to_string())
@@ -341,7 +366,12 @@ fn border_attrs(v: &str) -> Option<String> {
         let line = width * 8.0 / 3.0;
         [2_i64, 4, 6, 12, 18, 24].windows(2).find(|w| line <= (w[0] + w[1]) as f64 / 2.0).map_or(24, |w| w[0])
     } else {
-        ((width * 8.0).round() as i64).clamp(2, 96)
+        // A single line is one of the presets 1/4, 1/2, 3/4, 1, 1 1/2, 2 1/4, 3, 4 1/2, 6 pt (2, 4, 6, 8, 12, 18, 24, 36, 48 in 1/8 pt; 0.1 of 1/8 pt for the ODF value rounded to 4 digits of an inch): measured with
+        // -SaveAs todocx on 160 cell borders (0.2 to 8 pt in steps of 0.05) and 52 paragraph borders (0.2 to 30 pt): the nearest preset, a
+        // tie (0.375, 0.625, 0.875, 1.25, 1.875, 2.625, 3.75, 5.25 pt) going to the larger one; more than 6 pt is 6 pt.
+        let eighths = width * 8.0;
+        let presets = [2_i64, 4, 6, 8, 12, 18, 24, 36, 48];
+        presets.windows(2).find(|w| eighths < (w[0] + w[1]) as f64 / 2.0 - 0.1).map_or(48, |w| w[0])
     };
     Some(format!(r#"w:val="{style}" w:sz="{sz}" w:space="0" w:color="{color}""#))
 }
@@ -468,7 +498,9 @@ fn rpr(text: &Props, styles: &Styles) -> String {
     }
     if let Some(pos) = text.get("text-position") {
         let first = pos.split_whitespace().next().unwrap_or("");
-        if first.starts_with("super") || first.starts_with('+') && first != "+0%" {
+        if raise_percent(pos).is_some() {
+            // A raise or lowering by a percentage of the font size at the size of the text: `w:position`, written on the run (the size comes from the paragraph).
+        } else if first.starts_with("super") || first.starts_with('+') && first != "+0%" {
             out.push_str(r#"<w:vertAlign w:val="superscript"/>"#);
         } else if first.starts_with("sub") || first.starts_with('-') {
             out.push_str(r#"<w:vertAlign w:val="subscript"/>"#);
@@ -497,7 +529,7 @@ fn combine_xml(text: &Props) -> String {
 
 /// The paragraph properties of `paragraph-properties` (and the tab stops), in the order of the schema. `lists` leaves out the
 /// indents (the list level's own apply).
-fn ppr(para: &Props, tabs: &[Tab], lists: bool) -> String {
+fn ppr(para: &Props, tabs: &[Tab], lists: bool, tab_origin: i64) -> String {
     let mut out = String::new();
     if para.get("keep-with-next").map(String::as_str) == Some("always") {
         out.push_str("<w:keepNext/>");
@@ -529,7 +561,7 @@ fn ppr(para: &Props, tabs: &[Tab], lists: bool) -> String {
                 Some('-') => r#" w:leader="hyphen""#,
                 _ => "",
             };
-            out.push_str(&format!(r#"<w:tab w:val="{val}"{leader} w:pos="{}"/>"#, t.position));
+            out.push_str(&format!(r#"<w:tab w:val="{val}"{leader} w:pos="{}"/>"#, t.position + tab_origin));
         }
         out.push_str("</w:tabs>");
     }
@@ -765,6 +797,8 @@ struct Ctx<'a> {
     in_cell: usize,
     /// A page break before the next paragraph (a table whose style breaks the page before it).
     pending_break: bool,
+    /// The first reason the file is refused (a table that expands too large), set while the blocks are written.
+    error: Option<String>,
 }
 
 impl<'a> Ctx<'a> {
@@ -792,6 +826,23 @@ impl<'a> Ctx<'a> {
         self.last_num.insert(style.to_string(), n);
         Some(n)
     }
+}
+
+/// The most spaces one `text:s` may stand for (more is refused: it would be a file that expands to gigabytes).
+const MAX_SPACES: usize = 100_000;
+/// The most rows one `table:table-row` may repeat, and the most columns one cell or column may repeat (more is refused).
+const MAX_ROW_REPEAT: usize = 100_000;
+const MAX_COLUMN_REPEAT: usize = 256;
+
+/// Whether the element is of an OpenDocument namespace (or of none, in the flat test documents), not an extension's.
+fn odf_element(n: Node) -> bool {
+    n.tag_name().namespace().is_none_or(|ns| ns.starts_with("urn:oasis:names:tc:opendocument:xmlns:"))
+}
+
+/// Whether the section, row group or row is shown: not `text:display="none"`/`"condition"` (a condition is not evaluated here),
+/// not `table:display="false"`, not `table:visibility` `collapse`/`filter`.
+fn is_shown(n: Node) -> bool {
+    !matches!(attr(n, "display"), Some("none" | "condition" | "false")) && !matches!(attr(n, "visibility"), Some("collapse" | "filter"))
 }
 
 fn spaces_text(count: usize) -> String {
@@ -829,6 +880,18 @@ fn text_prop(styles: &Styles, family: &str, name: Option<&str>, key: &str) -> Op
 fn half_points(v: Option<String>) -> Option<u32> {
     let pt = v?.strip_suffix("pt")?.parse::<f64>().ok()?;
     Some((pt * 2.0).round() as u32)
+}
+
+/// The raise (negative: lowering) in percent of the font size of `style:text-position="P% 100%"` (or `P%`): a number with no change of
+/// size, other than 0.
+fn raise_percent(pos: &str) -> Option<f64> {
+    let mut it = pos.split_whitespace();
+    let first = it.next()?.strip_suffix('%')?.parse::<f64>().ok()?;
+    let size = match it.next() {
+        None => 100.0,
+        Some(t) => t.strip_suffix('%')?.parse::<f64>().ok()?,
+    };
+    (first != 0.0 && size == 100.0).then_some(first)
 }
 
 fn run(rb: &mut RunBuilder, style_id: Option<&str>, body: &str) {
@@ -878,12 +941,32 @@ fn inline_content<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, rb: &mut RunBuilder
                 let combine = attr(child, "style-name").and_then(|n| ctx.styles.get("text", n)).map(|s| combine_xml(&s.text)).unwrap_or_default();
                 let keep = rb.base_rpr.len();
                 rb.base_rpr.push_str(&combine);
+                // Word writes the raise of `style:text-position="P% 100%"` as `w:position` in half points: P% of the font size (measured with
+                // -SaveAs todocx: -60% of 12 pt is -14, 12.5% of 8 pt is 2, 14.2% of 7 pt is 2).
+                if let Some(pct) = attr(child, "style-name").and_then(|n| text_prop(ctx.styles, "text", Some(n), "text-position")).and_then(|p| raise_percent(&p)) {
+                    let st = &*ctx.styles;
+                    let name = attr(child, "style-name");
+                    let size = half_points(text_prop(st, "text", name, "font-size"))
+                        .or_else(|| half_points(text_prop(st, "paragraph", rb.para_style.as_deref(), "font-size")))
+                        .or_else(|| half_points(st.default_para.as_ref().and_then(|d| d.text.get("font-size").cloned())));
+                    if let Some(size) = size {
+                        let v = (pct / 100.0 * size as f64).round() as i64;
+                        if v != 0 {
+                            rb.base_rpr.push_str(&format!(r#"<w:position w:val="{v}"/>"#));
+                        }
+                    }
+                }
                 inline_content(child, ctx, rb, sid.as_deref().or(style_id));
                 rb.base_rpr.truncate(keep);
             }
             "s" => {
                 let c = attr(child, "c").and_then(|v| v.parse().ok()).unwrap_or(1);
-                text_run(rb, style_id, &spaces_text(c));
+                if c > MAX_SPACES {
+                    let reason = if ctx.in_cell > 0 { TABLE_TOO_LARGE } else { "ODT の空白の繰り返しが大きすぎます" }; // i18n-ok（読めないファイルの理由）
+                    ctx.error.get_or_insert_with(|| reason.to_string());
+                } else {
+                    text_run(rb, style_id, &spaces_text(c));
+                }
                 rb.at_space = true;
             }
             "tab" => {
@@ -1140,6 +1223,50 @@ fn transformed(node: Node, x: i64, y: i64, cx: i64, cy: i64) -> (i64, i64, Strin
     (((mx - cx as f64 / 2.0).round()) as i64, ((my - cy as f64 / 2.0).round()) as i64, if rot != 0 { format!(r#" rot="{rot}""#) } else { String::new() })
 }
 
+/// The `vert`, `anchor` and `anchorCtr` attributes of a shape's `wps:bodyPr`, from the shape's `style:writing-mode` (its
+/// `style:paragraph-properties`) and the text area's `draw:textarea-vertical-align` / `-horizontal-align`. Measured with -SaveAs todocx on
+/// text boxes and custom shapes (all 3 x 3 aligns of lr-tb, tb-rl, sideways-rl, rl-tb, tb-lr and lr; frames and shapes alike): `tb-rl` is
+/// `eaVert`, `sideways-rl` is `vert`, every other mode is `horz`. In `horz` the anchor is the vertical align (top `t`, middle `ctr`, bottom
+/// `b`) and `anchorCtr` is 1 for a centred horizontal align. In the vertical modes the two swap their axes: the anchor is the horizontal
+/// align (right `t`, centre `ctr`, left `b`) and `anchorCtr` is 1 for a middle vertical align. The last is the autofit child.
+fn body_pr_direction(ctx: &Ctx, node: Node, g: &Props) -> (String, &'static str, &'static str, &'static str) {
+    let mode = attr(node, "style-name").and_then(|n| ctx.styles.graphic_writing_mode(n));
+    let vert = match mode.as_deref() {
+        Some("tb-rl") => r#" vert="eaVert""#,
+        Some("sideways-rl") => r#" vert="vert""#,
+        _ => "",
+    };
+    let va = g.get("textarea-vertical-align").map(String::as_str);
+    let ha = g.get("textarea-horizontal-align").map(String::as_str);
+    let (anchor, centred) = if vert.is_empty() {
+        (
+            match va {
+                Some("middle") => "ctr",
+                Some("bottom") => "b",
+                _ => "t",
+            },
+            ha == Some("center"),
+        )
+    } else {
+        (
+            match ha {
+                Some("center") => "ctr",
+                Some("left") => "b",
+                _ => "t",
+            },
+            va == Some("middle"),
+        )
+    };
+    // `draw:auto-grow-height` is the autofit child: `true` is `a:spAutoFit` (the shape grows to its text), `false` is `a:noAutofit` (measured:
+    // 4 text boxes true, 97 shapes and boxes false; an unset one has no child).
+    let autofit = match g.get("auto-grow-height").map(String::as_str) {
+        Some("true") => "<a:spAutoFit/>",
+        Some("false") => "<a:noAutofit/>",
+        _ => "",
+    };
+    (vert.to_string(), anchor, if centred { r#" anchorCtr="1""# } else { "" }, autofit)
+}
+
 fn drawing<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, rb: &mut RunBuilder) {
     let g = attr(node, "style-name").map(|n| ctx.styles.graphic(n)).unwrap_or_default();
     let name = attr(node, "name").unwrap_or("Shape").to_string();
@@ -1188,14 +1315,18 @@ fn drawing<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, rb: &mut RunBuilder) {
                     body.push_str("<w:p/>");
                 }
                 let pad = |side: &str| g.get(&format!("padding-{side}")).or(g.get("padding")).and_then(|v| emu(v)).unwrap_or(0);
-                let (fill, line) = (fill_xml(&g), border_line_xml(&g).unwrap_or_else(|| line_xml(&g)));
-                let anchor = match g.get("textarea-vertical-align").map(String::as_str) {
-                    Some("middle") => "ctr",
-                    Some("bottom") => "b",
-                    _ => "t",
+                // A text box without `draw:fill` is filled with its `fo:background-color` (Word saving an ODT as docx: 47 text boxes, `#ffffff` 45,
+                // `#00b050`, `#f2f2f2` give `a:solidFill` of that colour; `transparent` 25 give `a:noFill`).
+                let fill = match (g.get("fill"), g.get("background-color")) {
+                    (None, Some(c)) if c.starts_with('#') && c.len() == 7 => {
+                        format!(r#"<a:solidFill><a:srgbClr val="{}">{}</a:srgbClr></a:solidFill>"#, c[1..].to_uppercase(), percent_alpha(g.get("opacity")))
+                    }
+                    _ => fill_xml(&g),
                 };
+                let line = border_line_xml(&g).unwrap_or_else(|| line_xml(&g));
+                let (vert, anchor, anchor_ctr, autofit) = body_pr_direction(ctx, node, &g);
                 let graphic = format!(
-                    r#"<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>{fill}{line}</wps:spPr><wps:txbx><w:txbxContent>{body}</w:txbxContent></wps:txbx><wps:bodyPr lIns="{}" tIns="{}" rIns="{}" bIns="{}" anchor="{anchor}"/></wps:wsp></a:graphicData></a:graphic>"#,
+                    r#"<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>{fill}{line}</wps:spPr><wps:txbx><w:txbxContent>{body}</w:txbxContent></wps:txbx><wps:bodyPr{vert} lIns="{}" tIns="{}" rIns="{}" bIns="{}" anchor="{anchor}"{anchor_ctr}>{autofit}</wps:bodyPr></wps:wsp></a:graphicData></a:graphic>"#,
                     pad("left"),
                     pad("top"),
                     pad("right"),
@@ -1215,6 +1346,9 @@ fn drawing<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, rb: &mut RunBuilder) {
             // The geometry as the equations and the path of the file give it for the shape's size (in 1/100 mm).
             let geometry = eg.and_then(|eg| crate::enhanced_geometry::evaluate_in(eg, (cx as f64 / 360.0, cy as f64 / 360.0), true));
             let (geom_xml, text_rect) = match &geometry {
+                // Word reads an equation-free path that is exactly the rectangle of the view box (what it writes for
+                // `prstGeom rect`) as the preset rectangle, not as a custom path (measured with its ODT -> DOCX save).
+                _ if eg.is_some_and(is_plain_rect_path) => (r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#.to_string(), None),
                 Some(geo) => {
                     let rect = geo.text_area.map(|(l, t, r, b)| {
                         let f = |v: f64, e: i64| (v * e as f64).round() as i64;
@@ -1232,14 +1366,10 @@ fn drawing<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, rb: &mut RunBuilder) {
             }
             let pad = |side: &str| g.get(&format!("padding-{side}")).or(g.get("padding")).and_then(|v| emu(v)).unwrap_or(0);
             let (fill, line) = (fill_xml(&g), line_xml(&g));
-            let anchor = match g.get("textarea-vertical-align").map(String::as_str) {
-                Some("middle") => "ctr",
-                Some("bottom") => "b",
-                _ => "t",
-            };
+            let (vert, anchor, anchor_ctr, autofit) = body_pr_direction(ctx, node, &g);
             let txbx = if body.is_empty() { String::new() } else { format!("<wps:txbx><w:txbxContent>{body}</w:txbxContent></wps:txbx>") };
             let graphic = format!(
-                r#"<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>{geom_xml}{fill}{line}</wps:spPr>{txbx}<wps:bodyPr lIns="{}" tIns="{}" rIns="{}" bIns="{}" anchor="{anchor}"/></wps:wsp></a:graphicData></a:graphic>"#,
+                r#"<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>{geom_xml}{fill}{line}</wps:spPr>{txbx}<wps:bodyPr{vert} lIns="{}" tIns="{}" rIns="{}" bIns="{}" anchor="{anchor}"{anchor_ctr}>{autofit}</wps:bodyPr></wps:wsp></a:graphicData></a:graphic>"#,
                 pad("left"),
                 pad("top"),
                 pad("right"),
@@ -1287,7 +1417,7 @@ fn paragraph<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, list: Option<(usize, usi
     if builtin {
         head.push_str(&format!(r#"<w:pStyle w:val="Heading{}"/>"#, level.min(6)));
         if let Some(s) = style {
-            after_num.push_str(&ppr(&s.para, &s.tabs, list.is_some()));
+            after_num.push_str(&ppr(&s.para, &s.tabs, list.is_some(), if list.is_some() { 0 } else { ctx.styles.chain_margin_left(s) }));
         }
     } else if let Some(s) = style {
         head.push_str(&format!(r#"<w:pStyle w:val="{}"/>"#, ctx.styles.id("paragraph", &s.name).unwrap_or_default()));
@@ -1331,7 +1461,18 @@ fn paragraph<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, list: Option<(usize, usi
                 para.extend(c.para.iter().map(|(k, v)| (k.clone(), v.clone())));
                 text.extend(c.text.iter().map(|(k, v)| (k.clone(), v.clone())));
                 if !c.tabs.is_empty() {
+                    // A style's tab stops replace the inherited ones: Word writes `clear` for each inherited stop at another position
+                    // (005's footer: `clear 8504`, `right 9070`; its empty paragraph: `clear 4252`, `clear 8504`, `left 5160`), in position order.
                     tabs = c.tabs.clone();
+                    let dropped: Vec<Tab> = effective
+                        .iter()
+                        .filter(|e| !c.tabs.iter().any(|t| t.position == e.position))
+                        .map(|t| Tab { kind: "clear".into(), leader: None, ..t.clone() })
+                        .collect();
+                    if !dropped.is_empty() {
+                        tabs.extend(dropped);
+                        tabs.sort_by_key(|t| t.position);
+                    }
                     effective = c.tabs.clone();
                 } else if c.tabs_cleared {
                     // Word writes `<w:tab w:val="clear">` for every tab stop it drops (034: 34 paragraphs, measured with -SaveAs todocx).
@@ -1349,7 +1490,7 @@ fn paragraph<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, list: Option<(usize, usi
             }
             // Not in a list, so the list style gives no indent: the paragraph's own indent is written out.
             column_break = para.get("break-before").map(String::as_str) == Some("column");
-            auto_direct = ppr(&para, &tabs, false);
+            auto_direct = ppr(&para, &tabs, false, para.get("margin-left").and_then(|v| twips(v)).unwrap_or_else(|| style.map_or(0, |s| ctx.styles.chain_margin_left(s))));
             base_rpr = rpr(&text, ctx.styles);
         }
     }
@@ -1407,12 +1548,13 @@ fn paragraph<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, list: Option<(usize, usi
 }
 
 fn blocks<'a>(parent: Node<'a, 'a>, ctx: &mut Ctx<'a>, list: Option<(usize, usize)>, out: &mut String) {
-    for child in parent.children().filter(|c| c.is_element()) {
+    for child in parent.children().filter(|c| c.is_element() && odf_element(*c)) {
         match child.tag_name().name() {
             "p" | "h" => paragraph(child, ctx, list, out),
             "list" => list_block(child, ctx, list, out),
             "table" => table(child, ctx, out),
-            "section" | "index-body" | "table-of-content" | "alphabetical-index" | "illustration-index" | "table-index" | "user-index" | "bibliography" | "index-title" => blocks(child, ctx, list, out),
+            "section" if !is_shown(child) => {}
+            "numbered-paragraph" | "section" | "index-body" | "table-of-content" | "alphabetical-index" | "illustration-index" | "table-index" | "user-index" | "bibliography" | "index-title" => blocks(child, ctx, list, out),
             _ => {}
         }
     }
@@ -1442,7 +1584,20 @@ fn list_block<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, outer: Option<(usize, u
 // ---------------------------------------------------------------------------------------------------------------------------------
 // tables
 
+const TABLE_TOO_LARGE: &str = "ODT の表を展開すると大きすぎます"; // i18n-ok（読めないファイルの理由）
+
 fn table<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, out: &mut String) {
+    // A table whose every row is hidden is not in the document.
+    fn has_shown_row(n: Node) -> bool {
+        n.children().filter(|c| c.is_element() && odf_element(*c)).any(|c| match c.tag_name().name() {
+            "table-header-rows" | "table-rows" | "table-row-group" => is_shown(c) && has_shown_row(c),
+            "table-row" => is_shown(c),
+            _ => false,
+        })
+    }
+    if !has_shown_row(node) {
+        return;
+    }
     let tstyle = attr(node, "style-name").and_then(|n| ctx.styles.get("table", n));
     if tstyle.is_some_and(|t| t.table.get("break-before").map(String::as_str) == Some("page")) {
         ctx.pending_break = true;
@@ -1475,8 +1630,26 @@ fn table<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, out: &mut String) {
     }
     collect_cols(node, ctx, &mut cols, &mut optimal);
     if cols.is_empty() {
-        cols.push(2000);
-        optimal.push(false);
+        // No `table:table-column`: as many columns as the widest row has cells (a repeated cell or covered cell counts as many).
+        fn widest(n: Node) -> usize {
+            n.children()
+                .filter(|c| c.is_element() && odf_element(*c))
+                .map(|c| match c.tag_name().name() {
+                    "table-header-rows" | "table-rows" | "table-row-group" => widest(c),
+                    "table-row" => c
+                        .children()
+                        .filter(|k| is(*k, "table-cell") || is(*k, "covered-table-cell"))
+                        .map(|k| attr(k, "number-columns-repeated").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).clamp(1, MAX_COLUMN_REPEAT))
+                        .sum(),
+                    _ => 0,
+                })
+                .max()
+                .unwrap_or(0)
+        }
+        for _ in 0..widest(node).clamp(1, MAX_COLUMN_REPEAT) {
+            cols.push(2000);
+            optimal.push(false);
+        }
     }
     let total: i64 = cols.iter().sum();
     out.push_str("<w:tbl><w:tblPr>");
@@ -1498,7 +1671,10 @@ fn table<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, out: &mut String) {
     if !optimal.iter().all(|o| *o) {
         out.push_str(r#"<w:tblLayout w:type="fixed"/>"#);
     }
-    out.push_str(r#"<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>"#);
+    // The table's default cell margins are 10 twips left and right, top and bottom 0 (the docx Word saves from any ODT table: 459 of 459
+    // tables have `w:left`/`w:right` 10 in `w:tblCellMar`, and a `w:tblPrEx` of top and bottom 0 on their rows); a cell with its own
+    // padding has `w:tcMar`.
+    out.push_str(r#"<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="10" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="10" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>"#);
     for w in &cols {
         out.push_str(&format!(r#"<w:gridCol w:w="{w}"/>"#));
     }
@@ -1508,9 +1684,15 @@ fn table<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, out: &mut String) {
     fn rows<'a>(n: Node<'a, 'a>, ctx: &mut Ctx<'a>, cols: &[i64], vspan: &mut Vec<(usize, usize, String)>, header: bool, out: &mut String) {
         for r in n.children().filter(|c| c.is_element()) {
             match r.tag_name().name() {
+                "table-header-rows" | "table-rows" | "table-row-group" if !is_shown(r) => {}
                 "table-header-rows" | "table-rows" | "table-row-group" => rows(r, ctx, cols, vspan, header || r.tag_name().name() == "table-header-rows", out),
+                "table-row" if !is_shown(r) => {}
                 "table-row" => {
-                    let repeat = attr(r, "number-rows-repeated").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).min(256);
+                    let repeat = attr(r, "number-rows-repeated").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1);
+                    if repeat > MAX_ROW_REPEAT {
+                        ctx.error.get_or_insert_with(|| TABLE_TOO_LARGE.to_string());
+                    }
+                    let repeat = repeat.min(256);
                     for _ in 0..repeat {
                         row(r, ctx, cols, vspan, header, out);
                     }
@@ -1537,7 +1719,16 @@ fn table<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, out: &mut String) {
         out.push_str("</w:trPr>");
         let mut col = 0usize;
         let mut skip = 0usize;
-        let mut cells = r.children().filter(|c| is(*c, "table-cell") || is(*c, "covered-table-cell")).collect::<Vec<_>>().into_iter();
+        // Each cell as many times as it repeats (a covered cell too: the columns it covers count), the cells of a row at most one per column.
+        let mut cells: Vec<Node> = Vec::new();
+        for c in r.children().filter(|c| is(*c, "table-cell") || is(*c, "covered-table-cell")) {
+            let repeat = attr(c, "number-columns-repeated").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).max(1);
+            if repeat > MAX_COLUMN_REPEAT {
+                ctx.error.get_or_insert_with(|| TABLE_TOO_LARGE.to_string());
+            }
+            cells.extend(std::iter::repeat_n(c, repeat.min(MAX_COLUMN_REPEAT)));
+        }
+        let mut cells = cells.into_iter();
         while col < cols.len() {
             // A cell below a vertical span: continue it.
             if vspan[col].0 > 0 && skip == 0 {
@@ -1570,70 +1761,67 @@ fn table<'a>(node: Node<'a, 'a>, ctx: &mut Ctx<'a>, out: &mut String) {
             }
             let cs = attr(cell, "number-columns-spanned").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).max(1);
             let rs = attr(cell, "number-rows-spanned").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).max(1);
-            let repeat = attr(cell, "number-columns-repeated").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1).clamp(1, 1024);
-            for _ in 0..repeat {
-                if col >= cols.len() {
-                    break;
-                }
-                let span = cs.min(cols.len() - col);
-                let width: i64 = cols[col..col + span].iter().sum();
-                out.push_str(&format!(r#"<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/>"#));
-                if span > 1 {
-                    out.push_str(&format!(r#"<w:gridSpan w:val="{span}"/>"#));
-                }
-                if rs > 1 {
-                    out.push_str(r#"<w:vMerge w:val="restart"/>"#);
-                }
-                let mut vprops = String::new();
-                if let Some(s) = attr(cell, "style-name").and_then(|s| ctx.styles.get("table-cell", s)) {
-                    let b = borders(&s.cell, "tcBorders");
-                    out.push_str(&b);
-                    vprops.push_str(&b);
-                    out.push_str(&shade(&s.cell));
-                    // `style:writing-mode="tb-rl"` of a cell is `w:textDirection tbRlV` (measured: Word saving an .odt as .docx).
-                    if s.cell.get("writing-mode").map(String::as_str) == Some("tb-rl") {
-                        out.push_str(r#"<w:textDirection w:val="tbRlV"/>"#);
-                        vprops.push_str(r#"<w:textDirection w:val="tbRlV"/>"#);
-                    }
-                    match s.cell.get("vertical-align").map(String::as_str) {
-                        Some("middle") => out.push_str(r#"<w:vAlign w:val="center"/>"#),
-                        Some("bottom") => out.push_str(r#"<w:vAlign w:val="bottom"/>"#),
-                        _ => {}
-                    }
-                    let pad = |side: &str| s.cell.get(&format!("padding-{side}")).or(s.cell.get("padding")).and_then(|v| twips(v));
-                    let mut mar = String::new();
-                    for (side, tag) in [("top", "top"), ("left", "left"), ("bottom", "bottom"), ("right", "right")] {
-                        if let Some(v) = pad(side) {
-                            mar.push_str(&format!(r#"<w:{tag} w:w="{v}" w:type="dxa"/>"#));
-                        }
-                    }
-                    if !mar.is_empty() {
-                        out.push_str(&format!("<w:tcMar>{mar}</w:tcMar>"));
-                        vprops.push_str(&format!("<w:tcMar>{mar}</w:tcMar>"));
-                    }
-                    match s.cell.get("vertical-align").map(String::as_str) {
-                        Some("middle") => vprops.push_str(r#"<w:vAlign w:val="center"/>"#),
-                        Some("bottom") => vprops.push_str(r#"<w:vAlign w:val="bottom"/>"#),
-                        _ => {}
-                    }
-                }
-                if rs > 1 {
-                    for k in col..col + span {
-                        vspan[k] = (rs - 1, span, vprops.clone());
-                    }
-                }
-                out.push_str("</w:tcPr>");
-                let mut body = String::new();
-                ctx.in_cell += 1;
-                blocks(cell, ctx, None, &mut body);
-                ctx.in_cell -= 1;
-                if body.is_empty() || !body.ends_with("</w:p>") {
-                    body.push_str("<w:p/>");
-                }
-                out.push_str(&body);
-                out.push_str("</w:tc>");
-                col += span;
+            if col >= cols.len() {
+                break;
             }
+            let span = cs.min(cols.len() - col);
+            let width: i64 = cols[col..col + span].iter().sum();
+            out.push_str(&format!(r#"<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/>"#));
+            if span > 1 {
+                out.push_str(&format!(r#"<w:gridSpan w:val="{span}"/>"#));
+            }
+            if rs > 1 {
+                out.push_str(r#"<w:vMerge w:val="restart"/>"#);
+            }
+            let mut vprops = String::new();
+            if let Some(s) = attr(cell, "style-name").and_then(|s| ctx.styles.get("table-cell", s)) {
+                let b = borders(&s.cell, "tcBorders");
+                out.push_str(&b);
+                vprops.push_str(&b);
+                out.push_str(&shade(&s.cell));
+                // `style:writing-mode="tb-rl"` of a cell is `w:textDirection tbRlV` (measured: Word saving an .odt as .docx).
+                if s.cell.get("writing-mode").map(String::as_str) == Some("tb-rl") {
+                    out.push_str(r#"<w:textDirection w:val="tbRlV"/>"#);
+                    vprops.push_str(r#"<w:textDirection w:val="tbRlV"/>"#);
+                }
+                match s.cell.get("vertical-align").map(String::as_str) {
+                    Some("middle") => out.push_str(r#"<w:vAlign w:val="center"/>"#),
+                    Some("bottom") => out.push_str(r#"<w:vAlign w:val="bottom"/>"#),
+                    _ => {}
+                }
+                let pad = |side: &str| s.cell.get(&format!("padding-{side}")).or(s.cell.get("padding")).and_then(|v| twips(v));
+                let mut mar = String::new();
+                for (side, tag) in [("top", "top"), ("left", "left"), ("bottom", "bottom"), ("right", "right")] {
+                    if let Some(v) = pad(side) {
+                        mar.push_str(&format!(r#"<w:{tag} w:w="{v}" w:type="dxa"/>"#));
+                    }
+                }
+                if !mar.is_empty() {
+                    out.push_str(&format!("<w:tcMar>{mar}</w:tcMar>"));
+                    vprops.push_str(&format!("<w:tcMar>{mar}</w:tcMar>"));
+                }
+                match s.cell.get("vertical-align").map(String::as_str) {
+                    Some("middle") => vprops.push_str(r#"<w:vAlign w:val="center"/>"#),
+                    Some("bottom") => vprops.push_str(r#"<w:vAlign w:val="bottom"/>"#),
+                    _ => {}
+                }
+            }
+            if rs > 1 {
+                for k in col..col + span {
+                    vspan[k] = (rs - 1, span, vprops.clone());
+                }
+            }
+            out.push_str("</w:tcPr>");
+            let mut body = String::new();
+            ctx.in_cell += 1;
+            blocks(cell, ctx, None, &mut body);
+            ctx.in_cell -= 1;
+            if body.is_empty() || !body.ends_with("</w:p>") {
+                body.push_str("<w:p/>");
+            }
+            out.push_str(&body);
+            out.push_str("</w:tc>");
+            col += span;
             skip = cs - 1;
         }
         out.push_str("</w:tr>");
@@ -1659,13 +1847,15 @@ struct Page {
     header_distance: i64,
     footer_distance: i64,
     grid: Option<(&'static str, i64, i64)>,
+    /// `w:pgNumType` format of the page numbers (`style:num-format` of the page layout), none for the plain 1, 2, 3.
+    num_fmt: Option<&'static str>,
     /// `w:cols` of the page's columns (`style:columns`, ODF 1.3 20.xxx): the number of columns, the gap, and the separator line.
     cols: Option<String>,
 }
 
 /// The page of a master page (the first one when `master_name` is none or unknown), and the master page's header and footer.
 fn read_page<'a>(styles_doc: Option<&'a Document<'a>>, master_name: Option<&str>) -> (Page, Option<Node<'a, 'a>>, Option<Node<'a, 'a>>) {
-    let mut page = Page { width: 11906, height: 16838, landscape: false, top: 1440, bottom: 1440, left: 1440, right: 1440, header_distance: 720, footer_distance: 720, grid: None, cols: None };
+    let mut page = Page { width: 11906, height: 16838, landscape: false, top: 1440, bottom: 1440, left: 1440, right: 1440, header_distance: 720, footer_distance: 720, grid: None, num_fmt: None, cols: None };
     let (mut header_node, mut footer_node): (Option<Node>, Option<Node>) = (None, None);
     if let Some(sd) = styles_doc {
         let master = sd
@@ -1751,6 +1941,11 @@ fn read_page<'a>(styles_doc: Option<&'a Document<'a>>, master_name: Option<&str>
                     let gap = f.get("margin-top").and_then(|v| twips(v)).unwrap_or(0);
                     page.bottom = bottom + min + gap;
                 }
+                // The page numbers' format is `w:pgNumType w:fmt` of the section (measured with -SaveAs todocx: `- 1 -, - 2 -, - 3 -, ...` of 47
+                // layouts is `numberInDash`, `１, ２, ３, ...` is `decimalFullWidth`, `1` is no `w:pgNumType` format).
+                if let Some(f) = p.get("num-format") {
+                    page.num_fmt = if f.trim_start().starts_with('-') && f.contains('1') { Some("numberInDash") } else { Some(num_fmt(f)).filter(|n| *n != "decimal") };
+                }
                 // The layout grid: lines (`line`) or lines and characters (`both`), the lines' pitch the page's height inside the page
                 // layout's own margins (`fo:margin-top`, `fo:margin-bottom`; the header and the footer are inside them, ODF 1.3 20.219
                 // `style:layout-grid-lines`: the number of lines per page) over the number of lines. Word reads the file so: the pitch of a
@@ -1807,6 +2002,33 @@ fn master_of<'a>(node: Node<'a, 'a>, styles: &Styles) -> Option<String> {
     None
 }
 
+/// `style:page-number` of the style that names the master page of a block: the number the section's pages start at. Word's `.docx` of
+/// such an ODT has it as `w:pgNumType w:start` of that section (measured with -SaveAs todocx on the corpus: 41 documents, every
+/// numeric value of a block with a master page is the start of its section, `0` too; `auto` gives none; the same value on a
+/// block without a master page, which starts no section, gives none: 144, 150, 151).
+fn page_number_of(node: Node, styles: &Styles) -> Option<String> {
+    let (family, node) = match node.tag_name().name() {
+        "p" | "h" => ("paragraph", node),
+        "table" => ("table", node),
+        "list" => ("paragraph", node.descendants().find(|n| is(*n, "p") || is(*n, "h"))?),
+        _ => return None,
+    };
+    let mut cur = attr(node, "style-name").and_then(|n| styles.get(family, n));
+    let mut guard = 0;
+    while let Some(s) = cur {
+        if s.master_page.is_some() {
+            let v = s.para.get("page-number").or_else(|| s.table.get("page-number"))?;
+            return v.trim().parse::<i64>().ok().map(|n| n.to_string());
+        }
+        guard += 1;
+        if guard > 16 {
+            break;
+        }
+        cur = s.parent.as_deref().and_then(|p| styles.get(family, p));
+    }
+    None
+}
+
 /// The sections of the body: each starts at a block whose style names a master page (the first one at the first block).
 struct Sections {
     /// Per section: the master page, where it begins in the body's XML, where its last paragraph begins, and the section's own
@@ -1814,6 +2036,8 @@ struct Sections {
     list: Vec<(Option<String>, usize, Option<usize>, Option<SecProps>)>,
     /// The next block starts a section after a `text:section`.
     pending: bool,
+    /// `style:page-number` of the block a section begins at, by where the section begins in the body's XML.
+    starts: HashMap<usize, String>,
 }
 
 /// What a `text:section` changes in the page of the section (ODF 1.3 20.xxx `style:section-properties`): Word writes a section of its
@@ -1828,15 +2052,20 @@ struct SecProps {
 }
 
 fn body_blocks<'a>(parent: Node<'a, 'a>, ctx: &mut Ctx<'a>, out: &mut String, st: &mut Sections) {
-    for child in parent.children().filter(|c| c.is_element()) {
+    for child in parent.children().filter(|c| c.is_element() && odf_element(*c)) {
         let name = child.tag_name().name();
+        if name == "section" && !is_shown(child) {
+            continue;
+        }
+        if name == "numbered-paragraph" {
+            body_blocks(child, ctx, out, st);
+            continue;
+        }
         if name == "section" {
             let sec = attr(child, "style-name").and_then(|n| ctx.styles.get("section", n));
-            let props = sec.and_then(|s| {
-                let tw = |k: &str| s.section.get(k).and_then(|v| twips(v)).unwrap_or(0);
-                let p = SecProps { left: tw("margin-left"), right: tw("margin-right"), cols: s.section_cols.clone(), continuous: !st.list.is_empty() };
-                (p.left != 0 || p.right != 0 || p.cols.is_some()).then_some(p)
-            });
+            // Word writes a section for every `text:section`, also one without margins or columns (corpus 098, 143, 020).
+            let tw = |k: &str| sec.and_then(|s| s.section.get(k).and_then(|v| twips(v))).unwrap_or(0);
+            let props = Some(SecProps { left: tw("margin-left"), right: tw("margin-right"), cols: sec.and_then(|s| s.section_cols.clone()), continuous: !st.list.is_empty() });
             if let Some(p) = props {
                 let master = st.list.last().and_then(|e| e.0.clone());
                 match st.list.last_mut() {
@@ -1859,6 +2088,11 @@ fn body_blocks<'a>(parent: Node<'a, 'a>, ctx: &mut Ctx<'a>, out: &mut String, st
             continue;
         }
         let m = master_of(child, ctx.styles);
+        if m.is_some()
+            && let Some(n) = page_number_of(child, ctx.styles)
+        {
+            st.starts.insert(out.len(), n);
+        }
         if st.list.is_empty() {
             st.list.push((m, out.len(), None, None));
         } else if m.is_some() {
@@ -1935,6 +2169,7 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
         endnotes: Vec::new(),
         in_cell: 0,
         pending_break: false,
+        error: None,
     };
     for doc in &docs {
         for n in doc.descendants().filter(|n| is(*n, "list-style")) {
@@ -1947,9 +2182,13 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
     // The sections and their pages: one page layout, header and footer per master page in use.
     let body = content.descendants().find(|n| is(*n, "text") && n.parent().is_some_and(|p| is(p, "body")));
     let mut body_xml = String::new();
-    let mut sections = Sections { list: Vec::new(), pending: false };
-    if let Some(b) = body {
-        body_blocks(b, &mut ctx, &mut body_xml, &mut sections);
+    let mut sections = Sections { list: Vec::new(), pending: false, starts: HashMap::new() };
+    let Some(b) = body else {
+        return Err(Error::new("ODT に本文 (office:body/office:text) がありません")); // i18n-ok（読めないファイルの理由）
+    };
+    body_blocks(b, &mut ctx, &mut body_xml, &mut sections);
+    if let Some(reason) = ctx.error.take() {
+        return Err(Error::new(reason));
     }
     if sections.list.is_empty() {
         sections.list.push((None, 0, None, None));
@@ -1965,6 +2204,9 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
         /// `style:header-first` / `style:footer-first` (the first page of the section): `w:titlePg` with `w:type="first"` parts.
         header_first: Option<String>,
         footer_first: Option<String>,
+        /// `style:header-left` / `style:footer-left` (the even pages): `w:type="even"` parts and `w:evenAndOddHeaders`.
+        header_left: Option<String>,
+        footer_left: Option<String>,
     }
     let mut infos: Vec<PageInfo> = Vec::new();
     let mut info_of: Vec<usize> = Vec::new();
@@ -2006,7 +2248,11 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
                 };
                 let header_first = first("header-first");
                 let footer_first = first("footer-first");
-                infos.push(PageInfo { master: m.clone(), page, header, footer, header_first, footer_first });
+                // Word reads `style:header-left`/`style:footer-left` as the even page's header and footer (025: the even header of page
+                // number 30 is on page 1; the settings get `w:evenAndOddHeaders`).
+                let header_left = first("header-left");
+                let footer_left = first("footer-left");
+                infos.push(PageInfo { master: m.clone(), page, header, footer, header_first, footer_first, header_left, footer_left });
                 infos.len() - 1
             }
         };
@@ -2029,11 +2275,17 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
         if info.footer_first.is_some() {
             sect.push_str(&format!(r#"<w:footerReference w:type="first" r:id="rIdFtrF{}"/>"#, info_of[k] + 1));
         }
+        if info.header_left.is_some() {
+            sect.push_str(&format!(r#"<w:headerReference w:type="even" r:id="rIdHdrL{}"/>"#, info_of[k] + 1));
+        }
+        if info.footer_left.is_some() {
+            sect.push_str(&format!(r#"<w:footerReference w:type="even" r:id="rIdFtrL{}"/>"#, info_of[k] + 1));
+        }
         if extra.continuous {
             sect.push_str(r#"<w:type w:val="continuous"/>"#);
         }
         sect.push_str(&format!(
-            r#"<w:pgSz w:w="{}" w:h="{}"{}/><w:pgMar w:top="{}" w:right="{}" w:bottom="{}" w:left="{}" w:header="{}" w:footer="{}" w:gutter="0"/>{}{}{}</w:sectPr>"#,
+            r#"<w:pgSz w:w="{}" w:h="{}"{}/><w:pgMar w:top="{}" w:right="{}" w:bottom="{}" w:left="{}" w:header="{}" w:footer="{}" w:gutter="0"/>{}{}{}{}</w:sectPr>"#,
             page.width,
             page.height,
             if page.landscape { r#" w:orient="landscape""# } else { "" },
@@ -2043,6 +2295,11 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
             page.left + extra.left,
             page.header_distance,
             page.footer_distance,
+            {
+                let fmt = page.num_fmt.map(|f| format!(r#" w:fmt="{f}""#)).unwrap_or_default();
+                let start = sections.starts.get(&sections.list[k].1).map(|n| format!(r#" w:start="{n}""#)).unwrap_or_default();
+                if fmt.is_empty() && start.is_empty() { String::new() } else { format!("<w:pgNumType{fmt}{start}/>") }
+            },
             extra.cols.clone().or_else(|| page.cols.clone()).unwrap_or_default(),
             if info.header_first.is_some() || info.footer_first.is_some() { "<w:titlePg/>" } else { "" },
             page.grid
@@ -2088,7 +2345,7 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
             rpr(&text, &styles)
         })
         .unwrap_or_default();
-    let default_ppr = styles.default_para.as_ref().map(|d| ppr(&d.para, &d.tabs, false)).unwrap_or_default();
+    let default_ppr = styles.default_para.as_ref().map(|d| ppr(&d.para, &d.tabs, false, d.para.get("margin-left").and_then(|v| twips(v)).unwrap_or(0))).unwrap_or_default();
     styles_xml.push_str(&format!("<w:rPrDefault><w:rPr>{default_rpr}</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>{default_ppr}</w:pPr></w:pPrDefault></w:docDefaults>"));
     styles_xml.push_str(r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>"#);
     for (level, size) in [(1, 32), (2, 28), (3, 24), (4, 22), (5, 21), (6, 21)] {
@@ -2113,9 +2370,9 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
         }
         if kind == "paragraph" {
             let mut p = if s.tabs.is_empty() && s.tabs_cleared {
-                ppr(&s.para, &styles.inherited_clears(&s.family, s.parent.as_deref()), s.list_style.is_some())
+                ppr(&s.para, &styles.inherited_clears(&s.family, s.parent.as_deref()), s.list_style.is_some(), if s.list_style.is_some() { 0 } else { styles.chain_margin_left(s) })
             } else {
-                ppr(&s.para, &s.tabs, s.list_style.is_some())
+                ppr(&s.para, &s.tabs, s.list_style.is_some(), if s.list_style.is_some() { 0 } else { styles.chain_margin_left(s) })
             };
             if let Some(ls) = &s.list_style {
                 if let Some(num) = ctx.num_for(ls, false) {
@@ -2174,6 +2431,12 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
         if info.footer_first.is_some() {
             ct.push_str(&format!(r#"<Override PartName="/word/footerF{0}.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>"#, i + 1));
         }
+        if info.header_left.is_some() {
+            ct.push_str(&format!(r#"<Override PartName="/word/headerL{0}.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>"#, i + 1));
+        }
+        if info.footer_left.is_some() {
+            ct.push_str(&format!(r#"<Override PartName="/word/footerL{0}.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>"#, i + 1));
+        }
     }
     ct.push_str("</Types>");
     let pkg_rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>"#;
@@ -2192,6 +2455,12 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
         }
         if info.footer_first.is_some() {
             doc_rels.push_str(&format!(r#"<Relationship Id="rIdFtrF{0}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footerF{0}.xml"/>"#, i + 1));
+        }
+        if info.header_left.is_some() {
+            doc_rels.push_str(&format!(r#"<Relationship Id="rIdHdrL{0}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="headerL{0}.xml"/>"#, i + 1));
+        }
+        if info.footer_left.is_some() {
+            doc_rels.push_str(&format!(r#"<Relationship Id="rIdFtrL{0}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footerL{0}.xml"/>"#, i + 1));
         }
     }
     if !ctx.footnotes.is_empty() {
@@ -2226,7 +2495,8 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
     add("word/styles.xml", styles_xml.as_bytes())?;
     add("word/numbering.xml", numbering_xml.as_bytes())?;
     // Word 2013 and later (compatibility mode 15): a table's indent is its edge, as Word reads the file.
-    let settings_xml = format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="{W_NS}"><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>"#);
+    let even_odd = if infos.iter().any(|i| i.header_left.is_some() || i.footer_left.is_some()) { "<w:evenAndOddHeaders/>" } else { "" };
+    let settings_xml = format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="{W_NS}">{even_odd}<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>"#);
     add("word/settings.xml", settings_xml.as_bytes())?;
     let part_rels = {
         let mut r = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
@@ -2256,6 +2526,14 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
             add(&format!("word/footerF{}.xml", i + 1), part("ftr", f).as_bytes())?;
             add(&format!("word/_rels/footerF{}.xml.rels", i + 1), part_rels.as_bytes())?;
         }
+        if let Some(h) = &info.header_left {
+            add(&format!("word/headerL{}.xml", i + 1), part("hdr", h).as_bytes())?;
+            add(&format!("word/_rels/headerL{}.xml.rels", i + 1), part_rels.as_bytes())?;
+        }
+        if let Some(f) = &info.footer_left {
+            add(&format!("word/footerL{}.xml", i + 1), part("ftr", f).as_bytes())?;
+            add(&format!("word/_rels/footerL{}.xml.rels", i + 1), part_rels.as_bytes())?;
+        }
     }
     if !ctx.footnotes.is_empty() {
         let mut inner = String::from(r#"<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>"#);
@@ -2278,4 +2556,21 @@ pub fn import(data: &[u8]) -> Result<Vec<u8>, Error> {
     }
     add("docProps/core.xml", core_xml.as_bytes())?;
     w.finish().map_err(|e| Error::new(e.to_string()))
+}
+
+/// `draw:enhanced-geometry` whose path is the plain rectangle of its view box (`M 0 0 L w 0 w h 0 h Z N`), with no
+/// equations, no modifiers and no text area of its own.
+fn is_plain_rect_path(eg: Node) -> bool {
+    let Some(path) = attr(eg, "enhanced-path") else { return false };
+    if path.contains('?') || attr(eg, "modifiers").is_some() || attr(eg, "text-areas").is_some() || eg.children().any(|c| is(c, "equation")) {
+        return false;
+    }
+    let nums: Vec<f64> = attr(eg, "viewBox").map(|v| v.split_whitespace().filter_map(|t| t.parse().ok()).collect()).unwrap_or_default();
+    let [x, y, w, h] = nums[..] else { return false };
+    if x != 0.0 || y != 0.0 {
+        return false;
+    }
+    let toks: Vec<&str> = path.split_whitespace().collect();
+    let expect = ["M", "0", "0", "L", &w.to_string(), "0", &w.to_string(), &h.to_string(), "0", &h.to_string(), "Z", "N"];
+    toks == expect
 }

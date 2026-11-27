@@ -122,6 +122,8 @@ medical.pii.location.comments	Slide {no} comments
 medical.pii.location.sheet-cell	Sheet {no} (R{row}C{column})
 medical.pii.location.text	Slide {no} text
 medical.pii.location.hidden-sheet	Sheet `{name}`
+medical.pii.location.document	Document
+medical.pii.location.paragraph	Paragraph {no}
 medical.pii.detail.hidden-slide	Contains a hidden slide
 medical.pii.detail.notes	The speaker notes contain text
 medical.pii.detail.comments	Contains {count} comments

@@ -555,3 +555,37 @@ fix.update.copy-command	Copy the command
 menu.group.wrap-text	Text Wrapping
 help.register-desktop	Add to List of Apps
 help.setup	Setup
+pptx.print-panel.paper	Paper
+pptx.print-panel.paper-own	The slides' own size
+pptx.print-panel.fit-paper	Scale pages to fit the paper
+docx.show-form-fill	Form Input…
+docx.form-fill.title	Form Input
+docx.form-fill.empty	This document has no input fields. Put the caret in a plain-text content control and give it a field ID below; its box appears here.
+docx.form-fill.count	Input fields: {count}
+docx.form-fill.define	Field setup
+docx.form-fill.define-hint	Gives the plain-text control at the caret a field ID (letters, digits, . _ -). Controls with the same ID are filled together.
+docx.form-fill.tag	Make the control at the caret a field
+docx.form-fill.tagged	The control is now an input field.
+docx.form-fill.bad-id	Use only letters, digits, . _ - in a field ID.
+docx.form-fill.not-in-control	The caret is not in a plain-text content control.
+docx.form-fill.form-id	Form ID of the record to write
+docx.form-fill.bad-form-id	Use only letters, digits, . _ - in the form ID.
+docx.form-fill.export-csv	Write as CSV
+docx.form-fill.export-json	Write as JSON
+docx.form-fill.exported	Written
+docx.form-fill.load-csv	Read a CSV
+docx.form-fill.csv-loaded	Read {count} rows of the CSV; the first fills the form.
+docx.form-fill.csv-empty	The CSV has no rows.
+docx.form-fill.csv-native-only	Reading a CSV is not available in the browser yet.
+docx.form-fill.prev	Previous row
+docx.form-fill.next	Next row
+docx.form-fill.write-documents	Write filled documents
+docx.form-fill.write-needs-file	Save the form first; its file is the template of the documents.
+docx.form-fill.write-needs-csv	Read a CSV first; each row makes one document.
+docx.form-fill.write-definition	Choose the form definition (JSON or YAML)
+docx.form-fill.write-done	Wrote {count} documents (record-1.docx ...) to the folder.
+docx.form-fill.load-definition	Read a form definition
+docx.form-fill.definition-loaded	Read the definition of {count} fields (type, maxChars, format).
+docx.form-fill.too-long	{chars} characters; the limit is {max}.
+docx.form-fill.not-number	Enter a number (digits and a decimal point, no commas or units).
+docx.form-fill.export-refused	Not written: fix these fields first: {fields}

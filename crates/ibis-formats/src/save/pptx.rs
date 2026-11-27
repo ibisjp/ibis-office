@@ -219,7 +219,7 @@ pub(crate) struct Target<'a> {
 pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline: &'a Presentation, current: &Presentation, new_slides: &'a HashMap<SlideId, NewSlide>, new_charts: &HashMap<ShapeId, super::NewChartEntry>, chart_data: &super::pptx_chart_data::ChartDataEdits) -> Result<(), Error> {
     // A chartEx chart is drawn from its part as written, so a data edit leaves the model as it is.
     let ex_data_edited = |slide: &Slide| slide.shapes.iter().any(|s| matches!(&s.kind, ShapeKind::Chart(c) if c.ex.is_some() && super::pptx_chart_data::matching(chart_data, s.id, c).is_some()));
-    let zoom_changed = baseline.view_zoom != current.view_zoom;
+    let zoom_changed = baseline.view_zoom != current.view_zoom || baseline.view_grid != current.view_grid;
     if same_content(baseline, current) && !zoom_changed && !current.slides.iter().any(|s| ex_data_edited(s)) {
         return Ok(());
     }
@@ -250,6 +250,10 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
     // The zoom of the slide pane (GitHub issue #237: the file keeps it, as PowerPoint's does).
     if baseline.view_zoom != current.view_zoom {
         super::pptx_guides::write_view_scale(package, &map.presentation, current.view_zoom)?;
+    }
+    // グリッドとガイド (`viewProps.xml`): written when the user changed them.
+    if baseline.view_grid != current.view_grid {
+        super::pptx_guides::write_view_grid(package, &map.presentation, &current.view_grid)?;
     }
     if baseline.layout_scale != current.layout_scale {
         scale_layout_parts(package, map, current.layout_scale)?;
@@ -312,7 +316,10 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
         let root = doc.root_element().ok_or_else(|| Error::new("プレゼンテーションが空です"))?;
         super::pptx_ibis::write_features(doc, root, current.ibis_extensions)?;
     }
-    if baseline.object_defaults != current.object_defaults {
+    // The defaults that follow a theme colour move with the theme (the theme part keeps its own `a:schemeClr`).
+    let mut baseline_defaults = baseline.object_defaults.clone();
+    baseline_defaults.retheme(&current.theme_colors);
+    if baseline_defaults != current.object_defaults {
         super::pptx_theme::write_defaults(package, &map.presentation, &current.object_defaults)?;
     }
     if baseline.theme_colors != current.theme_colors || baseline.theme_fonts != current.theme_fonts {

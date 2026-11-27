@@ -29,7 +29,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     ]
 }
 
-const RED: Color = Color { rgb: Rgb(0xFF0000), alpha: 255 };
+const RED: Color = Color { rgb: Rgb(0xFF0000), alpha: 255, theme: None };
 const RAD: i64 = 127_000; // 10 pt
 
 /// The screenshot of a white slide with the shape on it. (0 rotation is upright.)
@@ -43,7 +43,7 @@ fn shot_at(geometry: Geometry, rotation: i32, fill: Fill, stroke: Option<Stroke>
     s.update(|e, _, cx| {
         let size = e.presentation().size_of(e.slide());
         let back = e.document.ids().new_shape_id();
-        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255 }), None);
+        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255, theme: None }), None);
         e.insert_shape(Shape::new(back, EmuRect::new(0, 0, size.width, size.height), ShapeKind::Auto(white)), cx);
         let id = e.document.ids().new_shape_id();
         let mut auto = ibis_doc_model::AutoShape::new(geometry, fill, stroke);
@@ -139,7 +139,7 @@ fn curved_and_rotated() {
 
 fn line_and_no_fill() {
     // A line round the shape fades with it: at its outer edge the line is nearly gone, deep inside the shape it is whole.
-    let line = Some(Stroke::solid(Color { rgb: Rgb(0x000096), alpha: 255 }, 76_200));
+    let line = Some(Stroke::solid(Color { rgb: Rgb(0x000096), alpha: 255, theme: None }, 76_200));
     let soft = shot(Geometry::Rect, 0, Fill::Solid(RED), line.clone(), Some(RAD), "line-soft");
     let (cx, cy) = centre_of_shape(&soft);
     // The outer edge of the line (a 6 pt line) is where the picture starts: nothing of it there.
@@ -189,7 +189,7 @@ fn assert_faded(hard: &image::RgbaImage, soft: &image::RgbaImage, what: &str) {
 /// picture faded, its line included.
 fn dashed_and_compound_lines() {
     for (name, dashed, compound) in [("dashed", true, ibis_doc_model::LineCompound::Single), ("compound", false, ibis_doc_model::LineCompound::Double)] {
-        let mut line = Stroke::solid(Color { rgb: Rgb(0x000096), alpha: 255 }, 76_200);
+        let mut line = Stroke::solid(Color { rgb: Rgb(0x000096), alpha: 255, theme: None }, 76_200);
         line.dashed = dashed;
         if dashed {
             line.dash = ibis_doc_model::LineDash::Dash;
@@ -205,10 +205,10 @@ fn dashed_and_compound_lines() {
 
 /// Gradient and pattern fills fade as a plain colour does (they were drawn with no fade at all).
 fn gradient_and_pattern_fills() {
-    let stop = |position, rgb| ibis_doc_model::GradientStop { position, color: Color { rgb: Rgb(rgb), alpha: 255 } };
+    let stop = |position, rgb| ibis_doc_model::GradientStop { position, color: Color { rgb: Rgb(rgb), alpha: 255, theme: None } };
     let linear = Fill::Linear { angle: 0, scaled: false, stops: vec![stop(0, 0xFF0000), stop(100_000, 0xFF8000)] };
     let path = Fill::Path { path: ibis_doc_model::GradientPath::Circle, focus: [50_000; 4], stops: vec![stop(0, 0xFF0000), stop(100_000, 0xC00000)] };
-    let pattern = Fill::Pattern { preset: "pct50".into(), foreground: RED, background: Color { rgb: Rgb(0xFF4040), alpha: 255 } };
+    let pattern = Fill::Pattern { preset: "pct50".into(), foreground: RED, background: Color { rgb: Rgb(0xFF4040), alpha: 255, theme: None } };
     for (name, fill) in [("linear", linear), ("path", path), ("pattern", pattern)] {
         let hard = shot(Geometry::Rect, 0, fill.clone(), None, None, &format!("{name}-hard"));
         let soft = shot(Geometry::Rect, 0, fill, None, Some(RAD), &format!("{name}-soft"));
@@ -240,7 +240,7 @@ fn picture_shot_flips(fill_of: &dyn Fn(ibis_doc_model::MediaId) -> Fill, rotatio
     s.update(|e, _, cx| {
         let size = e.presentation().size_of(e.slide());
         let back = e.document.ids().new_shape_id();
-        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255 }), None);
+        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255, theme: None }), None);
         e.insert_shape(Shape::new(back, EmuRect::new(0, 0, size.width, size.height), ShapeKind::Auto(white)), cx);
         let data = two_colour_png();
         let media = e.document.ids().add_media(ibis_doc_model::MediaFormat::Png, data.clone());
@@ -292,7 +292,7 @@ fn same_colours_where_whole(hard: &image::RgbaImage, soft: &image::RgbaImage, wh
 fn picture_stretched() {
     // (A line whose green is under half, as the solid-colour test's: the shape's edge is found from the green channel, and a lighter line is not seen as
     // the shape, so its edge would be found a line's width further in, 6 pt, where the fade is already Phi((6 - 8.7) / 3.3) = 0.21 of the way up.)
-    let line = Some(Stroke::solid(Color { rgb: Rgb(0x000096), alpha: 255 }, 76_200));
+    let line = Some(Stroke::solid(Color { rgb: Rgb(0x000096), alpha: 255, theme: None }, 76_200));
     let fill = |media| Fill::Image(media);
     let hard = picture_shot(&fill, 0, false, line.clone(), None, "picture-hard");
     let soft = picture_shot(&fill, 0, false, line, Some(RAD), "picture-soft");
@@ -336,7 +336,7 @@ fn picture_tiled_and_cropped() {
 /// A dotted line with round caps (12 pt, soft edge 5 pt): each dot is a disc, and the half of it inside the shape is left faintly (it was drawn
 /// flat, a dot of no length, and faded away altogether). The line's ink is the blue that red and white do not have.
 fn round_dots() {
-    let mut line = Stroke::solid(Color { rgb: Rgb(0x000096), alpha: 255 }, 152_400);
+    let mut line = Stroke::solid(Color { rgb: Rgb(0x000096), alpha: 255, theme: None }, 152_400);
     line.dashed = true;
     line.dash = ibis_doc_model::LineDash::Dot;
     line.cap = ibis_doc_model::LineCap::Round;
@@ -348,7 +348,7 @@ fn round_dots() {
 /// With a soft edge the pattern's tile is laid from the top-left of the shape's bounding rectangle (PowerPoint, measured on Windows), so the same
 /// shape put half a cell further right shows the same pattern relative to itself.
 fn pattern_origin() {
-    let pattern = Fill::Pattern { preset: "pct50".into(), foreground: RED, background: Color { rgb: Rgb(0xFF4040), alpha: 255 } };
+    let pattern = Fill::Pattern { preset: "pct50".into(), foreground: RED, background: Color { rgb: Rgb(0xFF4040), alpha: 255, theme: None } };
     let one = shot_at(Geometry::Rect, 0, pattern.clone(), None, Some(RAD), 1_500_000, "pattern-a");
     let other = shot_at(Geometry::Rect, 0, pattern, None, Some(RAD), 1_500_000 + 4_762, "pattern-b");
     // The shape's own corner is read from the same shape with no soft edge (its edge is sharp; the faded one's is a slope in which the checker's
@@ -459,7 +459,7 @@ fn shot_effects(effects: impl Fn(&mut ibis_doc_model::AutoShape), label: &str) -
     s.update(|e, _, cx| {
         let size = e.presentation().size_of(e.slide());
         let back = e.document.ids().new_shape_id();
-        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255 }), None);
+        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255, theme: None }), None);
         e.insert_shape(Shape::new(back, EmuRect::new(0, 0, size.width, size.height), ShapeKind::Auto(white)), cx);
         let id = e.document.ids().new_shape_id();
         let mut auto = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(RED), None);
@@ -477,7 +477,7 @@ fn shot_effects(effects: impl Fn(&mut ibis_doc_model::AutoShape), label: &str) -
 /// 1 pt under the bottom edge it is the fade's value 9 pt inside the edge (half way is at 8.7 pt: about 0.54), 5 pt under it the fade's value 5 pt
 /// inside (about 0.13).
 fn shadow_of_the_faded_shape() {
-    let (img, (l, r, _, b), px_pt) = shot_effects(|a| a.shadow = Some(ibis_doc_model::Shadow::simple(Color { rgb: Rgb(0), alpha: 255 }, 0, RAD, 5_400_000)), "shadow-soft");
+    let (img, (l, r, _, b), px_pt) = shot_effects(|a| a.shadow = Some(ibis_doc_model::Shadow::simple(Color { rgb: Rgb(0), alpha: 255, theme: None }, 0, RAD, 5_400_000)), "shadow-soft");
     let col = (l + r) / 2;
     let at = |t_pt: f32| 1.0 - f32::from(img.get_pixel(col, b + (t_pt * px_pt).round() as u32)[1]) / 255.0;
     let (near, far) = (at(1.0), at(5.0));
@@ -489,7 +489,7 @@ fn shadow_of_the_faded_shape() {
 /// goes on under the faded fill): a green glow of 10 pt round a red rectangle with a soft edge, 1 pt inside the left edge where the red is gone,
 /// and 1 pt outside it, is green in both places.
 fn glow_of_the_whole_shape() {
-    let (img, (l, _, _, _), px_pt) = shot_effects(|a| a.glow = Some((Color { rgb: Rgb(0x00FF00), alpha: 255 }, 127_000)), "glow-soft");
+    let (img, (l, _, _, _), px_pt) = shot_effects(|a| a.glow = Some((Color { rgb: Rgb(0x00FF00), alpha: 255, theme: None }, 127_000)), "glow-soft");
     let row = img.height() / 2;
     for (name, x) in [("inside", l + px_pt.round() as u32), ("outside", l - px_pt.round() as u32)] {
         let p = img.get_pixel(x, row);
@@ -506,7 +506,7 @@ fn picture_shape() {
         s.update(|e, _, cx| {
             let size = e.presentation().size_of(e.slide());
             let back = e.document.ids().new_shape_id();
-            let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255 }), None);
+            let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255, theme: None }), None);
             e.insert_shape(Shape::new(back, EmuRect::new(0, 0, size.width, size.height), ShapeKind::Auto(white)), cx);
             let data = two_colour_png();
             let media = e.document.ids().add_media(ibis_doc_model::MediaFormat::Png, data.clone());
@@ -546,7 +546,7 @@ fn shot_pair(group_soft: Option<i64>, own: Option<i64>, label: &str) -> image::R
     s.update(|e, _, cx| {
         let size = e.presentation().size_of(e.slide());
         let back = e.document.ids().new_shape_id();
-        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255 }), None);
+        let white = ibis_doc_model::AutoShape::new(Geometry::Rect, Fill::Solid(Color { rgb: Rgb(0xFFFFFF), alpha: 255, theme: None }), None);
         e.insert_shape(Shape::new(back, EmuRect::new(0, 0, size.width, size.height), ShapeKind::Auto(white)), cx);
         let mut ids = Vec::new();
         for left in [1_500_000, 3_500_000] {

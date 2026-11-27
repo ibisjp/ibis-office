@@ -5,7 +5,7 @@
 //! on from a shown slide: the next shown one; on from a hidden one: the slide next to it, hidden or not; back: through the slides seen,
 //! and before any seen, the shown slide before. 最初から starts with the first shown slide.
 use crate::shell::scenario::Scenario;
-use crate::slideshow::{SlideshowExt, SlideshowExtCrate as _};
+use crate::ext::*;
 use ibis_doc_model::Command;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {

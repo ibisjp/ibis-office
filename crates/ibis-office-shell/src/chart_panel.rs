@@ -766,6 +766,7 @@ impl SlideEditor {
                         symbol,
                         size: 7,
                         fill: Fill::Solid(Color::opaque(ibis_doc_model::Rgb(0x4472c4))),
+                        edge: None,
                     });
                 }
             }

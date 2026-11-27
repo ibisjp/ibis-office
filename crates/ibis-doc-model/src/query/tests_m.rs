@@ -394,3 +394,39 @@ fn nan_and_infinity_are_num_errors_in_a_sheet_and_nothing_in_a_whole_column() {
     let got = eval_m(&m("Table.TransformColumnTypes(Table.AddColumn(Source, \"x\", each 0 / 0), {{\"x\", type text}})"), &book).unwrap();
     assert!(got.rows.iter().all(|r| r[4] == CellValue::Text("NaN".into())));
 }
+
+/// A datetimezone in a sheet's cell (K0039, `tasks/doc/requests/2026-11-20-k0039-locales-result.tsv`, section 6, the `Value2` of the cell, the
+/// local zone +09:00): the number is the clock time as written, the offset neither taken off nor turned into the local time; only
+/// `DateTimeZone.ToLocal` and `SwitchZone` change the clock time.
+#[test]
+fn a_datetimezone_in_a_cell_is_the_clock_time_as_written() {
+    ibis_calc::eval::convert::set_thread_clock(Some(|| (1_700_000_000_000, 9 * 3600)));
+    let book: [(String, QTable); 0] = [];
+    for (expr, want) in [
+        ("#datetimezone(2026,11,17,13,5,9,9,0)", 46343.5452430556),
+        ("#datetimezone(2026,11,17,4,5,9,0,0)", 46343.1702430556),
+        ("#datetimezone(2026,11,17,13,5,9,0,0)", 46343.5452430556),
+        ("#datetimezone(2026,11,17,13,5,9,-5,0)", 46343.5452430556),
+        ("#datetimezone(2026,11,17,13,5,9,-5,30)", 46343.5452430556),
+        ("#datetimezone(2026,1,5,0,0,0,9,0)", 46027.0),
+        ("#datetimezone(2026,1,5,0,0,0,0,0)", 46027.0),
+        ("#datetime(2026,11,17,13,5,9)", 46343.5452430556),
+        ("DateTimeZone.ToLocal(#datetimezone(2026,11,17,13,5,9,9,0))", 46343.5452430556),
+        ("DateTimeZone.ToLocal(#datetimezone(2026,11,17,13,5,9,0,0))", 46343.9202430556),
+        ("DateTimeZone.ToLocal(#datetimezone(2026,11,17,13,5,9,-5,0))", 46344.1285763889),
+        ("DateTimeZone.ToLocal(#datetimezone(2026,1,5,0,0,0,0,0))", 46027.375),
+        ("DateTimeZone.RemoveZone(#datetimezone(2026,11,17,13,5,9,-5,0))", 46343.5452430556),
+        ("DateTimeZone.SwitchZone(#datetimezone(2026,11,17,13,5,9,9,0), 0)", 46343.1702430556),
+        ("DateTimeZone.SwitchZone(#datetimezone(2026,11,17,13,5,9,-5,0), 0)", 46343.7535763889),
+        ("DateTimeZone.SwitchZone(#datetimezone(2026,1,5,0,0,0,9,0), 0)", 46026.625),
+        ("DateTimeZone.SwitchZone(#datetimezone(2026,11,17,13,5,9,9,0), -5)", 46342.9619097222),
+        ("DateTimeZone.From(#date(2026,11,17))", 46343.0),
+        ("DateTimeZone.From(#datetime(2026,11,17,13,5,9))", 46343.5452430556),
+    ] {
+        let code = format!("let\n    T = #table({{\"c\"}}, {{{{{expr}}}}})\nin\n    T");
+        let got = eval_m(&code, &book).unwrap_or_else(|e| panic!("{expr}: {e:?}"));
+        let CellValue::Number(n) = got.rows[0][0] else { panic!("{expr}: {:?}", got.rows[0][0]) };
+        assert!((n - want).abs() < 1e-9, "{expr}: want {want}, got {n}");
+    }
+    ibis_calc::eval::convert::set_thread_clock(None);
+}

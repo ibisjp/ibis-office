@@ -98,7 +98,10 @@ impl SlideEditor {
     #[allow(clippy::too_many_arguments)]
     pub fn host_load(&mut self, name: String, bytes: Vec<u8>, version: String, folder_id: Option<String>, read_only: bool, message: Option<String>, bound: bool, window: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
         self.commit_edit(window, cx);
-        let opened = ibis_odf::open(bytes).map_err(|e| format("file.open-failed", &[("name", &name), ("error", &e.to_string())]))?;
+        // An old binary file (.xls, .doc, .ppt) is read by its content, as the desktop's opening does: saving it goes by 名前を付けて保存 (a current format).
+        let is_legacy_binary = ibis_formats::is_legacy_binary(&bytes);
+        let mut opened = crate::fixed_layout::open_any(&name, bytes).map_err(|e| format("file.open-failed", &[("name", &name), ("error", &e)]))?;
+        opened.presentation.opened_from_legacy = is_legacy_binary;
         self.apply_opened(name.clone().into(), opened, window, cx);
         self.host.binding = bound.then_some(HostBinding { folder_id, version });
         self.host.read_only = read_only.then_some(message);
@@ -203,9 +206,36 @@ impl SlideEditor {
 
     /// The document as the host would store it: the file's own format, with what is typed in a cell entered first.
     pub fn host_bytes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<Vec<u8>, String> {
+        let name = self.file_name.as_ref().map(|n| n.to_string());
+        self.host_bytes_named(name.as_deref(), window, cx)
+    }
+
+    /// The text format (`csv` or `tsv`) a workbook is stored in under `name`: .csv, and .tsv or .tab (tab-separated). `None` for any other
+    /// name or for a document that is not a workbook (its own package is stored).
+    pub(crate) fn host_text_format(&self, name: Option<&str>) -> Option<&'static str> {
+        if ibis_formats::Kind::of(self.presentation()) != ibis_formats::Kind::Workbook {
+            return None;
+        }
+        let extension = name?.rsplit_once('.')?.1;
+        if extension.eq_ignore_ascii_case("csv") {
+            Some("csv")
+        } else if extension.eq_ignore_ascii_case("tsv") || extension.eq_ignore_ascii_case("tab") {
+            Some("tsv")
+        } else {
+            None
+        }
+    }
+
+    /// The document as the host would store it under `name`: a workbook named .csv / .tsv / .tab is the sheet shown as text (UTF-8 with a BOM,
+    /// CRLF; the values as they show, as the desktop's csv save), else the file's own format.
+    pub fn host_bytes_named(&mut self, name: Option<&str>, window: &mut Window, cx: &mut Context<Self>) -> Result<Vec<u8>, String> {
         self.commit_pending_edit(window, cx);
         if let Some(why) = crate::format::with_format!(self, save_refused(self)) {
             return Err(why);
+        }
+        if let Some(format) = self.host_text_format(name) {
+            let index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
+            return Ok(if format == "csv" { ibis_formats::csv::sheet_to_csv(self.presentation(), index) } else { ibis_formats::csv::sheet_to_tsv(self.presentation(), index) });
         }
         let source = self.source.clone().ok_or_else(|| text("_shell.this-file-cannot-be-saved-yet").to_string())?;
         let bytes = source.save(&self.presentation_for_save(), ibis_formats::SaveOptions::default()).map_err(|e| e.to_string())?;
@@ -215,6 +245,21 @@ impl SlideEditor {
             self.signatures_removed();
         }
         Ok(bytes)
+    }
+
+    /// After a save as text (.csv, .tsv): when the file holds more than the values of the sheet shown (other sheets, merged cells, formats),
+    /// the status bar says that only those values were saved (the warning Excel gives when it saves a workbook as CSV).
+    pub(crate) fn host_text_save_note(&mut self, name: Option<&str>, cx: &mut Context<Self>) {
+        if self.host_text_format(name).is_none() {
+            return;
+        }
+        let lossy = self.presentation().slides.len() > 1
+            || self.presentation().slides.iter().any(|slide| {
+                slide.shapes.iter().any(|shape| matches!(&shape.kind, ibis_doc_model::ShapeKind::Sheet(sheet) if !sheet.merges.is_empty() || sheet.styles.iter().any(|style| text_file_only_style(style) != ibis_doc_model::CellStyle::default())))
+            });
+        if lossy {
+            self.set_status(text("shell.host.text-save-values-only").to_string(), cx);
+        }
     }
 
     /// Tell the host when the unsaved-changes mark changed (called each time the window is drawn).
@@ -236,7 +281,8 @@ impl SlideEditor {
             return false;
         }
         let caps = host::capabilities();
-        let writable = self.host.binding.is_some() && self.host.read_only.is_none() && !self.read_only;
+        // A document read from an old binary format is not written back as the new format over the old name: 名前を付けて保存 asks for the new name.
+        let writable = self.host.binding.is_some() && self.host.read_only.is_none() && !self.read_only && !self.opened_from_legacy;
         if writable && caps.save_file {
             self.host_save_file(trigger, window, cx, then.take());
             return true;
@@ -263,6 +309,7 @@ impl SlideEditor {
         };
         self.host.saving = true;
         self.set_status(text("shell.host.saving").to_string(), cx);
+        let name_saved = self.file_name.as_ref().map(|n| n.to_string());
         cx.spawn_in(window, async move |this, cx| {
             let result = bridge.save_file(bytes, version, trigger).await;
             this.update_in(cx, |this, window, cx| {
@@ -275,6 +322,7 @@ impl SlideEditor {
                         this.document.mark_clean();
                         this.cleanup_active_autorecover_file();
                         this.set_status(text("_shell.saved").to_string(), cx);
+                        this.host_text_save_note(name_saved.as_deref(), cx);
                         host::emit(HostEvent::Saved(trigger));
                         this.host_sync_dirty();
                         if let Some(then) = then {
@@ -341,7 +389,9 @@ impl SlideEditor {
                             window.set_window_title(&format!("{} - ibisOffice", saved.file_name));
                             this.document.mark_clean();
                             this.cleanup_active_autorecover_file();
+                            this.opened_from_legacy = false;
                             this.set_status(text("_shell.saved").to_string(), cx);
+                            this.host_text_save_note(Some(&saved.file_name), cx);
                             host::emit(HostEvent::Saved(SaveTrigger::User));
                             this.host_sync_dirty();
                             this.host_remember_recent(cx);
@@ -414,4 +464,22 @@ pub(crate) fn watermark_overlay(watermark: &host::Watermark, window: &Window) ->
                 div().flex_none().text_size(font).text_color(hsla(0., 0., 0.45, watermark.opacity)).child(watermark.text.clone())
             }))
         }))
+}
+
+/// A cell style as a text file (csv/tsv) opened gives it: the file's own font (#243), the cells at the top (#17), the number format that keeps
+/// a value as typed (a leading zero, a date-like text), the theme's text colour and the format's index are what reading the text file puts there, not formatting
+/// the file lost, so the "only the values are saved" note leaves them out.
+fn text_file_only_style(style: &ibis_doc_model::CellStyle) -> ibis_doc_model::CellStyle {
+    let default = ibis_doc_model::CellStyle::default();
+    let mut style = style.clone();
+    style.font = default.font;
+    style.font_size = default.font_size;
+    style.vertical = default.vertical;
+    style.vertical_set = default.vertical_set;
+    style.number_format = default.number_format;
+    // The font colour of the workbook's theme (the text colour).
+    style.color = default.color;
+    style.color_theme = default.color_theme;
+    style.xf = None;
+    style
 }

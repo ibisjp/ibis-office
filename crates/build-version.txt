@@ -1,0 +1,6 @@
+Windows	0.8.10
+macOS	0.8.10
+wasm	0.8.10
+Linux	0.8.10
+Android	0.8.10
+iOS	0.8.10

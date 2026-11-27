@@ -7,8 +7,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use gpui_kit::{
-    App, Bounds, Font, Hsla, PathBuilder, Pixels, Point, RenderImage, Rgba, SharedString,
-    TextAlign, TextRun, Window, fill, point, px, size,
+    App, Bounds, ContentMask, Font, FontStyle, FontWeight, Hsla, PathBuilder, Pixels, Point,
+    Radians, RenderImage, Rgba, ScaledPixels, SharedString, TextAlign, TextRun,
+    TransformationMatrix, Window, fill, point, px, size,
 };
 use ibis_pdf::scene::{DisplayCmd, PageScene, PathCmd, PdfRect};
 
@@ -103,8 +104,16 @@ pub fn paint_page_scene(
     window.paint_quad(fill(page_bounds, gpui_kit::white()));
 
     let origin = page_bounds.origin;
+    let mut mask = None;
+    let mut font_names = None;
     for (cmd_idx, cmd) in scene.display_list.iter().enumerate() {
-        match cmd {
+        if let DisplayCmd::SetClipRect(rect) = cmd {
+            mask = rect.map(|rect| ContentMask {
+                bounds: map_rect(origin, scale, rect).intersect(&page_bounds),
+            });
+            continue;
+        }
+        window.with_content_mask(mask, |window| match cmd {
             DisplayCmd::DrawRect { rect, fill_rgba } => {
                 if let Some(rgba) = fill_rgba {
                     window.paint_quad(fill(map_rect(origin, scale, *rect), rgba_to_hsla(*rgba)));
@@ -123,7 +132,8 @@ pub fn paint_page_scene(
                     window.paint_path(path, rgba_to_hsla(*rgba));
                 }
                 if let Some(rgba) = stroke_rgba
-                    && let Some(path) = build_gpui_path(commands, origin, scale, Some(*stroke_width))
+                    && let Some(path) =
+                        build_gpui_path(commands, origin, scale, Some(*stroke_width))
                 {
                     window.paint_path(path, rgba_to_hsla(*rgba));
                 }
@@ -140,14 +150,8 @@ pub fn paint_page_scene(
                     .clone();
                 if let Some(img) = img {
                     let dest = map_rect(origin, scale, *bounds);
-                    let _ = window.paint_image(
-                        dest,
-                        dest,
-                        gpui_kit::Corners::default(),
-                        img,
-                        0,
-                        false,
-                    );
+                    let _ =
+                        window.paint_image(dest, dest, gpui_kit::Corners::default(), img, 0, false);
                 }
             }
             DisplayCmd::DrawGlyphRun {
@@ -189,10 +193,103 @@ pub fn paint_page_scene(
                     );
                 }
             }
-            DisplayCmd::PushClip(_)
+            DisplayCmd::DrawStyledGlyphRun {
+                text,
+                origin: (x, y),
+                font_size,
+                family,
+                weight,
+                italic,
+                angle,
+                horizontal_scale,
+                max_width,
+                rgba,
+            } => {
+                if text.is_empty() || *font_size <= 0.0 {
+                    return;
+                }
+                let names = font_names.get_or_insert_with(|| window.text_system().all_font_names());
+                let family = names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(family))
+                    .map(String::as_str)
+                    .unwrap_or(".SystemUIFont");
+                let color = rgba_to_hsla(*rgba);
+                let font_size = px(*font_size * scale);
+                let run = TextRun {
+                    len: text.len(),
+                    font: Font {
+                        family: SharedString::from(family.to_owned()),
+                        weight: FontWeight(f32::from(*weight).clamp(100.0, 900.0)),
+                        style: if *italic {
+                            FontStyle::Italic
+                        } else {
+                            FontStyle::Normal
+                        },
+                        ..Default::default()
+                    },
+                    color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let shaped = window.text_system().shape_line(
+                    SharedString::from(text.clone()),
+                    font_size,
+                    &[run],
+                    None,
+                );
+                let mut sx = *horizontal_scale;
+                if let Some(width) = max_width
+                    && shaped.width > px(0.0)
+                {
+                    sx = sx.min(width * scale / f32::from(shaped.width));
+                }
+                let baseline = map_pt(origin, scale, *x, *y);
+                let (sin, cos) = angle.sin_cos();
+                let device_scale = window.scale_factor();
+                for run in &shaped.runs {
+                    for glyph in &run.glyphs {
+                        let dx = f32::from(glyph.position.x) * sx;
+                        let dy = f32::from(glyph.position.y);
+                        let at = point(
+                            baseline.x + px(dx * cos - dy * sin),
+                            baseline.y + px(dx * sin + dy * cos),
+                        );
+                        if glyph.is_emoji {
+                            let _ = window.paint_emoji(at, run.font_id, glyph.id, font_size);
+                        } else if *angle == 0.0 && sx == 1.0 {
+                            let _ = window.paint_glyph(at, run.font_id, glyph.id, font_size, color);
+                        } else {
+                            let pivot = point(
+                                ScaledPixels(f32::from(at.x) * device_scale),
+                                ScaledPixels(f32::from(at.y) * device_scale),
+                            );
+                            let transform = TransformationMatrix::unit()
+                                .translate(pivot)
+                                .rotate(Radians(*angle))
+                                .scale(size(sx, 1.0))
+                                .translate(point(
+                                    ScaledPixels(-pivot.x.0),
+                                    ScaledPixels(-pivot.y.0),
+                                ));
+                            let _ = window.paint_glyph_transformed(
+                                at,
+                                run.font_id,
+                                glyph.id,
+                                font_size,
+                                color,
+                                transform,
+                            );
+                        }
+                    }
+                }
+            }
+            DisplayCmd::SetClipRect(_)
+            | DisplayCmd::PushClip(_)
             | DisplayCmd::PopClip
             | DisplayCmd::PushTransparencyGroup { .. }
             | DisplayCmd::PopTransparencyGroup => {}
-        }
+        });
     }
 }

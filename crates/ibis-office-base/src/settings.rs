@@ -11,7 +11,22 @@
 
 #[cfg(not(target_family = "wasm"))]
 mod store {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    /// The file's path, its stamp (modified time and size) when read, and its entries. The stamp is looked at on every call
+    /// (a stat, not a read) so that a change made from outside (another window, another process, an editor) is read again.
+    type Stamp = Option<(std::time::SystemTime, u64)>;
+    /// The path, the stamp, when the stamp was last looked at, and the entries.
+    static CACHE: Mutex<Option<(PathBuf, Stamp, crate::clock::Instant, Vec<(String, String)>)>> = Mutex::new(None);
+    /// A stat costs about 70 microseconds on Windows (more than the lookup), and the lookups come hundreds of times a frame; so the stamp is
+    /// looked at again after this long. A change from outside shows within it; this process's own writes show at once (`refresh_stamp`).
+    const RECHECK: std::time::Duration = std::time::Duration::from_millis(200);
+
+    fn stamp(path: &Path) -> Stamp {
+        let meta = std::fs::metadata(path).ok()?;
+        Some((meta.modified().ok()?, meta.len()))
+    }
 
     fn path() -> Option<PathBuf> {
         let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
@@ -31,8 +46,7 @@ mod store {
         Some(base?.join("ibisOffice").join("settings.txt"))
     }
 
-    fn read() -> Vec<(String, String)> {
-        let Some(path) = path() else { return Vec::new() };
+    fn read_disk(path: &Path) -> Vec<(String, String)> {
         std::fs::read_to_string(path)
             .unwrap_or_default()
             .lines()
@@ -41,16 +55,47 @@ mod store {
             .collect()
     }
 
+    fn with_entries<R>(path: &Path, force: bool, f: impl FnOnce(&mut Vec<(String, String)>) -> R) -> R {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = !force && guard.as_ref().is_some_and(|(cached_path, _, checked, _)| cached_path == path && checked.elapsed() < RECHECK);
+        if !fresh {
+            let now = stamp(path);
+            if guard.as_ref().is_none_or(|(cached_path, seen, _, _)| cached_path != path || *seen != now) {
+                let entries = read_disk(path);
+                *guard = Some((path.to_path_buf(), now, crate::clock::Instant::now(), entries));
+            } else if let Some((_, _, checked, _)) = guard.as_mut() {
+                *checked = crate::clock::Instant::now();
+            }
+        }
+        let (_, _, _, entries) = guard.as_mut().expect("settings cache initialized");
+        f(entries)
+    }
+
+    /// After this process wrote the file: its new stamp is the one the cache matches (so its own write is not read back).
+    fn refresh_stamp(path: &Path) {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_path, seen, checked, _)) = guard.as_mut()
+            && cached_path == path
+        {
+            *seen = stamp(path);
+            *checked = crate::clock::Instant::now();
+        }
+    }
+
     pub(super) fn get(key: &str) -> Option<String> {
-        read().into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
+        let path = path()?;
+        with_entries(&path, false, |entries| {
+            entries.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+        })
     }
 
     pub(super) fn set(key: &str, value: &str) {
         let Some(path) = path() else { return };
-        let mut all = read();
-        all.retain(|(k, _)| k != key);
-        all.push((key.to_string(), value.to_string()));
-        let text: String = all.iter().map(|(k, v)| format!("{k}={v}\n")).collect();
+        let text: String = with_entries(&path, true, |all| {
+            all.retain(|(k, _)| k != key);
+            all.push((key.to_string(), value.to_string()));
+            all.iter().map(|(k, v)| format!("{k}={v}\n")).collect()
+        });
         let result = match path.parent() {
             Some(dir) => std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, text)),
             None => std::fs::write(&path, text),
@@ -58,26 +103,37 @@ mod store {
         if let Err(err) = result {
             log::warn!("{}: {err}", path.display());
         }
+        refresh_stamp(&path);
     }
 
     /// The line of `key` taken out of the file (nothing is written when it is not there).
     pub(super) fn remove(key: &str) {
         let Some(path) = path() else { return };
-        let all = read();
-        if !all.iter().any(|(k, _)| k == key) {
-            return;
-        }
-        let text: String = all.iter().filter(|(k, _)| k != key).map(|(k, v)| format!("{k}={v}
-")).collect();
+        let text: Option<String> = with_entries(&path, true, |all| {
+            let before = all.len();
+            all.retain(|(k, _)| k != key);
+            if all.len() == before {
+                return None;
+            }
+            Some(all.iter().map(|(k, v)| format!("{k}={v}\n")).collect())
+        });
+        let Some(text) = text else { return };
         if let Err(err) = std::fs::write(&path, text) {
             log::warn!("{}: {err}", path.display());
         }
+        refresh_stamp(&path);
     }
 }
 
 #[cfg(target_family = "wasm")]
 mod store {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
     use wasm_bindgen::JsValue;
+
+    thread_local! {
+        static CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+    }
 
     fn storage() -> Option<JsValue> {
         js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("localStorage")).ok() // host-lint-allow: not used when a host embeds the editor (`use_memory_only`).filter(|s| !s.is_undefined() && !s.is_null())
@@ -94,15 +150,28 @@ mod store {
     }
 
     pub(super) fn get(key: &str) -> Option<String> {
-        call("getItem", &[&format!("ibisOffice.{key}")])?.as_string()
+        if let Some(cached) = CACHE.with(|c| c.borrow().get(key).cloned()) {
+            return cached;
+        }
+        let value = call("getItem", &[&format!("ibisOffice.{key}")]).and_then(|v| v.as_string());
+        CACHE.with(|c| {
+            c.borrow_mut().insert(key.to_string(), value.clone());
+        });
+        value
     }
 
     pub(super) fn set(key: &str, value: &str) {
         call("setItem", &[&format!("ibisOffice.{key}"), value]);
+        CACHE.with(|c| {
+            c.borrow_mut().insert(key.to_string(), Some(value.to_string()));
+        });
     }
 
     pub(super) fn remove(key: &str) {
         call("removeItem", &[&format!("ibisOffice.{key}")]);
+        CACHE.with(|c| {
+            c.borrow_mut().insert(key.to_string(), None);
+        });
     }
 }
 
@@ -229,5 +298,58 @@ mod legacy_key_tests {
             assert_eq!(LEGACY_KEYS.iter().filter(|(n, o)| n == new || o == old).count(), 1);
         }
         assert_eq!(legacy_name("docx.unknown"), None);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn settings_cache_tracks_set_remove_and_dir_switch() {
+        let base = std::env::temp_dir().join(format!("ibis-settings-cache-test-{}", std::process::id()));
+        let dir_a = base.join("a");
+        let dir_b = base.join("b");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+
+        unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir_a) };
+        assert_eq!(super::get("test.cache-key"), None);
+        super::set("test.cache-key", "alpha");
+        assert_eq!(super::get("test.cache-key").as_deref(), Some("alpha"));
+
+        // Switching IBIS_SETTINGS_DIR must invalidate the cached path immediately.
+        unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir_b) };
+        assert_eq!(super::get("test.cache-key"), None);
+        super::set("test.cache-key", "beta");
+        assert_eq!(super::get("test.cache-key").as_deref(), Some("beta"));
+        super::remove("test.cache-key");
+        assert_eq!(super::get("test.cache-key"), None);
+
+        // Switching back to dir_a sees the persisted value.
+        unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir_a) };
+        assert_eq!(super::get("test.cache-key").as_deref(), Some("alpha"));
+
+        // A change made from outside (another window or process, a text editor) is read again, with and without a size change.
+        let file = dir_a.join("settings.txt");
+        let outside = |text: &str| {
+            std::fs::write(&file, text).unwrap();
+            // `get` looks at the file again after the recheck time.
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
+        outside("test.cache-key=gamma\ntest.other=1\n");
+        assert_eq!(super::get("test.cache-key").as_deref(), Some("gamma"));
+        assert_eq!(super::get("test.other").as_deref(), Some("1"));
+        outside("test.cache-key=delta\ntest.other=1\n");
+        assert_eq!(super::get("test.cache-key").as_deref(), Some("delta"));
+        // Deleted from outside.
+        std::fs::remove_file(&file).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        assert_eq!(super::get("test.cache-key"), None);
+        // Written from outside and at once by this process (`set` looks at the file first): both are kept.
+        std::fs::write(&file, "test.outside=1\n").unwrap();
+        super::set("test.inside", "2");
+        assert_eq!(super::get("test.outside").as_deref(), Some("1"));
+        assert_eq!(super::get("test.inside").as_deref(), Some("2"));
+        assert!(std::fs::read_to_string(&file).unwrap().contains("test.inside=2"));
+        unsafe { std::env::remove_var("IBIS_SETTINGS_DIR") };
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

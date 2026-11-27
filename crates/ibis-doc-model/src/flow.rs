@@ -197,6 +197,8 @@ pub enum NoteFormat {
     Symbol,
     DecimalEnclosedCircle,
     DecimalFullWidth,
+    /// `japaneseCounting`: 一, 二, 三 (read and written; not in the notes panel's list, `ALL`).
+    JapaneseCounting,
 }
 
 impl NoteFormat {
@@ -212,11 +214,12 @@ impl NoteFormat {
             Self::Symbol => "chicago",
             Self::DecimalEnclosedCircle => "decimalEnclosedCircle",
             Self::DecimalFullWidth => "decimalFullWidth",
+            Self::JapaneseCounting => "japaneseCounting",
         }
     }
 
     pub fn from_ooxml(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|f| f.ooxml() == value)
+        Self::ALL.into_iter().chain([Self::JapaneseCounting]).find(|f| f.ooxml() == value)
     }
 
     /// Note `n` (1 the first) written in the format.
@@ -2599,6 +2602,37 @@ impl Default for DropCap {
     }
 }
 
+/// A paragraph's text frame placed on the page (`w:framePr` with `w:w`, not a drop cap): its width and where it goes, as a floating table's (`w:hAnchor`, `w:vAnchor`, `w:x`,
+/// `w:xAlign`, `w:y`, `w:yAlign`, and `w:hSpace`, `w:vSpace` as the distance from the text), and whether the text goes round it (`w:wrap` `around`, `auto`, `tight`, `through`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextFrame {
+    /// Its width (`w:w`); 0 when the frame has none: it is as wide as its widest line of text.
+    pub width: Emu,
+    pub float: TableFloat,
+    pub wrap: FrameWrap,
+    /// Its height (`w:h`), 0 when it has none, and what the height means.
+    pub height: Emu,
+    pub height_rule: FrameHeightRule,
+}
+
+/// How the text goes round a paragraph's frame (`w:framePr/@w:wrap`): beside it (`around`, `auto`, `tight`, `through`), only above and below it (`notBeside`: the frame takes the
+/// whole width of the text), or not at all (`none`: the frame is drawn over the text, which is set as if it were not there; Word's PDFs of #191's frame tests).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameWrap {
+    Around,
+    NotBeside,
+    None,
+}
+
+/// `w:framePr/@w:hRule`: the frame's height is `w:h` (`exact`: the lines that start below it are not drawn), at least it (`atLeast`, and also when `w:hRule` is left out), or
+/// its text's (`auto`: `w:h` is not read). Word's PDFs of #191's frame tests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameHeightRule {
+    Auto,
+    AtLeast,
+    Exact,
+}
+
 /// What the model holds for a `w:softHyphen` (an optional hyphen) in a run's text, a private-use character, so that a U+00AD written in `w:t` (which Word draws
 /// as a hyphen, #M136) stays U+00AD and the two can be told apart. [`FlowParagraph::text`] has it as U+00AD; the layout takes it as the optional hyphen.
 pub const OPTIONAL_HYPHEN: char = '\u{F8AD}';
@@ -2612,6 +2646,8 @@ pub struct FlowParagraph {
     pub drop_cap: Option<DropCap>,
     /// A text frame (`w:framePr` without `w:dropCap`), such as a page-number frame in a footer.
     pub framed: bool,
+    /// Where such a frame with a width of its own (`w:framePr w:w`) is placed on the page, the body's text going round it.
+    pub frame: Option<TextFrame>,
     /// The paragraph style (`w:pStyle`); `None` for the default one.
     pub style: Option<String>,
     /// The style of the table the paragraph is in, which it inherits from.
@@ -2858,6 +2894,42 @@ pub struct FlowRow {
     /// Kept on one page.
     pub cant_split: bool,
     pub cells: Vec<FlowCell>,
+    /// Additional line segments relative to the row's table width and height.
+    /// Coordinates use ten-thousandths (0..=10000). These display-only lines
+    /// are not represented by ordinary DOCX cell borders.
+    pub lines: Vec<FlowRowLine>,
+}
+
+/// A line segment inside a table row, in normalized row coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlowRowLine {
+    pub x1: u16,
+    pub y1: u16,
+    pub x2: u16,
+    pub y2: u16,
+    pub border: FlowBorder,
+}
+
+impl FlowRowLine {
+    /// Place the segment in a row's current, potentially fitted, dimensions.
+    pub fn points(&self, width: f32, height: f32) -> ((f32, f32), (f32, f32)) {
+        let x = |n: u16| width * f32::from(n.min(10_000)) / 10_000.0;
+        let y = |n: u16| height * f32::from(n.min(10_000)) / 10_000.0;
+        ((x(self.x1), y(self.y1)), (x(self.x2), y(self.y2)))
+    }
+}
+
+#[cfg(test)]
+mod flow_row_line_tests {
+    use super::{BorderStyle, FlowBorder, FlowRowLine};
+    use crate::Rgb;
+
+    #[test]
+    fn row_segments_follow_fitted_dimensions_and_are_bounded() {
+        let line = FlowRowLine { x1: 2500, y1: 5000, x2: 15_000, y2: 10_000, border: FlowBorder { width: 6350, color: Rgb::BLACK, style: BorderStyle::Single, space: 0, art: None } };
+        assert_eq!(line.points(200.0, 40.0), ((50.0, 20.0), (200.0, 40.0)));
+        assert_eq!(line.points(80.0, 20.0), ((20.0, 10.0), (80.0, 20.0)));
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -3132,6 +3204,8 @@ pub struct FlowDocument {
     /// 透かし: the text Word draws behind every page (a WordArt shape in
     /// the headers).
     pub watermark: Option<Watermark>,
+    /// 原稿用紙設定 (K0063): the squares, underlines or frame Word draws as a shape in the header of every page.
+    pub genko: Option<GenkoPaper>,
     /// The sections' own watermarks when they differ (a file's), by the
     /// section's paragraph id (0: the last section's); empty: `watermark`
     /// on every page.
@@ -3187,6 +3261,8 @@ pub struct FlowDocument {
     pub compat_mode: Option<u32>,
     /// 文書の既定テーマフォント言語・既定言語（Word の「校正言語の設定 > 既定に設定」: `word/settings.xml` の `w:themeFontLang`, ECMA-376 Part 1 §17.15.1.88, DOCX-JA-019）。
     pub theme_font_lang: Option<ThemeFontLang>,
+    /// The theme's typefaces (`word/theme/theme1.xml`, resolved as the reader resolves `w:asciiTheme` and the like), for the style's font lists (K0086).
+    pub theme_fonts: Option<crate::text::ThemeFonts>,
     /// 読み取り専用を推奨（Word の「読み取り専用を推奨する」: `word/settings.xml` の `w:readOnlyRecommended`）。
     pub read_only_recommended: bool,
     /// 印刷前・文書オープン時にフィールドを更新（Word の「印刷前にフィールドを更新する」: `word/settings.xml` の `w:updateFields`）。
@@ -3270,6 +3346,125 @@ pub struct DocProperties {
     pub company: Option<String>,
     pub manager: Option<String>,
     pub custom: Vec<CustomProperty>,
+}
+
+/// The style of a 原稿用紙 (Word's 原稿用紙設定 > スタイル; the last number of the shape's name `Genko:A4:20:20:L:<n>::`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GenkoStyle {
+    /// マス目付き原稿用紙 (0).
+    Grid,
+    /// 下線付き原稿用紙 (1).
+    Underline,
+    /// 外枠付き原稿用紙 (2).
+    Frame,
+}
+
+impl GenkoStyle {
+    pub const ALL: [GenkoStyle; 3] = [GenkoStyle::Grid, GenkoStyle::Underline, GenkoStyle::Frame];
+
+    /// The number Word writes in the shape's name.
+    pub fn code(self) -> u8 {
+        match self {
+            GenkoStyle::Grid => 0,
+            GenkoStyle::Underline => 1,
+            GenkoStyle::Frame => 2,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.code() == code)
+    }
+}
+
+/// One line drawing of a 原稿用紙, in EMU from the corner of the text area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenkoPart {
+    /// A rectangle without fill; `thick`: the outer frame's 1 pt line (else 0.5 pt).
+    Rect { x: i64, y: i64, w: i64, h: i64, thick: bool },
+    /// A straight line from (x, y) by (w, h).
+    Line { x: i64, y: i64, w: i64, h: i64 },
+}
+
+/// 原稿用紙設定 (Word's レイアウト > 原稿用紙設定): the style, the counts and the line colour. Word draws the paper as one drawing in
+/// the header (named `Genko:<paper>:<chars>:<lines>:<L|P>:<style>::`); the text area, the margins and the document grid are the page's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenkoPaper {
+    pub style: GenkoStyle,
+    /// 文字数: the characters in a line.
+    pub chars: u32,
+    /// 行数: the lines on a page.
+    pub lines: u32,
+    /// 罫線の色 (Word's default is 009300).
+    pub color: Rgb,
+    /// The paper's name in the drawing's name (`A4`).
+    pub paper: String,
+}
+
+impl GenkoPaper {
+    /// Word's default line colour.
+    pub const DEFAULT_COLOR: Rgb = Rgb(0x009300);
+
+    /// The drawing's name Word gives (`Genko:A4:20:20:L:0::`); `vertical`: 縦書き (`L`), else across (`P`).
+    pub fn name(&self, vertical: bool) -> String {
+        format!("Genko:{}:{}:{}:{}:{}::", self.paper, self.chars, self.lines, if vertical { 'L' } else { 'P' }, self.style.code())
+    }
+
+    /// The paper of a drawing's name; the colour is the caller's.
+    pub fn from_name(name: &str, color: Rgb) -> Option<Self> {
+        let mut parts = name.strip_prefix("Genko:")?.split(':');
+        let paper = parts.next()?.to_string();
+        let chars = parts.next()?.parse().ok().filter(|n| *n >= 1)?;
+        let lines = parts.next()?.parse().ok().filter(|n| *n >= 1)?;
+        let _direction = parts.next()?;
+        let style = GenkoStyle::from_code(parts.next()?.parse().ok()?)?;
+        Some(Self { style, chars, lines, color, paper })
+    }
+
+    /// The drawing's lines on a text area of `width` × `height` EMU. The characters' squares run along the text (`vertical`: down the
+    /// page), the lines across it; between two lines is the gap the line pitch leaves beyond a character's square (Word draws it as
+    /// a strip of rectangles centred on each line's boundary), so the boxes left on the page are the squares of the characters.
+    pub fn parts(&self, width: i64, height: i64, vertical: bool) -> Vec<GenkoPart> {
+        let (along, across) = if vertical { (height, width) } else { (width, height) };
+        let (n, m) = (self.chars.max(1) as i64, self.lines.max(1) as i64);
+        let char_pitch = along as f64 / n as f64;
+        let line_pitch = across as f64 / m as f64;
+        // A position `a` across the lines and `b` along them, with their lengths, as x, y, w, h.
+        let place = |a: i64, b: i64, la: i64, lb: i64| if vertical { (a, b, la, lb) } else { (b, a, lb, la) };
+        let mut out = Vec::new();
+        let frame = GenkoPart::Rect { x: 0, y: 0, w: width, h: height, thick: true };
+        match self.style {
+            GenkoStyle::Grid => {
+                for k in 0..n {
+                    let (from, to) = ((k as f64 * char_pitch).round() as i64, ((k + 1) as f64 * char_pitch).round() as i64);
+                    let (x, y, w, h) = place(0, from, across, to - from);
+                    out.push(GenkoPart::Rect { x, y, w, h, thick: false });
+                }
+                let gap = (line_pitch - char_pitch).max(0.0);
+                if gap > 0.0 {
+                    for k in 0..=m {
+                        let centre = k as f64 * line_pitch;
+                        let from = (centre - gap / 2.0).max(0.0).round() as i64;
+                        let to = (centre + gap / 2.0).min(across as f64).round() as i64;
+                        let (x, y, w, h) = place(from, 0, to - from, along);
+                        out.push(GenkoPart::Rect { x, y, w, h, thick: false });
+                    }
+                }
+                out.push(frame);
+            }
+            GenkoStyle::Underline => {
+                // A line under each line of text (for 縦書き at the left of each column, as the lines run from the right).
+                for k in 1..=m {
+                    let at = (k as f64 * line_pitch).round() as i64;
+                    let a = if vertical { across - at } else { at };
+                    let (x, y, w, h) = place(a, 0, 0, along);
+                    out.push(GenkoPart::Line { x, y, w, h });
+                }
+                out.push(frame);
+            }
+            GenkoStyle::Frame => out.push(frame),
+        }
+        out
+    }
 }
 
 /// A text watermark (Word's デザイン > 透かし > ユーザー設定の透かし >
@@ -3397,6 +3592,12 @@ pub struct RunFormat {
     pub h_ansi_font: Option<String>,
     /// Complex Script typeface (`w:rFonts/@w:cs`).
     pub cs_font: Option<String>,
+    /// The theme font each typeface above refers to (`w:asciiTheme`, `w:eastAsiaTheme`, `w:hAnsiTheme`, `w:cstheme`: `minorHAnsi`, `majorEastAsia`, ...), with the typeface
+    /// it resolves to in the field above. A style that refers to the theme keeps the reference when it is saved (K0086).
+    pub font_theme: Option<String>,
+    pub east_asian_font_theme: Option<String>,
+    pub h_ansi_font_theme: Option<String>,
+    pub cs_font_theme: Option<String>,
     /// Whether `w:rFonts/@w:hint="eastAsia"` selects the East Asian font for ambiguous characters.
     pub east_asia_hint: Option<bool>,
     /// Hundredths of a point.
@@ -3478,10 +3679,18 @@ impl RunFormat {
                 a.clone_from(b);
             }
         }
-        set(&mut self.font, &other.font);
-        set(&mut self.east_asian_font, &other.east_asian_font);
-        set(&mut self.h_ansi_font, &other.h_ansi_font);
-        set(&mut self.cs_font, &other.cs_font);
+        // A theme reference goes with the typeface it resolves to: a typeface set without one drops the reference under it.
+        for (font, theme, other_font, other_theme) in [
+            (&mut self.font, &mut self.font_theme, &other.font, &other.font_theme),
+            (&mut self.east_asian_font, &mut self.east_asian_font_theme, &other.east_asian_font, &other.east_asian_font_theme),
+            (&mut self.h_ansi_font, &mut self.h_ansi_font_theme, &other.h_ansi_font, &other.h_ansi_font_theme),
+            (&mut self.cs_font, &mut self.cs_font_theme, &other.cs_font, &other.cs_font_theme),
+        ] {
+            if other_font.is_some() {
+                font.clone_from(other_font);
+                theme.clone_from(other_theme);
+            }
+        }
         set(&mut self.east_asia_hint, &other.east_asia_hint);
         set(&mut self.size, &other.size);
         set(&mut self.cs_size, &other.cs_size);
@@ -3535,10 +3744,17 @@ impl RunFormat {
             }
         }
         let mut f = self.clone();
-        clear(&mut f.font, &other.font);
-        clear(&mut f.east_asian_font, &other.east_asian_font);
-        clear(&mut f.h_ansi_font, &other.h_ansi_font);
-        clear(&mut f.cs_font, &other.cs_font);
+        for (font, theme, other_font) in [
+            (&mut f.font, &mut f.font_theme, &other.font),
+            (&mut f.east_asian_font, &mut f.east_asian_font_theme, &other.east_asian_font),
+            (&mut f.h_ansi_font, &mut f.h_ansi_font_theme, &other.h_ansi_font),
+            (&mut f.cs_font, &mut f.cs_font_theme, &other.cs_font),
+        ] {
+            if other_font.is_some() && font == other_font {
+                *font = None;
+                *theme = None;
+            }
+        }
         clear(&mut f.east_asia_hint, &other.east_asia_hint);
         clear(&mut f.size, &other.size);
         clear(&mut f.cs_size, &other.cs_size);
@@ -3686,6 +3902,7 @@ pub struct ParaFormat {
     pub level: Option<u32>,
     pub drop_cap: Option<Option<DropCap>>,
     pub framed: Option<bool>,
+    pub frame: Option<TextFrame>,
 }
 
 impl ParaFormat {
@@ -3742,6 +3959,7 @@ impl ParaFormat {
         set(&mut self.level, &other.level);
         set(&mut self.drop_cap, &other.drop_cap);
         set(&mut self.framed, &other.framed);
+        set(&mut self.frame, &other.frame);
     }
 
     /// The tab stops after setting and clearing them in order.
@@ -3800,6 +4018,7 @@ impl ParaFormat {
             p.drop_cap = dc;
         }
         p.framed = self.framed.unwrap_or(false);
+        p.frame = self.frame;
     }
 }
 
@@ -4664,12 +4883,24 @@ pub fn format_page_number(n: u32, format: &str) -> String {
 /// The labels of a document's list items, by paragraph id, counted in
 /// reading order (the body with its tables, then header and footer).
 pub fn list_labels(doc: &FlowDocument) -> std::collections::HashMap<u32, String> {
+    labels_and_chapter_numbers(doc).0
+}
+
+/// The chapter number of each numbered paragraph, as Word puts it before the page number (`w:pgNumType/@w:chapStyle`): the counters of the
+/// numbering levels down to the paragraph's own, each in its level's number format (`w:numFmt`), joined with ".". Only the numbers, not the
+/// text around them in `w:lvlText` (第1章 gives 1, Chapter 1 gives 1, 第一章 with japaneseCounting gives 一; Word 365, GitHub issue #296).
+pub fn chapter_numbers(doc: &FlowDocument) -> std::collections::HashMap<u32, String> {
+    labels_and_chapter_numbers(doc).1
+}
+
+fn labels_and_chapter_numbers(doc: &FlowDocument) -> (std::collections::HashMap<u32, String>, std::collections::HashMap<u32, String>) {
     use std::collections::HashMap;
     let numbering = &doc.styles.numbering;
     // Counters per list definition (or per list, when it restarts levels).
     let mut counters: HashMap<(u32, bool), [u32; 9]> = HashMap::new();
     let mut out = HashMap::new();
-    fn walk(blocks: &[Block], numbering: &Numbering, counters: &mut HashMap<(u32, bool), [u32; 9]>, out: &mut HashMap<u32, String>) {
+    let mut chapters = HashMap::new();
+    fn walk(blocks: &[Block], numbering: &Numbering, counters: &mut HashMap<(u32, bool), [u32; 9]>, out: &mut HashMap<u32, String>, chapters: &mut HashMap<u32, String>) {
         for b in blocks {
             match b {
                 Block::Paragraph(p) => {
@@ -4701,6 +4932,11 @@ pub fn list_labels(doc: &FlowDocument) -> std::collections::HashMap<u32, String>
                         }
                     }
                     out.insert(p.id, text);
+                    let number = |l: usize| {
+                        let n = if c[l] == 0 { start(l) } else { c[l] };
+                        format_list_number(n, abs.levels.get(l).map_or("decimal", |x| x.format.as_str()))
+                    };
+                    chapters.insert(p.id, (0..=level).map(number).collect::<Vec<_>>().join("."));
                 }
                 Block::Table(t) => {
                     for row in &t.rows {
@@ -4709,17 +4945,17 @@ pub fn list_labels(doc: &FlowDocument) -> std::collections::HashMap<u32, String>
                             if cell.merge == VerticalMerge::Continue {
                                 continue;
                             }
-                            walk(&cell.blocks, numbering, counters, out);
+                            walk(&cell.blocks, numbering, counters, out, chapters);
                         }
                     }
                 }
             }
         }
     }
-    walk(&doc.body, numbering, &mut counters, &mut out);
-    walk(&doc.header, numbering, &mut counters, &mut out);
-    walk(&doc.footer, numbering, &mut counters, &mut out);
-    out
+    walk(&doc.body, numbering, &mut counters, &mut out, &mut chapters);
+    walk(&doc.header, numbering, &mut counters, &mut out, &mut chapters);
+    walk(&doc.footer, numbering, &mut counters, &mut out, &mut chapters);
+    (out, chapters)
 }
 
 impl FlowDocument {

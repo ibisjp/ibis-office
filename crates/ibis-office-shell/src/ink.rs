@@ -560,7 +560,7 @@ pub fn ink_stroke_with_effect(pen: PenKind, color: Rgb, effect: Option<InkEffect
         PenKind::Pencil => 192,
         _ => 255,
     };
-    let mut stroke = Stroke::solid(Color { rgb: color, alpha }, (width_pt * emu_per_pt() as f32) as i64);
+    let mut stroke = Stroke::solid(Color { rgb: color, alpha, theme: None }, (width_pt * emu_per_pt() as f32) as i64);
     stroke.cap = LineCap::Round;
     stroke.join = LineJoin::Round;
     if let Some(effect) = effect {

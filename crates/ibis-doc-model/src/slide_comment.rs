@@ -41,3 +41,16 @@ pub struct Author {
     pub name: String,
     pub initials: String,
 }
+
+/// A GUID (`{xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx}`) for a comment or an answer, mixed from `seed` (the callers make it from the clock and a count).
+pub fn guid_from_seed(seed: u64) -> String {
+    let mix = |mut x: u64| {
+        x ^= x >> 33;
+        x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        x ^= x >> 33;
+        x = x.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        x ^ (x >> 33)
+    };
+    let (a, b) = (mix(seed), mix(seed ^ 0x5555_5555_5555_5555));
+    format!("{{{:08X}-{:04X}-4{:03X}-{:04X}-{:012X}}}", a >> 32, (a >> 16) & 0xffff, a & 0xfff, 0x8000 | (b >> 48) & 0x3fff, b & 0xffff_ffff_ffff)
+}

@@ -782,11 +782,15 @@ fn add_sheet(package: &mut Package, map: &mut SourceMap, index: usize, name: &st
     let doc = package.xml_mut(&map.workbook)?;
     let (sheets, list) = sheet_elements(doc).ok_or_else(|| Error::new("ブックに sheets がありません"))?;
     let prefix = doc.prefix(sheets).map(|p| format!("{p}:")).unwrap_or_default();
-    let r = doc.lookup_prefix(sheets, REL_NS).unwrap_or_else(|| "r".into());
+    let r = doc.lookup_prefix(sheets, REL_NS).filter(|prefix| !prefix.is_empty());
     let e = doc.insert_element(XmlDocument::ROOT, 0, &format!("{prefix}sheet"));
     doc.detach(e);
     doc.set_attr(e, "name", name);
     doc.set_attr(e, "sheetId", &sheet_id.to_string());
+    let r = r.unwrap_or_else(|| {
+        doc.set_attr(e, "xmlns:r", REL_NS);
+        "r".into()
+    });
     doc.set_attr(e, &format!("{r}:id"), &rid);
     match list.get(index) {
         Some(&next) => doc.insert_before(next, e),

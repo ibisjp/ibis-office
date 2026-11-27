@@ -877,7 +877,7 @@ fn read_series(ser: Node, index: usize, line_like: bool, vary: bool, base: &Char
             },
             size: axis_val(m, "size").and_then(|v| v.parse().ok()),
         };
-        Marker { source: Some(source), symbol, size: axis_val(m, "size").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(5.0).clamp(2.0, 72.0) as u32, fill }
+        Marker { source: Some(source), symbol, size: axis_val(m, "size").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(5.0).clamp(2.0, 72.0) as u32, fill, edge: None }
     });
     let cell_range = dlbl_range_cache(ser);
     let labels = child(ser, "dLbls").and_then(|d| read_labels_with_range(d, base, colors, &cell_range));
@@ -964,6 +964,8 @@ fn read_series(ser: Node, index: usize, line_like: bool, vary: bool, base: &Char
         x_values: Vec::new(),
         bubble_sizes: Vec::new(),
         bubble_3d: false,
+        has_format: child(ser, "spPr").is_some(),
+        has_outline: child(ser, "spPr").and_then(|p| child(p, "ln")).is_some(),
     }
 }
 
@@ -977,7 +979,7 @@ fn auto_marker(index: usize, colors: &Colors, mono_accent: Option<usize>) -> Mar
         2 => MarkerSymbol::Triangle,
         _ => MarkerSymbol::Circle,
     };
-    Marker { source: None, symbol, size: 7, fill: Fill::Solid(default_color(index, colors, mono_accent)) }
+    Marker { source: None, symbol, size: 7, fill: Fill::Solid(default_color(index, colors, mono_accent)), edge: None }
 }
 
 fn label_position(value: &str) -> LabelPosition {
@@ -1178,10 +1180,11 @@ fn read_axis(node: Node, base: &ChartText, colors: &Colors, legacy: bool, legacy
     let gridlines = child(node, "majorGridlines").map(|g| {
         path(g, &["spPr", "ln"]).map(|ln| stroke(ln, colors)).unwrap_or_else(|| Some(Stroke::solid(plain_color, 9_525)))
     });
+    // A chart of the old defaults on a slide has its minor gridlines BCBCBC, as wide as the major ones (PowerPoint's PDF and screen: `tasks/doc/requests/2026-11-21-225-chart-stripes-result.md`).
     let minor_gridlines = child(node, "minorGridlines").map(|g| {
         path(g, &["spPr", "ln"])
             .map(|ln| stroke(ln, colors))
-            .unwrap_or_else(|| Some(Stroke::solid(Color::opaque(ibis_doc_model::Rgb(0xf2f2f2)), 9_525)))
+            .unwrap_or_else(|| Some(Stroke::solid(Color::opaque(ibis_doc_model::Rgb(if legacy && !legacy_border { 0xbcbcbc } else { 0xf2f2f2 })), 9_525)))
     });
     Axis {
         id: axis_val(node, "axId").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(0.0) as u32,

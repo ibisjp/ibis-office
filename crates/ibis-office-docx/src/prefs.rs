@@ -21,7 +21,7 @@ pub(crate) enum DefaultPasteMode {
 }
 
 /// 編集記号の表示設定 (DOCX-OPTIONS-008: Word Options > 表示 > 常に画面に表示する編集記号).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FormattingMarksOptions {
     /// 常に表示する: タブ (→)
     pub(crate) show_tabs: bool,
@@ -33,7 +33,30 @@ pub(crate) struct FormattingMarksOptions {
     pub(crate) show_line_breaks: bool,
     /// 常に表示する: 隠し文字 (下線点線)
     pub show_hidden_text: bool,
+    /// 常に表示する: 任意指定のハイフン (¬)
+    pub(crate) show_optional_hyphens: bool,
+    /// 常に表示する: アンカー（オブジェクトの位置、⚓）
+    pub(crate) show_object_anchors: bool,
 }
+
+impl Default for FormattingMarksOptions {
+    /// What the settings say (ツール > 設定… > ドキュメント > 編集記号: GitHub issue #262); the marks are shown at first.
+    fn default() -> Self {
+        let on = crate::shell::settings_dialog::docx_mark_shown;
+        Self {
+            show_tabs: on("docx.marks.tabs"),
+            show_spaces: on("docx.marks.spaces"),
+            show_paragraph_marks: on("docx.marks.paragraph"),
+            show_line_breaks: on("docx.marks.line-breaks"),
+            show_hidden_text: on("docx.marks.hidden-text"),
+            show_optional_hyphens: on("docx.marks.optional-hyphens"),
+            show_object_anchors: on("docx.marks.anchors"),
+        }
+    }
+}
+
+/// The colour the marks are drawn in: a bright light blue (it was grey; GitHub issue #262).
+pub(crate) const MARK_COLOR: u32 = 0x4dc3ff;
 
 impl FormattingMarksOptions {
     pub(crate) fn is_tabs_visible(&self, all_open: bool) -> bool {
@@ -51,8 +74,14 @@ impl FormattingMarksOptions {
     pub(crate) fn is_hidden_text_visible(&self, all_open: bool) -> bool {
         all_open || self.show_hidden_text
     }
+    pub(crate) fn is_optional_hyphens_visible(&self, all_open: bool) -> bool {
+        all_open || self.show_optional_hyphens
+    }
+    pub(crate) fn is_object_anchors_visible(&self, all_open: bool) -> bool {
+        all_open || self.show_object_anchors
+    }
     pub(crate) fn any_visible(&self, all_open: bool) -> bool {
-        all_open || self.show_tabs || self.show_spaces || self.show_paragraph_marks || self.show_line_breaks || self.show_hidden_text
+        all_open || self.show_tabs || self.show_spaces || self.show_paragraph_marks || self.show_line_breaks || self.show_hidden_text || self.show_optional_hyphens || self.show_object_anchors
     }
 }
 
@@ -66,6 +95,8 @@ pub struct Prefs {
     pub(crate) formatting_marks_open: bool,
     /// 常に画面に表示する編集記号オプション (DOCX-OPTIONS-008).
     pub(crate) formatting_marks_options: FormattingMarksOptions,
+    /// How many changes of the marks' settings this window has read (`settings_dialog::docx_marks_generation`).
+    pub(crate) marks_generation: u64,
     /// ページ間の余白の表示 (DOCX-VIEW-017). True displays normal page gaps and margins; false collapses page gaps into a thin dividing line.
     pub(crate) show_white_space: bool,
     /// 貼付の既定動作 (DOCX-OPTIONS-006).
@@ -93,6 +124,7 @@ impl Default for Prefs {
             vertical_ruler_open: true,
             formatting_marks_open: false,
             formatting_marks_options: FormattingMarksOptions::default(),
+            marks_generation: crate::shell::settings_dialog::docx_marks_generation(),
             show_white_space: true,
             default_paste_mode: DefaultPasteMode::default(),
             custom_user_name: None,

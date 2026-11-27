@@ -8,9 +8,15 @@
 
 pub mod container;
 pub mod cos;
+pub mod crypt;
 #[cfg(feature = "interpret")]
 pub mod interpret;
+#[cfg(feature = "interpret")]
+pub mod gradient;
+#[cfg(feature = "interpret")]
+pub mod softmask;
 pub mod scene;
+pub mod text_layout;
 pub mod signature;
 pub mod xref;
 

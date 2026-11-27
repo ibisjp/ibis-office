@@ -12,6 +12,7 @@ use super::issue191_tests::{make_control, near, pages_of, text_box};
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("docx::issue196_lines_beside_a_figure_break_as_the_same_text_without_it", lines_beside_a_figure_break_as_the_same_text_without_it),
+        ("docx::issue196_stops_squeeze_beside_a_figure_as_without_it", stops_squeeze_beside_a_figure_as_without_it),
         ("docx::issue196_a_positional_tab_aligns_to_the_gap_beside_the_figure", a_positional_tab_aligns_to_the_gap_beside_the_figure),
         ("docx::issue196_the_first_line_indent_counts_from_the_gap_beside_the_figure", the_first_line_indent_counts_from_the_gap_beside_the_figure),
         ("docx::issue196_ptab_stops_of_each_alignment_beside_a_figure_on_the_left", ptab_stops_of_each_alignment_beside_a_figure_on_the_left),
@@ -90,6 +91,39 @@ fn lines_beside_a_figure_break_as_the_same_text_without_it() {
         let (with_figure, plain) = (counts(&pa), counts(&pb));
         assert_eq!(plain, word, "{name}: the same text without the figure is Word's");
         assert_eq!(with_figure, plain, "{name}: beside the figure the lines are those of the text without it");
+    }
+}
+
+/// Where each character stands, line by line (the text items on one baseline, without the figure's own box).
+fn stands(p: &Pagination) -> Vec<(i64, f32)> {
+    let mut out = Vec::new();
+    for it in &p.pages[0].items {
+        if let Item::Text { x, y, text, offsets, .. } = it && !text.starts_with("アイウ") {
+            for (k, _) in text.chars().enumerate() {
+                out.push(((*y * 100.0).round() as i64, *x + offsets.get(k).copied().unwrap_or(0.0)));
+            }
+        }
+    }
+    out
+}
+
+/// The stops a justified line takes in (約物を詰める) are chosen as they are in the same text without the figure, though the anchor of the figure is a unit of the line (Word's PDF of
+/// the issue's `n6-wrap-c.docx`: H1a's first line ends 、。 with the 。 squeezed to half and the 、 whole, 10.44 pt apart; Q1a's three 、 of the first line 9.96, 9.84, 9.96 pt apart).
+fn stops_squeeze_beside_a_figure_as_without_it() {
+    let scenes = [
+        ("h1", "おぬちふいあじひいoovreofelv々わくやわぽぼぼりてきて、。「こぶぬうさちなぎいぜそ、をおもれおぽしがなび：くんろ、、ぴよつれひひぴせだよぼ「ヲロビペサ」3956えひこうひへげべるむ"),
+        ("q1", "とるつざずわどそご、、、もさぷはふつのゴフキハアミロフガユーヘゴフビ、、「う、金力」とびえ【トドミコビ】たずよみじぬん耳日耳糸事人生学生見入【ベジドバ】ぐおききはぎわす木水国出右糸耳。、カヲマペテヤまひいかるぎゴヲエミヨーユ。"),
+    ];
+    for (name, text) in scenes {
+        let ppr = r#"<w:jc w:val="both"/>"#;
+        let a = make_control(&format!("196-{name}c"), &beside(150, 0, ppr, &run(text)), "", 15, "compressPunctuation");
+        let b = make_control(&format!("196-{name}d"), &without("", r#"<w:ind w:left="3180"/>"#, &run(text)).replace("<w:spacing", &format!("{ppr}<w:spacing")), "", 15, "compressPunctuation");
+        let (xa, xb) = (stands(&pages_of(&a)), stands(&pages_of(&b)));
+        assert_eq!(xa.len(), xb.len(), "{name}: the same characters");
+        for (k, (pa, pb)) in xa.iter().zip(&xb).enumerate() {
+            assert_eq!(pa.0, pb.0, "{name}: character {k} is on the same line");
+            near(pa.1, pb.1, 0.25, &format!("{name}: character {k}"));
+        }
     }
 }
 

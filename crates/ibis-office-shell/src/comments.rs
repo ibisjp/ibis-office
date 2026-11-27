@@ -165,15 +165,7 @@ pub fn comment_date_label(raw: &str) -> String {
 pub fn new_guid() -> String {
     static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seed = (crate::clock::unix_millis() as u64) ^ COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-    let mix = |mut x: u64| {
-        x ^= x >> 33;
-        x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
-        x ^= x >> 33;
-        x = x.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-        x ^ (x >> 33)
-    };
-    let (a, b) = (mix(seed), mix(seed ^ 0x5555_5555_5555_5555));
-    format!("{{{:08X}-{:04X}-4{:03X}-{:04X}-{:012X}}}", a >> 32, (a >> 16) & 0xffff, a & 0xfff, 0x8000 | (b >> 48) & 0x3fff, b & 0xffff_ffff_ffff)
+    ibis_doc_model::slide_comment::guid_from_seed(seed)
 }
 
 /// Who writes and when, as every format's new post takes them: the user's name and initials, and the time in UTC (to the

@@ -2012,6 +2012,8 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let mut data_tables: Vec<ibis_doc_model::DataTable> = Vec::new();
     let mut outline_rows = std::collections::BTreeMap::new();
     let mut outline_columns = std::collections::BTreeMap::new();
+    let mut collapsed_rows = std::collections::BTreeSet::new();
+    let mut collapsed_columns = std::collections::BTreeSet::new();
     let mut hidden_rows = std::collections::BTreeMap::new();
     let mut custom_rows = std::collections::BTreeSet::new();
     let mut custom_columns = std::collections::BTreeSet::new();
@@ -2037,6 +2039,9 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         for c in (min.max(1) as u32 - 1)..(max.clamp(1, 16_384) as u32) {
             if level > 0 {
                 outline_columns.insert(c, level);
+            }
+            if attr_bool(col, "collapsed").unwrap_or(false) {
+                collapsed_columns.insert(c);
             }
             col_chars.insert(c, char_w);
             // A width the user fixed (`customWidth`): the column does not widen by itself when a number is entered.
@@ -2092,6 +2097,9 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         let Some(r) = number.or_else(|| attr_i64(row, "r")).map(|v| (v.max(1) - 1) as u32) else { continue };
         if let Some(level) = attr_i64(row, "outlineLevel").filter(|&l| l > 0) {
             outline_rows.insert(r, level.min(7) as u8);
+        }
+        if attr_bool(row, "collapsed").unwrap_or(false) {
+            collapsed_rows.insert(r);
         }
         // `row/@ph` (and `col/@phonetic`) only set what a cell entered later in the row gets: the cell's own `c/@ph` decides whether its
         // furigana shows (Excel). A row with `row/@ph` still takes a line of the sheet's furigana font in its height.
@@ -2533,6 +2541,8 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         headings,
         print_area: None,
         tab_color: None,
+        outline_summary_above: false,
+        outline_summary_left: false,
         frozen,
         split,
         protection: read_protection(root),
@@ -2584,6 +2594,8 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         comments: Vec::new(),
         outline_rows,
         outline_columns,
+        collapsed_rows,
+        collapsed_columns,
         auto_filter: read_auto_filter(root, &styles.dxfs),
         filtered_rows: Default::default(),
         tables: Vec::new(),

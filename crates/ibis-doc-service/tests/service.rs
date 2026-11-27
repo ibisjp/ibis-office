@@ -35,8 +35,8 @@ fn open(service: &mut Service, dir: &Path, name: &str) -> String {
 #[test]
 fn mcp_catalog_names_follow_the_naming_rule() {
     // commandNamingRule A: {screen}_{verb}_{object}, snake_case, 64 characters or fewer; the verbs are the rule's.
-    let verbs = ["get", "list", "set", "insert", "add", "delete", "clear", "move", "copy", "apply", "show", "hide", "open", "save", "export", "close", "find", "replace", "undo", "redo", "calculate", "merge", "sort", "rename"];
-    // Beyond the rule's verbs: find, replace, undo, redo, calculate, merge, sort and rename are named so by Office itself (commandNamingRule 3: an operation outside the table keeps
+    let verbs = ["get", "list", "set", "insert", "add", "delete", "clear", "move", "copy", "apply", "show", "hide", "open", "save", "export", "close", "find", "replace", "undo", "redo", "calculate", "merge", "unmerge", "split", "sort", "rename", "remove", "arrange", "align", "group", "ungroup"];
+    // Beyond the rule's verbs: find, replace, undo, redo, calculate, merge, unmerge, sort, rename and remove are named so by Office itself (commandNamingRule 3: an operation outside the table keeps
     // the name Office gives it).
     let mut seen = std::collections::HashSet::new();
     for tool in catalog() {
@@ -196,6 +196,14 @@ fn mcp_export_runs_the_program_and_puts_the_files_where_asked() {
     assert_eq!(std::fs::read(dir.join("page-02.png")).unwrap(), b"P2");
     // Wrong arguments; a place outside the allowed folders; a wrong extension.
     assert_eq!(s.call("app_export_document", &json!({ "document_id": id, "format": "pdf", "path": dir.join("b.pdf").to_string_lossy(), "range": "1;rm" })).unwrap_err().code, "invalid_argument");
+    // The paper (#225): a name or <width>x<height>mm, nothing else is passed to the program.
+    for paper in ["a4;rm", "--x", "", "x210mm", "210x297"] {
+        assert_eq!(s.call("app_export_document", &json!({ "document_id": id, "format": "pdf", "path": dir.join("b.pdf").to_string_lossy(), "paper": paper })).unwrap_err().code, "invalid_argument", "{paper}");
+    }
+    // A paper that can be used is for a presentation only (a document's page is its own page setup's); the presentation case is tests/export_paper.rs.
+    for paper in ["A4", "letter", "210x297mm"] {
+        assert_eq!(s.call("app_export_document", &json!({ "document_id": id, "format": "pdf", "path": dir.join("a.pdf").to_string_lossy(), "overwrite": true, "paper": paper, "fit_paper": false })).unwrap_err().code, "unsupported_operation", "{paper}");
+    }
     assert_eq!(s.call("app_export_document", &json!({ "document_id": id, "format": "pdf", "path": "/tmp/x.pdf" })).unwrap_err().code, "not_allowed_path");
     assert_eq!(s.call("app_export_document", &json!({ "document_id": id, "format": "pdf", "path": dir.join("b.png").to_string_lossy() })).unwrap_err().code, "unsupported_format");
     // No work folder is left.

@@ -53,6 +53,10 @@ pub fn native_quit_allowed(cx: &mut App) -> bool {
 /// answered); the others close. The app ends with its last window (`quit_if_last_window_closed`), or at once when
 /// nothing is left to ask (GitHub issue #27).
 pub fn quit_asking_to_save(cx: &mut App) {
+    // iOS and Android: the app is not ended from inside (iOS froze; K0076). The key does nothing there either.
+    if crate::mobile_os::is_mobile_os() {
+        return;
+    }
     // ⌘Q comes while the window with the keys is being updated, when its editor cannot be read (the window would be
     // passed over and the app end without asking): ask once the event is done.
     cx.defer(quit_asking_to_save_now);

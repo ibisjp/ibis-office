@@ -26,10 +26,20 @@ pub enum TransitionPlan {
     SoftWindows(Vec<(Rect, f64)>),
     /// The slides are mixed with a flat backdrop (grey level `backdrop`, 0 black to 1 white) in vertical strips, each strip with its own
     /// weights of the old and the new slide (リビール: the fade through grey or black runs at a different time in each strip).
-    StripMix { strips: Vec<StripMix>, backdrop: f64 },
+    /// `scale` is the size of the old and of the new slide about the centre (1 for a slide that keeps its size).
+    StripMix { strips: Vec<StripMix>, backdrop: f64, scale: (f64, f64) },
     /// The slides are drawn at a size about the centre: each as `(scale, opacity)`, the new one over the old, or under it.
     /// A flat stand-in for the effects that move the camera (ズーム, フライスルー, ワープ).
     Scaled { old: Option<(f64, f64)>, new: Option<(f64, f64)>, new_on_top: bool },
+    /// ニュース速報: the new slide, whole, grows out of the middle of the old one (which stays as it is) at `scale` of its size about the
+    /// centre, turned `turn` degrees clockwise about the centre, at this `opacity`.
+    Spin { scale: f64, turn: f64, opacity: f64 },
+    /// ワープ: the camera moves through the two slides, which stand one behind the other: each slide is drawn whole at `scale` about the
+    /// centre (more than 1: the middle of it fills the frame) at its `opacity`; the one drawn later is over the earlier one. With
+    /// `additive` the new slide's rectangle shows `old * (1 - k) + new * k` and the rest of the frame `old * (1 - k)` over black (the
+    /// new slide is added to the dimmed old one, not laid over it); without, the old one is laid over the new at its opacity. The frame
+    /// behind them is grey at the level `backdrop` (0 black to 1 white; フライスルー shows a backdrop that fades from white to black).
+    Dolly { old: (f64, f64), new: (f64, f64), new_on_top: bool, additive: bool, backdrop: f64 },
     /// ズーム: the old slide (`old`) or the new one (`new`) at this scale about the centre, whole (opacity 1) with a soft edge
     /// (`soft_scaled_pieces`), the other slide under it; the new one over the old, or under it.
     SoftScaled { old: Option<f64>, new: Option<f64>, new_on_top: bool },
@@ -89,6 +99,12 @@ pub enum Turn3dKind {
     Airplane,
     /// 折り紙: the old slide folds into a paper crane that flies off (drawn as one card sent back and tilted).
     Origami,
+    /// クラッシュ: the old slide is a sheet (a mesh with the slide as its texture) crumpled into a ball from the four corners, which then falls out at the bottom; the new slide is behind.
+    Crush,
+    /// プレステージ: the old slide is a cloth (a mesh of nodes joined by springs, with friction) held and pulled up near the middle of its top edge; the new slide is behind (see `turn3d_cloth`).
+    Prestige,
+    /// フラクチャ: the old slide is cracked into wedges from a point near its middle, which open and fall away; the new slide is behind (see `turn3d_fracture`).
+    Fracture,
     /// さざなみ: the slide is a surface with concentric waves in Z (shaded) spreading from the centre or a corner; the new slide shows through them.
     Ripple,
     /// くし形: bands of the two slides pushing each other, alternately in opposite ways (the motion is (1, 0) for the horizontal bands, (0, 1) for the vertical ones).
@@ -105,6 +121,9 @@ pub enum Turn3dKind {
     Shred { particle: bool },
     /// 渦巻き: the tiles of the slides thrown toward the viewer behind a sweeping front, the new slide's coming back the same way run backwards (see `turn3d_tiles::vortex`).
     Vortex,
+    /// きらめき: the slide is a lattice of hexagons (`diamond` false) or diamonds; the old ones turn about their vertical axes and fall, black shows, and the new slide's
+    /// come down from far above turning and pile up in their places (the motion is the side it starts at, as for the vortex; see `turn3d_tiles::glitter`).
+    Glitter { diamond: bool },
     /// 扉 and 窓: the old slide's halves swing back and the new slide grows from the middle (the motion is (1, 0) for the halves above and below, (0, 1) for those at the sides; `window` on grey).
     Doors { window: bool },
 }
@@ -135,6 +154,50 @@ fn bezier_frames(x1: f64, y1: f64, x2: f64, s: f64, len: f64, t: f64) -> f64 {
     3.0 * (1.0 - m) * (1.0 - m) * m * y1 + 3.0 * (1.0 - m) * m * m + m * m * m
 }
 
+/// `cubic-bezier(x1, y1, x2, y2)` of the frames `s` to `s + len` (of the 60 of a 2 second transition at 30 frames a second) at `t`.
+fn bezier_frames_xy(x1: f64, y1: f64, x2: f64, y2: f64, s: f64, len: f64, t: f64) -> f64 {
+    bezier_xy(x1, y1, x2, y2, (t * 60.0 - s) / len)
+}
+
+/// フライスルー's progress `kappa` (0 the old slide whole, 1 the new slide whole) at `t` (0 to 1 of its time). Measured on PowerPoint
+/// for Windows (`CreateVideo`, 30 frames a second, 2 seconds, 720p; slides 91 to 94 of `audit-trans-flat-16x9-dur2000`): `kappa` was fitted
+/// to the picture at each frame (`flythrough_look`), then one curve to the frames of in and out together (a frame of offset each): in,
+/// `cubic-bezier(0.456, 0, 0.533, 1)` over 61.2 frames from -0.6 (rms 0.0035 of `kappa`); in-bounce, `cubic-bezier(0.664, 0, 0.905, 1.269)`
+/// over 52.8 frames from -1.5 (rms 0.008): `kappa` rises past 1 (the camera goes a little past the place where the new slide is whole,
+/// 1.03 at frame 50) and comes back. Out is in run the other way, `1 - kappa` (the picture of out at `t` is that of in at `1 - kappa`
+/// with the slides' places swapped: `kappa` of out + `kappa` of in = 1 to 0.02 at every frame).
+fn flythrough_progress(token: Option<&str>, t: f64) -> f64 {
+    let token = token.unwrap_or("");
+    let kappa = if token.ends_with("bounce") { bezier_frames_xy(0.664, 0.0, 0.905, 1.269, -1.5, 52.8, t) } else { bezier_frames_xy(0.456, 0.0, 0.533, 1.0, -0.6, 61.2, t) };
+    if token.is_empty() || token.starts_with("in") { kappa } else { 1.0 - kappa }
+}
+
+/// フライスルー: the pictures of the camera's travel `kappa` (see `flythrough_progress`; in the direction "in" of the old slide to the new
+/// one; "out" is the same picture with the slides' places swapped: the new slide is the near one, and `kappa` is `flythrough_progress`'s
+/// `1 - kappa`, which starts at 1). The camera
+/// moves through two slides standing one behind the other, the near one `1` (focal length) from the camera and the far one `1 + FLYTHROUGH_TRAVEL`:
+/// it travels `x = FLYTHROUGH_TRAVEL * kappa`, so the near slide is drawn at `1 / (1 - x)` (it flies past the camera at `x = 1`, and
+/// fades out at the opacity `1 - x`) and the far one at `1 / (1 + FLYTHROUGH_TRAVEL - x)` (half size at the start, whole at the end).
+/// The far one's opacity is `kappa^2`, laid in the rectangle it covers under the near one at the opacity that leaves the weights
+/// `near : far : backdrop` = `(1 - x) : kappa^2 : (the rest)` there (so the near slide keeps its weight over the far one: laying it over
+/// it would take `1 - x` off the far one again), and the backdrop is grey at the level `1 - kappa` (white at the start, black at the end).
+/// Returns `(near, far, backdrop)`: each slide's `(scale, opacity)` and the backdrop's level.
+fn flythrough_look(kappa: f64) -> ((f64, f64), (f64, f64), f64) {
+    let x = FLYTHROUGH_TRAVEL * kappa;
+    let near_opacity = (1.0 - x).clamp(0.0, 1.0);
+    let near_scale = if near_opacity > 0.0 { 1.0 / (1.0 - x) } else { 1.0 };
+    let far_scale = 1.0 / (1.0 + FLYTHROUGH_TRAVEL - x);
+    let far_weight = kappa.clamp(0.0, 1.0).powi(2);
+    let far_opacity = if near_opacity < 1.0 { (far_weight / (1.0 - near_opacity)).min(1.0) } else { 0.0 };
+    ((near_scale, near_opacity), (far_scale, far_opacity), (1.0 - kappa).clamp(0.0, 1.0))
+}
+
+/// How far the camera travels in フライスルー, in units of the distance (the focal length) from the camera to the near slide (see `flythrough_look`).
+const FLYTHROUGH_TRAVEL: f64 = 1.2;
+
+/// The turn of ニュース速報's new slide at its start, clockwise, which it unwinds at a constant speed (see `plan`).
+const NEWSFLASH_TURN_DEGREES: f64 = 400.0;
+
 /// `progress` where the effect's option (`dir`) changes the curve: カバー and アンカバー run on other curves for the diagonals than for
 /// the four straight directions. Measured on PowerPoint for Windows (Microsoft 365, `CreateVideo` 30 frames a second, a 2 second
 /// transition, 160 x 90 frames; the slide's place fitted at every frame, one curve `cubic-bezier(x1, y1, x2, 1)` of `len` frames from
@@ -161,12 +224,18 @@ pub fn progress_with(effect: &str, token: Option<&str>, t: f64) -> Option<f64> {
         "cube" | "rotate" => Some(bezier_ease(0.326, 0.69, t)),
         "box" | "orbit" => Some(bezier_ease(0.346, 0.65, t)),
         // コンベヤー runs at a constant speed in the table of `turn3d.rs`; ハニカム's planes move by the frame (`turn3d_tiles::honeycomb`).
-        "conveyor" | "gallery" | "switch" | "ferris" | "fallOver" | "pageCurlSingle" | "peelOff" | "curtains" | "wind" | "pageCurlDouble" | "drape" | "airplane" | "origami" | "ripple" | "honeycomb" | "vortex" | "comb" | "blinds" | "checker" | "doors" | "window" => Some(t),
+        "conveyor" | "gallery" | "switch" | "ferris" | "fallOver" | "pageCurlSingle" | "peelOff" | "curtains" | "wind" | "pageCurlDouble" | "drape" | "airplane" | "origami" | "crush" | "fracture" | "ripple" | "honeycomb" | "vortex" | "comb" | "blinds" | "checker" | "doors" | "window" => Some(t),
         "flip" => Some(bezier_ease(0.593, 0.358, t)),
+        // ワープ: the camera's dolly (see `plan`).
+        "warp" => Some(bezier_ease(0.44, 0.56, t)),
         "wipe" | "split" | "strips" | "dissolve" => Some(t),
+        // プレステージ: the cloth's own time (see `turn3d_cloth`).
+        "prestige" => Some(t),
+        // フライスルー: the camera's travel (see `flythrough_progress`).
+        "flythrough" => Some(flythrough_progress(token, t)),
         // The shapes' bands travel at a constant speed (measured on PowerPoint for Windows, 1 and 2 seconds); the fade's own
         // curve is `fade_look`'s, which is applied to each half of a fade through black.
-        "fade" | "circle" | "diamond" | "plus" | "wedge" | "wheel" | "wheelReverse" | "zoom" => Some(t),
+        "fade" | "circle" | "diamond" | "plus" | "wedge" | "wheel" | "wheelReverse" | "zoom" | "newsflash" => Some(t),
         _ => None,
     }
 }
@@ -218,7 +287,9 @@ fn flat_plan(effect: &str, token: &str, q: f64, aspect: f64) -> Option<Transitio
     Some(match effect {
         // ズーム: measured on PowerPoint for Windows (`CreateVideo`, 30 frames a second, durations 0.5 to 3 s, 720p): "in" (`dir="in"`)
         // shrinks the old slide into the middle, at a constant speed, in the first half of the time; "out" (no `dir`) grows the new
-        // slide out of the middle, at a constant speed, in the second half (nothing moves in the other half).
+        // slide out of the middle, at a constant speed, in the second half (nothing moves in the other half). In "out" the new slide
+        // itself keeps its size (the user's F2 of 2026-11-23, PowerPoint's recording): only the soft-edged rectangular hole it is seen
+        // through grows (`soft_masked_pieces`).
         "zoom" if token == "in" => {
             let s = (2.0 * q).min(1.0);
             TransitionPlan::SoftScaled { old: Some(1.0 - s), new: None, new_on_top: false }
@@ -227,11 +298,51 @@ fn flat_plan(effect: &str, token: &str, q: f64, aspect: f64) -> Option<Transitio
             let s = (2.0 * q - 1.0).max(0.0);
             TransitionPlan::SoftScaled { old: None, new: Some(s), new_on_top: true }
         }
-        // フライスルー and ワープ move the camera through the slide: in, toward the new one; out, away from the old one.
-        "flythrough" | "warp" if (effect == "warp" && token == "in") || (effect == "flythrough" && (token.is_empty() || token.starts_with("in"))) => TransitionPlan::Scaled { old: Some((1.0 + q, 1.0 - q)), new: Some((q, q)), new_on_top: true },
-        "flythrough" | "warp" => TransitionPlan::Scaled { old: Some((1.0 - q, 1.0 - q)), new: Some((1.0 + (1.0 - q), q)), new_on_top: false },
-        "newsflash" => TransitionPlan::Scaled { old: Some((1.0 - q, 1.0 - q)), new: Some((q, q)), new_on_top: true },
-        "flash" => TransitionPlan::StripMix { strips: flash_mix(q), backdrop: 1.0 },
+        // ワープ: measured on PowerPoint for Windows (`CreateVideo`, 30 frames a second, 2 seconds, 720p; slides 95 and 96 of
+        // `audit-trans-flat-16x9-dur2000`). At each frame the two slides' scales (about the middle), opacities and the compositing were
+        // fitted to the picture (the squared error of 320 x 180 pixels, 0.001 to 0.006). The camera is dollied by `k` (0 to 1) of the
+        // distance between the slides, which stand one focal length `F` apart, so a slide at distance `d` from the camera is drawn at
+        // `F / d`:
+        //   in  (the camera moves toward the old slide and through it to the new): the old slide at `1 / (1 - k)` (it flies past the
+        //       camera) over the new one at `1 / (2 - k)` (it grows from half size to whole and stays opaque behind it): the old slide is in front at
+        //       the opacity `1 - k`, so the picture is `old (1 - k) + new k` where the new slide shows (the same as the pictures added on black);
+        //       the fitted scales are those of this model to 0.5 % (the new one `1 / (2 - k)` at `k` 0.24, 0.46, 0.75: 0.568, 0.648,
+        //       0.798, fitted 0.567, 0.649, 0.799), and the pictures' weights were fitted free: 0.76 and 0.235 at `k` 0.24, 0.54 and
+        //       0.455 at 0.46, 0.25 and 0.742 at 0.75 (the same frames with one layer laid over the other left a 4 to 10 times
+        //       larger error);
+        //   out (the camera backs off): the old slide at `1 / (1 + k)` laid over the new one at `1 / k` (the new one is whole, in front
+        //       of the camera at first), the old one at the opacity `1 - k` (fitted 0.805, 0.445, 0.144 at `k` 0.195, 0.556, 0.85: the
+        //       model 0.805, 0.444, 0.15), the scales to 1 % (the new one at `k` 0.261, 0.555, 0.812: 3.83, 1.80, 1.23, fitted 3.78,
+        //       1.80, 1.23).
+        // `k` runs on `cubic-bezier(0.44, 0, 0.56, 1)` of the 60 frames (rms 0.004 in both; (0.5, 0, 0.5, 1) over 64 frames fits as well).
+        "warp" if token == "in" => {
+            let k = q.min(0.999);
+            TransitionPlan::Dolly { old: (1.0 / (1.0 - k), 1.0 - k), new: (1.0 / (2.0 - k), 1.0), new_on_top: false, additive: false, backdrop: 0.0 }
+        }
+        "warp" => {
+            let k = q.clamp(0.001, 1.0);
+            TransitionPlan::Dolly { old: (1.0 / (1.0 + k), 1.0 - k), new: (1.0 / k, 1.0), new_on_top: false, additive: false, backdrop: 0.0 }
+        }
+        // フライスルー: measured on PowerPoint for Windows (see `flythrough_progress` and `flythrough_look`). In, the old slide is the near
+        // one; out, the new slide is the near one (drawn over the old one, which is the far one) and `q` is run the other way.
+        "flythrough" if token.is_empty() || token.starts_with("in") => {
+            let (near, far, backdrop) = flythrough_look(q);
+            TransitionPlan::Dolly { old: near, new: far, new_on_top: false, additive: false, backdrop }
+        }
+        "flythrough" => {
+            let (near, far, backdrop) = flythrough_look(q);
+            TransitionPlan::Dolly { old: far, new: near, new_on_top: true, additive: false, backdrop }
+        }
+        // ニュース速報: measured on PowerPoint for Windows (`CreateVideo`, 30 frames a second, 2 seconds, 720p; slide 103 of
+        // `audit-trans-flat-16x9-dur2000`): the old slide stays whole under the new one. The new slide's outline (a rectangle of the
+        // slide's shape) was fitted to the frames where it shows (1 - IoU of the changed pixels; the 180 degree ambiguity of a rectangle
+        // settled by where the white disc of the slide lies); over the 60.5 frames of the movement, with u the share of the time: the
+        // centre stays at the middle of the frame (mean 320.5, 180.3 of 640 x 360, standard deviation under 1 pixel), the width grows
+        // linearly from 0 (13814.0) to the frame's width (13874.6) (the fit's residue 1.2 pixels), and the turn is a constant speed,
+        // -0.1152 radian a frame (residue 0.011 radian): 0.1152 x 60.5 = 6.98 radian = 400 degrees, ending upright. The opacity of the
+        // slide (read at the white disc over the old slide's black) is `1 - (1 - u)^3` (the exponent fitted 2.9 to 3.1 at u = 0.17 to 0.71).
+        "newsflash" => TransitionPlan::Spin { scale: q, turn: NEWSFLASH_TURN_DEGREES * (1.0 - q), opacity: 1.0 - (1.0 - q).powi(3) },
+        "flash" => TransitionPlan::StripMix { strips: flash_mix(q), backdrop: 1.0, scale: (1.0, 1.0) },
         "flip" => TransitionPlan::Flip { old: (1.0 - 2.0 * q).max(0.0), new: (2.0 * q - 1.0).max(0.0) },
         // The cards of a cube, a box, a rotating slide, an orbit and a switch move as the push does.
         "cube" | "box" | "rotate" | "orbit" | "switch" | "ferris" => slide(motion(token), true),
@@ -241,13 +352,13 @@ fn flat_plan(effect: &str, token: &str, q: f64, aspect: f64) -> Option<Transitio
         "blinds" => TransitionPlan::Windows(blinds_windows(token != "vert", q)),
         "checker" => TransitionPlan::Windows(checker_windows(token != "vert", q)),
         "doors" | "window" => windows(if token == "horz" { "barn(outHorizontal)" } else { "barn(outVertical)" }),
-        "vortex" | "honeycomb" => windows("dissolve"),
+        "vortex" | "honeycomb" | "glitter" => windows("dissolve"),
         // 2013's effects: the old slide leaves, curtains opening, strips falling, a wind of strips, the page lifted off.
         "curtains" => windows("barn(outVertical)"),
         "drape" => windows(if inv { "randombar(vertical)" } else { "blinds(vertical)" }),
         "wind" | "fallOver" => TransitionPlan::SoftWindows(wipe_strips(if inv { 'l' } else { 'r' }, q)),
         "peelOff" | "pageCurlDouble" | "pageCurlSingle" | "airplane" | "origami" => TransitionPlan::Slide { from: (0.0, 0.0), old_to: if inv { (1.0, 0.0) } else { (-1.0, 0.0) }, new_on_top: false },
-        "prestige" | "fracture" | "crush" => windows("dissolve"),
+        "fracture" | "crush" => windows("dissolve"),
         _ => return None,
     })
 }
@@ -499,6 +610,21 @@ pub fn reveal_mix(through_black: bool, left: bool, t: f64) -> (Vec<StripMix>, f6
     (out, backdrop)
 }
 
+/// How much larger than whole リビール draws the slides, `(old, new)`, at `t`: the old slide grows from its size to `1 + REVEAL_ZOOM` at a
+/// constant rate through the first half, then the new slide is drawn from `1 + REVEAL_ZOOM` back to its size through the second half (the
+/// peak is at the middle, where only the backdrop shows). Measured on PowerPoint for Windows (`CreateVideo`, 30 frames a second, a 2
+/// second transition, `reveal/l` of `audit-trans-flat-16x9-dur2000`): the scale of the whole picture about its middle, found at each frame
+/// as the one that makes the gradient picture best correlate with the old slide (frames 29 to 53: 1.002 to 1.034, the least squares line
+/// 0.00139 a frame through 0, which is 0.0417 at the middle frame 58) and with the new slide (frames 62 to 88: 1.033 to 1.0, the line
+/// reaches 0 at frame 88.4 = 0.0398 at the middle); the frames of the middle (54 to 61) are the backdrop and not measurable. A slide of the
+/// other direction or colour is taken to be the same.
+pub const REVEAL_ZOOM: f64 = 0.0408;
+
+pub fn reveal_scale(t: f64) -> (f64, f64) {
+    let t = t.clamp(0.0, 1.0);
+    (1.0 + REVEAL_ZOOM * (2.0 * t).min(1.0), 1.0 + REVEAL_ZOOM * (2.0 - 2.0 * t).min(1.0))
+}
+
 /// The new slide's weight in フラッシュ (`p14:flash`) for each of three parts of the slide, at frame `k` of 60: points `(frame, weight)`
 /// joined by straight lines. Measured on PowerPoint for Windows (Microsoft 365, `CreateVideo` 30 frames a second, a 2 second transition
 /// = 60 frames, 160 x 90 frames of the slide, the weight of the new picture in the white-to-new mix, 66 frames of it): the whole slide
@@ -569,6 +695,17 @@ pub type SoftPiece = (Rect, Rect, f64);
 /// the centre of the band within 4 pixels of the slide's edge). The part of the band outside the slide shows the slide's edge pixels
 /// (the pieces' picture parts are held to the slide).
 pub fn soft_scaled_pieces(k: f64) -> Vec<SoftPiece> {
+    soft_pieces(k, false)
+}
+
+/// ズーム: the slide (the old one shrinking in "in", the new one growing in "out") is not scaled, it stays whole and fixed, and is seen through a rectangular hole about the middle of the
+/// screen (the share `k` of the screen) whose edge fades by the same half cosine (PowerPoint's recording: the next slide's size does not
+/// change, only the hole grows). Pieces as `soft_scaled_pieces`, but each shows the part of the slide it lies over.
+pub fn soft_masked_pieces(k: f64) -> Vec<SoftPiece> {
+    soft_pieces(k, true)
+}
+
+fn soft_pieces(k: f64, fixed: bool) -> Vec<SoftPiece> {
     const STEPS: usize = 12;
     if k <= 0.0 {
         return Vec::new();
@@ -595,6 +732,9 @@ pub fn soft_scaled_pieces(k: f64) -> Vec<SoftPiece> {
     let alpha_at = |x: f64, band: f64| ramp(x - (0.5 - k / 2.0), band) * ramp((0.5 + k / 2.0) - x, band);
     let uv = |a: f64, b: f64| {
         // The part of the slide a span of the screen shows, held to the slide: a span outside it shows the edge line.
+        if fixed {
+            return (a, b);
+        }
         let (u0, u1) = (((a - (0.5 - k / 2.0)) / k).clamp(0.0, 1.0), ((b - (0.5 - k / 2.0)) / k).clamp(0.0, 1.0));
         if u1 - u0 < 1e-4 { (u0.min(1.0 - 1e-4), u0.min(1.0 - 1e-4) + 1e-4) } else { (u0, u1) }
     };
@@ -827,10 +967,6 @@ fn motion(token: &str) -> (f64, f64) {
 /// How effect `effect` with option `token` shows the new slide at `q` (0 to 1) of its time, on a slide of `aspect` (width over height).
 pub fn plan(effect: &str, token: Option<&str>, q: f64, aspect: f64) -> TransitionPlan {
     let token = token.unwrap_or("");
-    let windows = |filter: &str| match reveal_rects(filter, true, q, aspect) {
-        Some(rects) => TransitionPlan::Windows(rects),
-        None => TransitionPlan::Fade { through_black: false },
-    };
     match effect {
         "fade" => TransitionPlan::Fade { through_black: token == "thruBlk" },
         "cut" if token == "thruBlk" && q < 0.5 => TransitionPlan::Windows(vec![]),
@@ -850,6 +986,9 @@ pub fn plan(effect: &str, token: Option<&str>, q: f64, aspect: f64) -> Transitio
         "origami" => TransitionPlan::Turn3d { kind: Turn3dKind::Origami, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
         // さざなみ: `motion` is the waves' origin (x, y: -1 left or top, 0 the middle, 1 right or bottom); `dir` is the way the waves spread, so the diagonal ones start at the opposite corner.
         "ripple" => TransitionPlan::Turn3d { kind: Turn3dKind::Ripple, motion: ripple_origin(token) },
+        "crush" => TransitionPlan::Turn3d { kind: Turn3dKind::Crush, motion: (0.0, 0.0) },
+        "fracture" => TransitionPlan::Turn3d { kind: Turn3dKind::Fracture, motion: (0.0, 0.0) },
+        "prestige" => TransitionPlan::Turn3d { kind: Turn3dKind::Prestige, motion: (0.0, 0.0) },
         "curtains" => TransitionPlan::Turn3d { kind: Turn3dKind::Curtains, motion: (-1.0, 0.0) },
         "wind" => TransitionPlan::Turn3d { kind: Turn3dKind::Wind, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
         "push" | "pan" => {
@@ -862,7 +1001,7 @@ pub fn plan(effect: &str, token: Option<&str>, q: f64, aspect: f64) -> Transitio
         }
         "reveal" => {
             let (strips, backdrop) = reveal_mix(token.starts_with("blk-"), token.ends_with('l') || token.is_empty(), q);
-            TransitionPlan::StripMix { strips, backdrop }
+            TransitionPlan::StripMix { strips, backdrop, scale: reveal_scale(q) }
         }
         "pull" => TransitionPlan::Slide { from: (0.0, 0.0), old_to: motion(token), new_on_top: false },
         // ワイプ: the new slide is wiped in the way `dir` says, from the opposite edge (a wipe to the left starts at the right).
@@ -896,7 +1035,11 @@ pub fn plan(effect: &str, token: Option<&str>, q: f64, aspect: f64) -> Transitio
         // The side the sweep starts at, as the motion: `l` (from the right) (-1, 0), `r` (1, 0), `u` (0, -1), `d` (0, 1).
         "vortex" => TransitionPlan::Turn3d { kind: Turn3dKind::Vortex, motion: match token { "r" => (1.0, 0.0), "u" => (0.0, -1.0), "d" => (0.0, 1.0), _ => (-1.0, 0.0) } },
         "honeycomb" => TransitionPlan::Turn3d { kind: Turn3dKind::Honeycomb, motion: (0.0, 0.0) },
-        "glitter" => windows("dissolve"),
+        // The option is `hex-<side>` or `<side>` (diamonds); the side (`l` when the file leaves it out) is where the effect starts, as the motion.
+        "glitter" => TransitionPlan::Turn3d {
+            kind: Turn3dKind::Glitter { diamond: !token.starts_with("hex") },
+            motion: match token.chars().last() { Some('r') => (1.0, 0.0), Some('u') => (0.0, -1.0), Some('d') => (0.0, 1.0), _ => (-1.0, 0.0) },
+        },
         "shred" => TransitionPlan::Turn3d { kind: Turn3dKind::Shred { particle: matches!(token, "rect-in" | "rect-out" | "rectangle" | "particle") }, motion: (0.0, 0.0) },
         "wedge" => TransitionPlan::SoftWindows(soft_shape(SoftShape::Wedge, 0, false, q, aspect)),
         "diamond" => TransitionPlan::SoftWindows(soft_shape(SoftShape::Diamond, 0, false, q, aspect)),
@@ -979,6 +1122,34 @@ mod tests {
         assert_eq!(plan("zoom", Some("in"), 0.75, 1.0), TransitionPlan::SoftScaled { old: Some(0.0), new: None, new_on_top: false });
         assert_eq!(plan("zoom", Some("out"), 0.25, 1.0), TransitionPlan::SoftScaled { old: None, new: Some(0.0), new_on_top: true });
         assert_eq!(plan("zoom", Some("out"), 0.75, 1.0), TransitionPlan::SoftScaled { old: None, new: Some(0.5), new_on_top: true });
+        // ワープ (video of PowerPoint for Windows): in, the old slide flies past the camera at 1 / (1 - k), the new one grows from half size, added;
+        // out, the old one shrinks to half under its own fading, over the new one coming down from large.
+        let TransitionPlan::Dolly { old, new, new_on_top, additive, .. } = plan("warp", Some("in"), 0.5, 1.78) else { panic!() };
+        assert!((old.0 - 2.0).abs() < 1e-12 && (old.1 - 0.5).abs() < 1e-12 && (new.0 - 1.0 / 1.5).abs() < 1e-12 && new.1 == 1.0 && !new_on_top && !additive);
+        let TransitionPlan::Dolly { old, new, new_on_top, additive, .. } = plan("warp", None, 0.5, 1.78) else { panic!() };
+        assert!((old.0 - 1.0 / 1.5).abs() < 1e-12 && (old.1 - 0.5).abs() < 1e-12 && (new.0 - 2.0).abs() < 1e-12 && new.1 == 1.0 && !new_on_top && !additive);
+        assert!((progress_with("warp", None, 0.5).unwrap() - 0.5).abs() < 1e-6);
+        // フライスルー (video of PowerPoint for Windows): in, the old slide is the near one (flies past the camera at 1 / (1 - x), fading as 1 - x), the
+        // new one is the far one (half size to whole), the backdrop goes from white to black; out is in run the other way with the slides swapped.
+        let TransitionPlan::Dolly { old, new, new_on_top, backdrop, .. } = plan("flythrough", Some("in"), 0.0, 1.78) else { panic!() };
+        assert!(old == (1.0, 1.0) && new.1 == 0.0 && (new.0 - 1.0 / 2.2).abs() < 1e-12 && !new_on_top && backdrop == 1.0);
+        let TransitionPlan::Dolly { old, new, backdrop, .. } = plan("flythrough", Some("in"), 0.5, 1.78) else { panic!() };
+        assert!((old.0 - 1.0 / 0.4).abs() < 1e-12 && (old.1 - 0.4).abs() < 1e-12 && (new.0 - 1.0 / 1.6).abs() < 1e-12 && (backdrop - 0.5).abs() < 1e-12);
+        // At 0.5 the weights are near 0.4, far 0.25 (kappa^2), backdrop 0.35 (the far one laid at 0.25 / 0.6 under the near one).
+        assert!((new.1 - 0.25 / 0.6).abs() < 1e-12);
+        let TransitionPlan::Dolly { new, new_on_top, backdrop, .. } = plan("flythrough", Some("in"), 1.0, 1.78) else { panic!() };
+        assert!((new.0 - 1.0).abs() < 1e-12 && new.1 == 1.0 && !new_on_top && backdrop == 0.0);
+        let TransitionPlan::Dolly { old, new, new_on_top, backdrop, .. } = plan("flythrough", Some("out"), 1.0, 1.78) else { panic!() };
+        assert!((old.0 - 1.0).abs() < 1e-12 && old.1 == 1.0 && new.1 == 0.0 && new_on_top && backdrop == 0.0);
+        // The bounce goes past the place of the new slide and comes back; out is in run the other way.
+        let top = (0..=60).map(|f| progress_with("flythrough", Some("in-bounce"), f as f64 / 60.0).unwrap()).fold(0.0, f64::max);
+        assert!(top > 1.02 && top < 1.06, "{top}");
+        assert!((progress_with("flythrough", Some("in"), 0.4).unwrap() + progress_with("flythrough", Some("out"), 0.4).unwrap() - 1.0).abs() < 1e-12);
+        // ニュース速報 (video of PowerPoint for Windows): the new slide grows linearly from the middle, unwinding a turn of 400 degrees at a
+        // constant speed, its opacity `1 - (1 - u)^3`; the old slide is not drawn by the plan (it stands whole).
+        assert_eq!(progress_with("newsflash", None, 0.3), Some(0.3));
+        let TransitionPlan::Spin { scale, turn, opacity } = plan("newsflash", None, 0.25, 1.78) else { panic!() };
+        assert!((scale - 0.25).abs() < 1e-12 && (turn - 300.0).abs() < 1e-9 && (opacity - (1.0 - 0.75f64.powi(3))).abs() < 1e-12);
         // 立方体 from the right (`dir="l"`): the new slide comes in from the right and pushes the old one out to the left.
         assert_eq!(plan("cube", Some("l"), 0.5, 1.0), TransitionPlan::Turn3d { kind: Turn3dKind::Cube, motion: (-1.0, 0.0) });
         assert_eq!(flat_stand_in("cube", Some("l"), 0.5, 1.0), Some(TransitionPlan::Slide { from: (1.0, 0.0), old_to: (-1.0, 0.0), new_on_top: true }));
@@ -994,7 +1165,7 @@ mod tests {
 
     #[test]
     fn the_fitted_3d_effects_are_cards_and_sheets_with_a_flat_stand_in() {
-        for (e, kind) in [("switch", Turn3dKind::Switch), ("ferris", Turn3dKind::Ferris), ("fallOver", Turn3dKind::FallOver), ("pageCurlSingle", Turn3dKind::PageCurlSingle), ("peelOff", Turn3dKind::PeelOff), ("curtains", Turn3dKind::Curtains), ("wind", Turn3dKind::Wind), ("pageCurlDouble", Turn3dKind::PageCurlDouble), ("drape", Turn3dKind::Drape), ("airplane", Turn3dKind::Airplane), ("origami", Turn3dKind::Origami), ("ripple", Turn3dKind::Ripple)] {
+        for (e, kind) in [("switch", Turn3dKind::Switch), ("ferris", Turn3dKind::Ferris), ("fallOver", Turn3dKind::FallOver), ("pageCurlSingle", Turn3dKind::PageCurlSingle), ("peelOff", Turn3dKind::PeelOff), ("curtains", Turn3dKind::Curtains), ("wind", Turn3dKind::Wind), ("pageCurlDouble", Turn3dKind::PageCurlDouble), ("drape", Turn3dKind::Drape), ("airplane", Turn3dKind::Airplane), ("origami", Turn3dKind::Origami), ("crush", Turn3dKind::Crush), ("ripple", Turn3dKind::Ripple)] {
             assert!(matches!(plan(e, Some("r"), 0.5, 1.0), TransitionPlan::Turn3d { kind: k, .. } if k == kind), "{e}");
             assert!(flat_stand_in(e, Some("r"), 0.5, 1.0).is_some(), "{e}");
             // Linear in time (the tables are in video frames).
@@ -1025,6 +1196,12 @@ mod tests {
         assert!((progress("push", 0.5).unwrap() - 0.5).abs() < 0.02);
         assert_eq!(progress("wipe", 0.3), Some(0.3));
         assert_eq!(progress("fade", 0.3), Some(0.3));
+    }
+
+    #[test]
+    fn prestige_is_a_cloth_on_its_own_linear_time() {
+        assert_eq!(progress("prestige", 0.3), Some(0.3));
+        assert!(matches!(plan("prestige", None, 0.5, 1.78), TransitionPlan::Turn3d { kind: Turn3dKind::Prestige, .. }));
     }
 
     #[test]
@@ -1061,6 +1238,25 @@ mod tests {
         assert!(alpha_at("rd", 0.05, 0.05) > alpha_at("rd", 0.95, 0.95) + 0.5);
         assert!(alpha_at("ru", 0.05, 0.95) > alpha_at("ru", 0.95, 0.05) + 0.5);
         assert!(alpha_at("lu", 0.95, 0.95) > alpha_at("lu", 0.05, 0.05) + 0.5);
+    }
+
+    /// リビール: the old slide grows to the middle of the time and the new one shrinks to whole from it.
+    #[test]
+    fn reveal_zooms_the_old_slide_up_and_the_new_one_down() {
+        assert_eq!(reveal_scale(0.0), (1.0, 1.0 + REVEAL_ZOOM));
+        assert!((reveal_scale(0.25).0 - (1.0 + REVEAL_ZOOM / 2.0)).abs() < 1e-12);
+        assert!((reveal_scale(0.5).0 - (1.0 + REVEAL_ZOOM)).abs() < 1e-12 && (reveal_scale(0.5).1 - (1.0 + REVEAL_ZOOM)).abs() < 1e-12);
+        assert!((reveal_scale(0.75).1 - (1.0 + REVEAL_ZOOM / 2.0)).abs() < 1e-12);
+        assert_eq!(reveal_scale(1.0), (1.0 + REVEAL_ZOOM, 1.0));
+    }
+
+    /// ズーム out: the new slide keeps its size, each piece of the hole shows the part of the slide it lies over.
+    #[test]
+    fn the_hole_of_zoom_out_shows_the_slide_where_it_lies() {
+        let pieces = soft_masked_pieces(0.5);
+        assert!(pieces.iter().all(|(r, uv, _)| (r[0] - uv[0]).abs() < 1e-12 && (r[1] - uv[1]).abs() < 1e-12 && (r[2] - uv[2]).abs() < 1e-12 && (r[3] - uv[3]).abs() < 1e-12));
+        let alphas: Vec<f64> = soft_scaled_pieces(0.5).iter().map(|p| p.2).collect();
+        assert_eq!(alphas, pieces.iter().map(|p| p.2).collect::<Vec<_>>());
     }
 
     /// ズーム's slide has a soft edge: whole inside, half at its edge, nothing past a half band outside, the picture held to the slide.

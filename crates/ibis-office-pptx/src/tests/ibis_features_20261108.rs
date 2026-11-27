@@ -92,7 +92,8 @@ fn char_boxes(s: &mut Scenario) -> Vec<[f32; 4]> {
         let mut out = Vec::new();
         for p in list {
             let p = p.borrow();
-            for c in &p.chars {
+            // A space has no ink: a trailing space of a line may stand under the picture (it is not painted).
+            for c in p.chars.iter().filter(|c| c.ink.is_some()) {
                 let l = p.lines[c.line];
                 let corners = p.corners(c.x, l.top, c.advance, l.height);
                 let xs = corners.map(|c| c.0);
@@ -157,7 +158,7 @@ fn wrap_round_a_picture() {
     let rect = picture_rect(&mut s, picture);
     let square = painted(&mut s, text);
     s.screenshot("wrap-square");
-    assert!(square.iter().all(|c| !overlaps(*c, rect)), "no character is in the picture's rectangle");
+    assert!(square.iter().all(|c| !overlaps(*c, rect)), "no character is in the picture's rectangle: rect {rect:?}, inside {:?} of {} characters", square.iter().filter(|c| overlaps(**c, rect)).take(6).collect::<Vec<_>>(), square.len());
     assert!(square.iter().any(|c| c[1] >= rect[3] - 1.0), "the text goes on below the picture");
     let beside = square.iter().filter(|c| c[1] < rect[3] - 1.0 && c[3] > rect[1] + 1.0).count();
     assert!(beside > 0, "the lines beside the picture have text on its wide side");

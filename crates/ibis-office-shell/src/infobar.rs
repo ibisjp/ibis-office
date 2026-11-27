@@ -227,9 +227,9 @@ impl SlideEditor {
                         .child(crate::i18n::text(key))
                         // (Where the button is drawn, for the scenarios' clicks.)
                         .child(canvas(|_, _, _| (), move |bounds, _, _, _| {
-                            #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+                            #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))))]
                             let _ = bounds;
-                            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+                            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
                             crate::scenario::button_probe::record_bounds(id, bounds);
                         }).absolute().inset_0())
                         .on_click(cx.listener(move |this, _, window, cx| this.run_infobar_button(kind, action, window, cx)))

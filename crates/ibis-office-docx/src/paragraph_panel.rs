@@ -328,7 +328,15 @@ impl SlideEditor {
             return;
         }
         let commands = changes.into_iter().flat_map(|change| self.paragraph_format_commands(first, last, change)).collect::<Vec<_>>();
-        if commands.is_empty() || self.run_flow(commands, cx) {
+        if commands.is_empty() {
+            // Nothing was edited: say so, so that the button is not silent (#261).
+            if let Some(edit) = self.doc_state_mut().and_then(|s| s.paragraph_edit.as_mut()) {
+                edit.error = Some(crate::shell::i18n::text("docx.paragraph-panel.nothing-changed").into());
+            }
+            cx.notify();
+            return;
+        }
+        if self.run_flow(commands, cx) {
             let document = self.flow().unwrap().clone();
             if let Some(edit) = self.doc_state_mut().and_then(|s| s.paragraph_edit.as_mut()) {
                 edit.initial = (values, rule, indent_unit, edit.contextual_spacing, edit.widow_control, edit.suppress_line_numbers, edit.suppress_auto_hyphens);

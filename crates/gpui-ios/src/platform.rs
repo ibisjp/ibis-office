@@ -10,10 +10,10 @@ use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem, CursorStyle,
     DummyKeyboardMapper, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keymap, Keystroke, Menu,
-    MenuItem, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    MenuItem, Modifiers, 
     PathPromptOptions, PinchEvent, Pixels, Platform, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
-    ScrollDelta, ScrollWheelEvent, Task, ThermalState, TouchPhase, WindowAppearance,
+    Task, ThermalState, TouchEvent, TouchId, TouchPhase, WindowAppearance,
     WindowParams, point, px,
 };
 use gpui_wgpu::{CosmicTextSystem, GpuContext};
@@ -24,11 +24,10 @@ use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 const TAP_SLOP_PX: f32 = 8.0;
-const DOUBLE_TAP_MAX_DIST_PX: f32 = 24.0;
-const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(400);
+/// How many ticks after a tap the soft keyboard's show or hide may wait for the page's input handler to say it takes text.
+const KEYBOARD_CHECK_TICKS: u8 = 3;
 
 fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
     ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
@@ -55,14 +54,14 @@ struct PlatformCallbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum TouchState {
-    Idle,
-    Single {
-        start: (f32, f32),
-        last: (f32, f32),
-        panning: bool,
-    },
+/// What the platform keeps of the touches, to know a tap (for the soft keyboard).
+#[derive(Debug, Clone, Copy, Default)]
+struct TapState {
+    /// Fingers on the screen now.
+    active: u32,
+    start: (f32, f32),
+    /// The only finger has not moved out of the slop since it went down.
+    candidate: bool,
 }
 
 pub struct IosPlatform {
@@ -73,8 +72,13 @@ pub struct IosPlatform {
     display_state: Arc<Mutex<IosDisplayState>>,
     window: RefCell<Option<Rc<IosWindowInner>>>,
     callbacks: RefCell<PlatformCallbacks>,
-    touch_state: Cell<TouchState>,
-    last_tap: Cell<Option<(Instant, (f32, f32), usize)>>,
+    tap: Cell<TapState>,
+    /// A tap ended: whether the soft keyboard shows is decided on the next tick (the page has handled the tap by then).
+    /// Ticks left to decide it in (0: nothing to decide): the page's input handler is registered when the frame after the tap is painted, so the
+    /// answer is read after the frame, and asked again a few times before the keyboard is hidden.
+    keyboard_check: Cell<u8>,
+    /// The soft keyboard the window was last laid out with (K0064): the window is laid out again when it moves.
+    keyboard_seen: Cell<bridge::KeyboardInfo>,
 }
 
 impl IosPlatform {
@@ -100,9 +104,15 @@ impl IosPlatform {
             display_state,
             window: RefCell::new(None),
             callbacks: RefCell::new(PlatformCallbacks::default()),
-            touch_state: Cell::new(TouchState::Idle),
-            last_tap: Cell::new(None),
+            tap: Cell::new(TapState::default()),
+            keyboard_check: Cell::new(0),
+            keyboard_seen: Cell::new(bridge::KeyboardInfo::HIDDEN),
         }
+    }
+
+    /// A font file added by its path, mapped and not read into memory (K0066: Apple Color Emoji is 139 MB).
+    pub fn add_font_file(&self, path: &Path) -> Result<()> {
+        self.text_system.add_font_file(path)
     }
 
     pub fn resize(&self, logical_width: f32, logical_height: f32, scale_factor: f32) {
@@ -116,119 +126,50 @@ impl IosPlatform {
         }
     }
 
-    pub fn touch_began(&self, x: f32, y: f32) {
+    /// One touch of the screen (K0065): `id` tells the fingers apart, `phase` is 0 began, 1 moved, 2 ended, 3 cancelled. gpui's touch recognizer (taps,
+    /// pans, two fingers scrolling, their coasting) takes them as it does on the web; the platform only decides, for the soft keyboard, whether the
+    /// touch was a tap.
+    pub fn touch(&self, id: u64, phase: u8, x: f32, y: f32) {
         let Some(window) = self.window.borrow().clone() else {
             return;
         };
-        let pos = (x, y);
-        self.touch_state.set(TouchState::Single {
-            start: pos,
-            last: pos,
-            panning: false,
-        });
-        window.dispatch_input(PlatformInput::MouseMove(MouseMoveEvent {
-            position: point(px(x), px(y)),
-            pressed_button: None,
-            modifiers: Modifiers::default(),
-        }));
-        window.request_frame();
-    }
-
-    pub fn touch_moved(&self, x: f32, y: f32) {
-        let Some(window) = self.window.borrow().clone() else {
-            return;
+        let touch_phase = match phase {
+            0 => TouchPhase::Started,
+            1 => TouchPhase::Moved,
+            2 => TouchPhase::Ended,
+            _ => TouchPhase::Cancelled,
         };
-        let pos = (x, y);
-        if let TouchState::Single {
-            start,
-            last,
-            mut panning,
-        } = self.touch_state.get()
-        {
-            if !panning && distance(start, pos) >= TAP_SLOP_PX {
-                panning = true;
-                window.dispatch_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                    position: point(px(x), px(y)),
-                    delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
-                    modifiers: Modifiers::default(),
-                    touch_phase: TouchPhase::Started,
-                }));
+        let mut tap = self.tap.get();
+        match touch_phase {
+            TouchPhase::Started => {
+                // A second finger is never a tap.
+                tap.candidate = tap.active == 0;
+                if tap.active == 0 {
+                    tap.start = (x, y);
+                }
+                tap.active += 1;
             }
-            if panning {
-                let dx = pos.0 - last.0;
-                let dy = pos.1 - last.1;
-                window.dispatch_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                    position: point(px(x), px(y)),
-                    delta: ScrollDelta::Pixels(point(px(dx), px(dy))),
-                    modifiers: Modifiers::default(),
-                    touch_phase: TouchPhase::Moved,
-                }));
-                window.request_frame();
-            }
-            self.touch_state.set(TouchState::Single {
-                start,
-                last: pos,
-                panning,
-            });
-        }
-    }
-
-    pub fn touch_ended(&self, x: f32, y: f32, cancelled: bool) {
-        let Some(window) = self.window.borrow().clone() else {
-            return;
-        };
-        let pos = (x, y);
-        match self.touch_state.get() {
-            TouchState::Single { panning: true, .. } => {
-                window.dispatch_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
-                    position: point(px(x), px(y)),
-                    delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
-                    modifiers: Modifiers::default(),
-                    touch_phase: if cancelled {
-                        TouchPhase::Cancelled
-                    } else {
-                        TouchPhase::Ended
-                    },
-                }));
-            }
-            TouchState::Single { panning: false, .. } if !cancelled => {
-                let now = Instant::now();
-                let click_count = match self.last_tap.get() {
-                    Some((prev_t, prev_pos, prev_count))
-                        if now.duration_since(prev_t) <= DOUBLE_TAP_WINDOW
-                            && distance(prev_pos, pos) <= DOUBLE_TAP_MAX_DIST_PX =>
-                    {
-                        (prev_count % 3) + 1
-                    }
-                    _ => 1,
-                };
-                self.last_tap.set(Some((now, pos, click_count)));
-                let gpui_pos: Point<Pixels> = point(px(x), px(y));
-                window.dispatch_input(PlatformInput::MouseDown(MouseDownEvent {
-                    button: MouseButton::Left,
-                    position: gpui_pos,
-                    modifiers: Modifiers::default(),
-                    click_count,
-                    first_mouse: false,
-                }));
-                window.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
-                    position: gpui_pos,
-                    modifiers: Modifiers::default(),
-                    click_count,
-                }));
-                let accepts_text = window
-                    .with_input_handler(|h| h.query_accepts_text_input())
-                    .unwrap_or(false);
-                if accepts_text {
-                    bridge::show_keyboard();
-                } else {
-                    bridge::hide_keyboard();
+            TouchPhase::Moved => {
+                if tap.candidate && distance(tap.start, (x, y)) >= TAP_SLOP_PX {
+                    tap.candidate = false;
                 }
             }
-            _ => {}
+            _ => {
+                tap.active = tap.active.saturating_sub(1);
+                if tap.active == 0 && touch_phase == TouchPhase::Ended && tap.candidate {
+                    self.keyboard_check.set(KEYBOARD_CHECK_TICKS);
+                }
+                tap.candidate = false;
+            }
         }
-        self.touch_state.set(TouchState::Idle);
+        self.tap.set(tap);
+        window.dispatch_input(PlatformInput::Touch(TouchEvent {
+            id: TouchId(id),
+            phase: touch_phase,
+            position: point(px(x), px(y)),
+            predicted_position: None,
+            force: None,
+        }));
         window.request_frame();
     }
 
@@ -237,10 +178,7 @@ impl IosPlatform {
             return;
         };
         let touch_phase = match phase {
-            0 => {
-                self.touch_state.set(TouchState::Idle);
-                TouchPhase::Started
-            }
+            0 => TouchPhase::Started,
             1 => TouchPhase::Moved,
             2 => TouchPhase::Ended,
             _ => TouchPhase::Cancelled,
@@ -321,12 +259,49 @@ impl IosPlatform {
         }
     }
 
+    /// The soft keyboard moved: the window is laid out again (the shell reads `gpui_ios::keyboard()` as it lays out; K0064). The view
+    /// itself does not change its size: the keyboard covers its bottom and the shell leaves that part to it.
+    fn handle_keyboard(&self) {
+        let now = bridge::keyboard();
+        if now == self.keyboard_seen.get() {
+            return;
+        }
+        self.keyboard_seen.set(now);
+        if let Some(window) = self.window.borrow().clone() {
+            let (w, h, scale) = {
+                let state = self.display_state.lock();
+                (state.logical_width, state.logical_height, state.scale_factor)
+            };
+            window.notify_resize(w, h, scale);
+        }
+    }
+
     pub fn tick(&self) {
+        self.handle_keyboard();
         self.handle_ime_events();
         self.handle_open_paths();
         self.dispatcher.drain_main_tasks();
         if let Some(window) = self.window.borrow().clone() {
             window.dispatch_frame();
+        }
+        // After the frame: the tap has been handled and painted, so the page's input handler is the one of what was tapped.
+        let tries = self.keyboard_check.get();
+        if tries > 0
+            && let Some(window) = self.window.borrow().clone()
+        {
+            let asked = window.with_input_handler(|h| h.query_accepts_text_input());
+            let accepts_text = asked.unwrap_or(false);
+            if accepts_text {
+                self.keyboard_check.set(0);
+                bridge::show_keyboard();
+            } else if tries <= 1 {
+                self.keyboard_check.set(0);
+                bridge::hide_keyboard();
+            } else {
+                // Not yet (no handler, or the one of the frame before the tap): ask again after the next frame.
+                self.keyboard_check.set(tries - 1);
+                window.request_frame();
+            }
         }
     }
 }

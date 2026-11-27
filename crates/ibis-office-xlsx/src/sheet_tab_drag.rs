@@ -10,6 +10,7 @@
 //! the window) so that it is tested without a window.
 use ibis_doc_model::SlideId;
 use std::collections::HashMap;
+use gpui_kit::Task;
 
 /// How far the pointer must move after the press before the press becomes a drag (the same as the rows of tables).
 pub(super) const START_DISTANCE: f32 = 4.;
@@ -42,6 +43,11 @@ pub(crate) struct TabDrag {
     pub generation: usize,
     /// Where each tab was (from the strip's left, scroll not included) before the last move.
     pub starts: HashMap<SlideId, f32>,
+    /// A finger holds the tab (K0079: `active` is then the tab lifted by 500 ms, before it moves), whether it has moved on to carrying it, and the wait for 1000 ms,
+    /// when the tab's menu comes if it has not moved.
+    pub finger: bool,
+    pub carrying: bool,
+    pub hold: Option<Task<()>>,
 }
 
 impl TabDrag {
@@ -63,6 +69,9 @@ impl TabDrag {
             widths: tabs.iter().copied().collect(),
             generation: 0,
             starts: HashMap::new(),
+            finger: false,
+            carrying: false,
+            hold: None,
         }
     }
 

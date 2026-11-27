@@ -135,6 +135,25 @@ pub(crate) fn escape_attr(text: &str) -> String {
 /// `a:srgbClr` for `color`, with its opacity.
 pub(crate) fn color_xml(x: &Prefixes, color: Color) -> String {
     let a = &x.a;
+    // A colour that still follows the theme is written as the reference, with its transforms (a colour chosen directly is the RGB).
+    if let Some(theme) = color.theme_ref() {
+        let mut out = format!("<{a}schemeClr val=\"{}\"", theme.name.name());
+        let mods: Vec<_> = theme.mods().collect();
+        if mods.is_empty() {
+            out.push_str("/>");
+        } else {
+            out.push('>');
+            for m in mods {
+                if m.has_val() {
+                    out.push_str(&format!("<{a}{} val=\"{}\"/>", m.name(), m.val));
+                } else {
+                    out.push_str(&format!("<{a}{}/>", m.name()));
+                }
+            }
+            out.push_str(&format!("</{a}schemeClr>"));
+        }
+        return out;
+    }
     let rgb = format!("{:06X}", color.rgb.0 & 0xff_ffff);
     if color.alpha == 255 {
         format!("<{a}srgbClr val=\"{rgb}\"/>")
@@ -553,7 +572,7 @@ fn run_props_xml(x: &Prefixes, element: &str, body: &TextStyle, run: &ibis_doc_m
     if let Some((color, width)) = run.outline {
         write!(children, "<{a}ln w=\"{width}\"><{a}solidFill>{}</{a}solidFill></{a}ln>", color_xml(x, color)).unwrap();
     }
-    write!(children, "<{a}solidFill>{}</{a}solidFill>", color_xml(x, Color::opaque(style.color))).unwrap();
+    write!(children, "<{a}solidFill>{}</{a}solidFill>", color_xml(x, { let mut c = Color::opaque(style.color); c.theme = style.color_theme; c })).unwrap();
     if run.shadow.is_some() || run.glow.is_some() {
         write!(children, "<{a}effectLst>").unwrap();
         // The schema's order: the glow before the shadow.
@@ -676,7 +695,9 @@ fn paragraph_xml(x: &Prefixes, body: &TextStyle, p: &Paragraph, seed: u64, field
     match &p.bullet {
         Some(bullet) if bullet.picture.is_none() && !bullet.text.is_empty() => {
             if let Some(rgb) = bullet.color {
-                write!(children, "<{a}buClr>{}</{a}buClr>", color_xml(x, Color::opaque(rgb))).unwrap();
+                let mut c = Color::opaque(rgb);
+                c.theme = bullet.color_theme;
+                write!(children, "<{a}buClr>{}</{a}buClr>", color_xml(x, c)).unwrap();
             }
             if bullet.size != 100_000 {
                 write!(children, "<{a}buSzPct val=\"{}\"/>", bullet.size).unwrap();
@@ -1246,7 +1267,7 @@ fn picture_xml(x: &Prefixes, picture: &Picture, xfrm: &str, id: u32, shape: ibis
         write!(effects, "<{a}duotone>{}{}</{a}duotone>", color_xml(x, Color::opaque(dark)), color_xml(x, Color::opaque(light))).unwrap();
     }
     if let Some(color) = picture.clear {
-        write!(effects, "<{a}clrChange><{a}clrFrom>{}</{a}clrFrom><{a}clrTo>{}</{a}clrTo></{a}clrChange>", color_xml(x, Color::opaque(color)), color_xml(x, Color { rgb: color, alpha: 0 })).unwrap();
+        write!(effects, "<{a}clrChange><{a}clrFrom>{}</{a}clrFrom><{a}clrTo>{}</{a}clrTo></{a}clrChange>", color_xml(x, Color::opaque(color)), color_xml(x, Color { rgb: color, alpha: 0, theme: None })).unwrap();
     }
     if let Some((bright, contrast)) = picture.luminance {
         let mut attrs = String::new();
@@ -1296,7 +1317,8 @@ fn picture_xml(x: &Prefixes, picture: &Picture, xfrm: &str, id: u32, shape: ibis
     } else {
         format!("<{a}prstGeom prst=\"rect\"><{a}avLst/></{a}prstGeom>")
     };
-    let line = picture.stroke.as_ref().map(|s| line_xml(x, Some(s))).unwrap_or_default();
+    // A picture's line with no join element is round when read, so a round join is left out, as PowerPoint writes a zoom card's outline.
+    let line = picture.stroke.as_ref().map(|s| line_xml(x, Some(s)).replace(&format!("<{a}round/>"), "")).unwrap_or_default();
     let sp_effects = picture_effects_xml(x, picture)?;
     // A video or audio clip: `a:videoFile`/`a:audioFile` and `p14:media`,
     // clicked to play (`ppaction://media`), as PowerPoint writes them.

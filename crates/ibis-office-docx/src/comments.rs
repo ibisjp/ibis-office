@@ -31,8 +31,8 @@ fn comment_text(blocks: &[Block]) -> String {
 /// Calculate the render position `(page, y)` of the anchor of comment `comment_id`.
 pub(crate) fn comment_anchor_position(editor: &SlideEditor, doc: &FlowDocument, comment_id: u32) -> (usize, f32) {
     if let Some((from, _)) = flow_command::comment_range(doc, comment_id) {
-        let lines = editor.flow_lines();
-        for l in &lines {
+        let lines = editor.flow_lines_arc();
+        for l in lines.iter() {
             if l.para == from.para {
                 let min_off = l.stops.first().map_or(0, |s| s.0);
                 let max_off = l.stops.last().map_or(min_off, |s| s.0);
@@ -41,7 +41,7 @@ pub(crate) fn comment_anchor_position(editor: &SlideEditor, doc: &FlowDocument, 
                 }
             }
         }
-        for l in &lines {
+        for l in lines.iter() {
             if l.para == from.para {
                 return (l.page, l.y);
             }

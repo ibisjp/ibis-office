@@ -116,7 +116,7 @@ impl SlideEditor {
                     }
                     if self.is_pptx_snap_to_grid_enabled() {
                         let origin_p = origins.iter().find(|(o, _)| *o == id).map(|(_, f)| EmuPoint::new(f.x, f.y)).unwrap_or_else(|| EmuPoint::new(shape.frame.x, shape.frame.y));
-                        let (sdx, sdy) = interaction::snap_delta_to_grid(origin_p, dx, dy, interaction::GRID_INTERVAL);
+                        let (sdx, sdy) = self.grid_snap_delta(origin_p, dx, dy);
                         dx = sdx;
                         dy = sdy;
                     } else if self.is_pptx_snap_to_shape_enabled() || self.is_pptx_guides_enabled() {
@@ -139,8 +139,9 @@ impl SlideEditor {
                 let mut d_x = emu(current.x - start.x) as f64;
                 let mut d_y = emu(current.y - start.y) as f64;
                 if self.is_pptx_snap_to_grid_enabled() {
-                    d_x = interaction::snap_coord(d_x as i64, interaction::GRID_INTERVAL) as f64;
-                    d_y = interaction::snap_coord(d_y as i64, interaction::GRID_INTERVAL) as f64;
+                    let spacing = self.grid_spacing();
+                    d_x = interaction::snap_coord(d_x as i64, spacing.width) as f64;
+                    d_y = interaction::snap_coord(d_y as i64, spacing.height) as f64;
                 } else if self.is_pptx_guides_enabled() && *rotation == 0 {
                     // The edge being moved lies on a guide (the page's, its layout's or its master's) near it.
                     let (guide_xs, guide_ys) = self.guide_snap_targets();
@@ -163,6 +164,8 @@ impl SlideEditor {
         let layout = self.slide_layout();
         let content = self.workspace_content();
         let placing = self.pptx_tool() != Tool::Select;
+        let bounce_scroll = self.workspace_scroll.clone();
+        let (overscroll_x, overscroll_y) = (self.overscroll_x.clone(), self.overscroll_y.clone());
 
         div()
             .id("workspace")
@@ -368,16 +371,31 @@ impl SlideEditor {
                     cx.notify();
                 }
             }))
+            // The slide stretches past an end of the scroll and springs back, as `UIScrollView` does (K0065, `gpui-base`'s `ScrollBounce`, one for each axis).
             .child(
-                div()
-                    .id("workspace-scroll")
-                    .size_full()
-                    .overflow_scroll()
-                    .track_scroll(&self.workspace_scroll)
-                    .when_some(layout.zip(content), |d, (layout, content)| {
-                        let slide = self.render_edited_slide(layout.scale, content.slide_origin, cx);
-                        d.child(div().relative().flex_none().w(content.size.width).h(content.size.height).child(slide))
-                    }),
+                gpui_kit::base::ScrollBounce::new(
+                    "workspace-bounce-y",
+                    &bounce_scroll,
+                    gpui_kit::base::ScrollBounce::new(
+                        "workspace-bounce-x",
+                        &bounce_scroll,
+                        div()
+                            .id("workspace-scroll")
+                            .size_full()
+                            .overflow_scroll()
+                            .no_bounce()
+                            .track_scroll(&bounce_scroll)
+                            .when_some(layout.zip(content), |d, (layout, content)| {
+                                let slide = self.render_edited_slide(layout.scale, content.slide_origin, cx);
+                                d.child(div().relative().flex_none().w(content.size.width).h(content.size.height).child(slide))
+                            }),
+                    )
+                    .axis(Axis::Horizontal)
+                    .enabled(true).touch_only()
+                    .report_displacement(&overscroll_x),
+                )
+                .enabled(true).touch_only()
+                .report_displacement(&overscroll_y),
             )
             .children(self.render_loading(cx))
             .child(crate::shell::editor::wheel_zoom_listener(cx))
@@ -552,28 +570,31 @@ impl SlideEditor {
     fn render_gridlines(&self, size: ibis_doc_model::EmuSize, scale: f32) -> impl IntoElement {
         let w = size.width as f32 * scale;
         let h = size.height as f32 * scale;
-        let step = interaction::GRID_INTERVAL as f32 * scale;
+        let spacing = self.grid_spacing();
+        // Lines closer than 4 px would be a grey wash: every n-th line is drawn then.
+        let thin = |emu: i64| { let one = (emu.max(1) as f32 * scale).max(0.01); one * (4.0 / one).ceil().max(1.0) };
+        let (step_x, step_y) = (thin(spacing.width), thin(spacing.height));
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
                 let color = hsla(0.0, 0.0, 0.5, 0.18);
-                let mut x = step;
+                let mut x = step_x;
                 while x < w {
                     let p1 = bounds.origin + point(px(x), px(0.));
                     let p2 = bounds.origin + point(px(x), px(h));
                     if let Some(path) = polygon(&[p1, p2], Some(px(0.8)), false) {
                         window.paint_path(path, color);
                     }
-                    x += step;
+                    x += step_x;
                 }
-                let mut y = step;
+                let mut y = step_y;
                 while y < h {
                     let p1 = bounds.origin + point(px(0.), px(y));
                     let p2 = bounds.origin + point(px(w), px(y));
                     if let Some(path) = polygon(&[p1, p2], Some(px(0.8)), false) {
                         window.paint_path(path, color);
                     }
-                    y += step;
+                    y += step_y;
                 }
             },
         )
@@ -742,7 +763,7 @@ impl SlideEditor {
 
     pub(crate) fn active_alignment_guides(&self) -> Vec<interaction::AlignmentGuide> {
         let (Some(drag), Some(layout)) = (self.pptx_drag(), self.slide_layout()) else { return Vec::new() };
-        if !self.is_pptx_snap_to_shape_enabled() || self.is_pptx_snap_to_grid_enabled() {
+        if !self.is_pptx_snap_to_shape_enabled() || self.is_pptx_snap_to_grid_enabled() || !self.is_pptx_smart_guides_enabled() {
             return Vec::new();
         }
         let emu = |d: Pixels| layout.to_emu_len(d);
@@ -855,8 +876,8 @@ impl SlideEditor {
                 Drag::Place { tool: Tool::Line { kind, .. }, start, current, points } => {
                     let (mut a, mut b) = (to(*start), to(*current));
                     if self.is_pptx_snap_to_grid_enabled() {
-                        a = interaction::snap_point(a, interaction::GRID_INTERVAL);
-                        b = interaction::snap_point(b, interaction::GRID_INTERVAL);
+                        a = self.grid_snap_point(a);
+                        b = self.grid_snap_point(b);
                     }
                     match kind {
                         editing::LineKind::Freehand => {
@@ -901,8 +922,8 @@ impl SlideEditor {
                 Drag::Place { .. } if moved(start, current) => {
                     let (mut a, mut b) = (to(start), to(current));
                     if self.is_pptx_snap_to_grid_enabled() {
-                        a = interaction::snap_point(a, interaction::GRID_INTERVAL);
-                        b = interaction::snap_point(b, interaction::GRID_INTERVAL);
+                        a = self.grid_snap_point(a);
+                        b = self.grid_snap_point(b);
                     }
                     dashed.push(rect_pts(interaction::drawn_frame(a, b, self.shift_held())));
                 }
@@ -1597,15 +1618,15 @@ impl SlideEditor {
             Drag::Place { tool, points, .. } => {
                 let (mut a, mut b) = (layout.to_emu(start), layout.to_emu(current));
                 if self.is_pptx_snap_to_grid_enabled() {
-                    a = interaction::snap_point(a, interaction::GRID_INTERVAL);
-                    b = interaction::snap_point(b, interaction::GRID_INTERVAL);
+                    a = self.grid_snap_point(a);
+                    b = self.grid_snap_point(b);
                 }
                 let dragged = moved(start, current);
                 let id = self.document.ids().new_shape_id();
                 let shape = match *tool {
                     Tool::TextBox => {
                         let frame = if dragged { interaction::drawn_frame(a, b, false) } else { self.presentation().default_text_box_frame(a) };
-                        Shape::text_box(id, frame, "")
+                        self.presentation().object_defaults.apply_to_text_box(Shape::text_box(id, frame, ""))
                     }
                     Tool::Shape(preset) => {
                         let frame = if dragged { interaction::drawn_frame(a, b, shift) } else { EmuRect::new(a.x, a.y, CLICK_SHAPE, CLICK_SHAPE) };

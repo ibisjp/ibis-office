@@ -122,6 +122,8 @@ xlsx.group	Group
 xlsx.ungroup	Ungroup
 xlsx.collapse	Hide Detail
 xlsx.expand	Show Detail
+xlsx.outline-summary-below	Summary Rows Below Detail
+xlsx.outline-summary-right	Summary Columns to Right of Detail
 xlsx.conditional	Conditional Formatting
 xlsx.paste-skip-blanks	Skip Blanks
 xlsx.clear-all	Clear All
@@ -1020,7 +1022,7 @@ _xlsx.define-name	Define Name…
 _xlsx.protect-sheet	Protect Sheet…
 _xlsx.group-select-all	Select All Sheets
 _xlsx.group-ungroup	Ungroup Sheets
-_xlsx.group-title	[Group]
+_xlsx.group-title	- Group
 _xlsx.group-blocked	That command cannot be used on multiple selected sheets. Select a single sheet and then try the command again.
 _xlsx.the-number-in-this-cell-is-formatted-as-text	The number in this cell is formatted as text
 _xlsx.the-formula-in-this-cell-results-in-an-error	The formula in this cell results in an error
@@ -1902,6 +1904,13 @@ xlsx.links-banner.close	Dismiss
 xlsx.links-banner.updated	Updated the values of {count} link(s).
 xlsx.links-banner.partly	Updated {count} link(s). Files not found: {missing}
 xlsx.query-from-table	From Table/Range…
+xlsx.query-from-sqlite	From SQLite File
+query.sqlite-tables	Select a SQLite Table
+query.sqlite-no-tables	The SQLite file has no tables to import
+xlsx.query-from-avro	From Avro File
+xlsx.query-from-arrow-ipc	From Arrow IPC File
+xlsx.query-from-json-lines	From JSON Lines File
+xlsx.query-from-parquet	From Parquet File
 xlsx.query-blank	Blank Query…
 xlsx.queries	Queries & Connections
 query.no-data	Select a cell with data.
@@ -1949,6 +1958,7 @@ query.tab.combine	Combine
 query.op.promote	Use First Row as Headers
 query.op.demote	Use Headers as First Row
 query.op.change-type	Change Type
+query.op.change-type-locale	Change Type Using Locale
 query.op.select-columns	Choose Columns
 query.op.remove-columns	Remove Columns
 query.op.rename	Rename Column
@@ -2044,6 +2054,11 @@ query.field.take	Rows to keep (repeated)
 query.field.first-row	First row (1 is the top)
 query.field.parameter-name	Parameter name
 query.field.parameter-value	Current value
+query.parquet-pick-files	Select all Parquet files for this query
+query.parquet-file-count	{count} Parquet files selected
+query.parquet-columns	Select Parquet Columns
+query.parquet-unsupported	Unsupported
+query.parquet-select-column	Select at least one supported column.
 query.type.any	Any
 query.type.text	Text
 query.type.whole	Whole number
@@ -2597,6 +2612,8 @@ xlsx.fndesc.count	Counts the cells that hold numbers
 xlsx.fndesc.counta	Counts the cells that are not empty
 xlsx.fndesc.max	Finds the largest number
 xlsx.fndesc.min	Finds the smallest number
+xlsx.fndesc.ibis.fieldmatch	Compares two values as date, address, gender, name, kana readings, name with readings (name-with-kana), phone, postal code (postal), email, Japanese corporate number (corporate-number), Japanese individual number (mynumber), Japanese driver’s license number (drivers-license) or Japanese passport number or two-line MRZ (passport-jp). Returns 2 for a normalized match, 1 for a possible match, 0 for no match, or #N/A when comparison is unavailable. For addresses and names, the fourth argument can specify extra wildcard characters.
+xlsx.fndesc.ibis.recordmatch	Combines field match grades. A single range returns one result per row. Returns 0 if any field disagrees, 2 if all agree, 1 if review is needed, or #N/A if no field could be compared.
 xlsx.fndesc.if	Gives one value or another, by whether a condition holds
 xlsx.fndesc.iferror	Gives another value only when a formula ends in an error
 xlsx.fndesc.ifs	Tries several conditions in turn and gives the value of the first that holds
@@ -3006,6 +3023,8 @@ query.step-name.added-custom	Added Custom
 query.step-name.added-conditional-column	Added Conditional Column
 query.step-name.added-index	Added Index
 query.culture.zh-cn	Chinese (Simplified, China)
+query.culture.en-gb	English (United Kingdom)
+query.culture.th-th	Thai (Thailand)
 query.step-name.inserted-text-length	Inserted Text Length
 query.step-name.inserted-absolute-value	Inserted Absolute Value
 query.step-name.inserted-square-root	Inserted Square Root
@@ -3015,3 +3034,9 @@ query.m-error.syntax	Line {line}: The code cannot be read: {message}
 query.m-error.raised	{reason}: {message}
 query.m-error.limit	The code took too long to run or went too deep: {message}
 query.m-error.not-table	The result is not a table (it is a {type}).
+xlsx.query-from-json-array	From JSON File
+query.json-arrays	Select a JSON Array
+query.json-no-arrays	No JSON arrays to import
+xlsx.query-from-delimited	From CSV or TSV (Query)
+query.delimited-headers	Use First Row as Column Headers
+xlsx.query-from-parquet-folder	From Parquet Folder

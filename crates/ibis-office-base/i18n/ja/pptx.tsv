@@ -760,6 +760,7 @@ pptx.theme-colors	テーマの色とフォント…
 pptx.theme.palette	テーマの配色
 pptx.theme.palette-selected	選択したスライドにテーマの配色を適用
 pptx.theme.palette.office	Office（標準）
+pptx.theme.palette.office_2013_2022	Office 2013 - 2022
 pptx.theme.palette.aspect	アスペクト
 pptx.theme.palette.apex	アペックス
 pptx.theme.palette.slate	スレート
@@ -1957,6 +1958,7 @@ pptx.photo-album.frame.center-shadow	中心の影
 pptx.photo-album.frame.soft-edge	ソフト エッジ
 pptx.photo-album.create	作成
 pptx.photo-album.create-success	フォト アルバムを作成しました
+pptx.photo-album.no-pictures	先にアルバムに写真を追加してください。
 pptx.animation.chart-build	グラフの動作
 pptx.animation.chart.whole	1 つのオブジェクトとして
 pptx.animation.chart.series	系列別
@@ -2715,3 +2717,12 @@ pptx.html-no-slides	書き出せるスライドがありません（すべて非
 pptx.html-too-large	図が大きすぎるため、Web ページに書き出せません
 pptx.html-exported	{path} に書き出しました
 pptx.html-export-failed	書き出せませんでした: {error}
+pptx.grid-guides.settings	グリッドとガイドの設定…
+pptx.grid-guides-panel.snap-to-grid	オブジェクトをグリッド線に合わせる
+pptx.grid-guides-panel.snap-to-objects	オブジェクトを他のオブジェクトに合わせる
+pptx.grid-guides-panel.spacing-cm	グリッドの間隔
+pptx.grid-guides-panel.show-grid	グリッド線を表示
+pptx.grid-guides-panel.show-guides	ガイドを表示
+pptx.grid-guides-panel.smart-guides	図形がそろったときにスマート ガイドを表示
+pptx.grid-guides-panel.spacing-error	グリッドの間隔は 0.03 cm から 14.2 cm の数値で入力してください
+pptx.links.enter-address	リンクのアドレスを入力するか、このドキュメント内の場所を選んでください。

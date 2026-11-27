@@ -111,7 +111,7 @@ impl SlideEditor {
         }
     }
 
-    /// A rejected cell entry waited on the message: it is cancelled when the message is dismissed.
+    /// A rejected cell entry waited on the message: it is cancelled when the message is dismissed (the cell keeps its old value).
     pub(crate) fn xlsx_panel_message_dismissed(&mut self, cx: &mut Context<Self>) {
         let rejected = self.sheet_state_mut().and_then(|s| {
             s.validation_message_bounds = None;
@@ -121,12 +121,8 @@ impl SlideEditor {
             self.cancel_cell_edit(cx);
             self.status = None;
             self.set_cell(column, row);
-            if self.current_sheet().is_some_and(|(_, s)|s.cell(row,column).is_some_and(|c|c.formula.is_some() || !c.value.is_empty())) {
-                self.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
-                    sheet: self.current_slide,
-                    edits: vec![ibis_doc_model::CellEdit {row,column,input:ibis_doc_model::CellInput::Clear}],
-                })],cx);
-            }
+            // The entry was never committed: the cell keeps the value it had (Excel, "Stop" alert: Cancel returns to the old value; #284 N3 and N5,
+            // tasks/doc/requests/2026-11-24-284-ignore-blank-result.md).
         }
     }
 

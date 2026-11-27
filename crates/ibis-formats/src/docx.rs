@@ -151,6 +151,12 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
         };
         f.font = pick("ascii", "asciiTheme");
         f.east_asian_font = pick("eastAsia", "eastAsiaTheme");
+        // The theme references are kept beside the typefaces they resolve to (K0086: a style that refers to the theme is saved as it was).
+        let theme_ref = |themed: &str| wattr(fonts, themed).map(str::to_string);
+        f.font_theme = theme_ref("asciiTheme");
+        f.east_asian_font_theme = theme_ref("eastAsiaTheme");
+        f.h_ansi_font_theme = theme_ref("hAnsiTheme");
+        f.cs_font_theme = theme_ref("cstheme").or_else(|| theme_ref("csTheme"));
         // The hAnsi typeface (Word's own templates: ascii ＭＳ 明朝, hAnsi Courier New): the bullets in the geometric shapes are drawn in it.
         f.h_ansi_font = pick("hAnsi", "hAnsiTheme");
         f.cs_font = pick("cs", "cstheme").or_else(|| pick("cs", "csTheme"));
@@ -387,7 +393,8 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
     f.keep_lines = toggle(ppr, "keepLines");
     if let Some(frame) = child(ppr, "framePr") {
         // A frame placed by `xAlign` (a page number in a footer): the paragraph is aligned so in the text area.
-        if f.align.is_none() {
+        // (A frame with a width of its own is placed by it on the page, `frame` below, and its text is not aligned by it.)
+        if f.align.is_none() && twips(frame, "w").is_none_or(|w| w <= 0) {
             f.align = match wattr(frame, "xAlign") {
                 Some("center") => Some(FlowAlign::Center),
                 Some("right") => Some(FlowAlign::Right),
@@ -405,6 +412,52 @@ fn para_format(ppr: Node, theme: &Theme) -> ParaFormat {
             f.drop_cap = Some(Some(DropCap { location, lines, space }));
         } else {
             f.framed = Some(true);
+            // A frame goes where it says on the page, the text round it as `w:wrap` says. One without a width is as wide as its widest line (Word's PDF: 15 characters of 10.5 pt,
+            // the text beside it from 72 + 157.5), and the old reading of a frame (the paragraph in place) stays for one that says neither where it goes nor how high it is
+            // (the page number of a footer).
+            let width = twips(frame, "w").filter(|w| *w > 0);
+            let placed = ["x", "y", "xAlign", "yAlign", "h"].iter().any(|a| wattr(frame, a).is_some());
+            if let Some(width) = width.or(if placed { Some(0) } else { None }) {
+                use ibis_doc_model::{TableAlign, TableAnchor};
+                let anchor = |name: &str| match wattr(frame, name) {
+                    Some("margin") => TableAnchor::Margin,
+                    Some("page") => TableAnchor::Page,
+                    _ => TableAnchor::Text,
+                };
+                let spec = |name: &str| match wattr(frame, name) {
+                    Some("left" | "top") => Some(TableAlign::Start),
+                    Some("center") => Some(TableAlign::Center),
+                    Some("right" | "bottom") => Some(TableAlign::End),
+                    Some("inside") => Some(TableAlign::Inside),
+                    Some("outside") => Some(TableAlign::Outside),
+                    _ => None,
+                };
+                let tw = |name: &str| twips(frame, name).unwrap_or(0);
+                let (h_space, v_space) = (tw("hSpace"), tw("vSpace"));
+                f.frame = Some(ibis_doc_model::TextFrame {
+                    width,
+                    float: ibis_doc_model::TableFloat {
+                        horz_anchor: anchor("hAnchor"),
+                        vert_anchor: anchor("vAnchor"),
+                        x: tw("x"),
+                        x_align: spec("xAlign"),
+                        y: tw("y"),
+                        y_align: spec("yAlign"),
+                        distance: [h_space, h_space, v_space, v_space],
+                    },
+                    wrap: match wattr(frame, "wrap") {
+                        Some("notBeside") => ibis_doc_model::FrameWrap::NotBeside,
+                        Some("none") => ibis_doc_model::FrameWrap::None,
+                        _ => ibis_doc_model::FrameWrap::Around,
+                    },
+                    height: twips(frame, "h").filter(|h| *h > 0).unwrap_or(0),
+                    height_rule: match (wattr(frame, "hRule"), twips(frame, "h").is_some_and(|h| h > 0)) {
+                        (Some("exact"), _) => ibis_doc_model::FrameHeightRule::Exact,
+                        (Some("auto"), _) | (None, false) => ibis_doc_model::FrameHeightRule::Auto,
+                        _ => ibis_doc_model::FrameHeightRule::AtLeast,
+                    },
+                });
+            }
         }
     }
     if let Some(tabs) = child(ppr, "tabs") {
@@ -2004,6 +2057,14 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
     }
 
     fn drawings(&mut self, drawing: Node, rels: &Rels) -> Vec<FlowRunKind> {
+        // 原稿用紙設定's drawing in a header is the document's `genko`, drawn by the layout (not a shape of the text).
+        if is_genko_drawing(drawing) {
+            return Vec::new();
+        }
+        let smartart = self.smartart(drawing, rels);
+        if !smartart.is_empty() {
+            return smartart;
+        }
         if let Some(holder) = elements(drawing).find(|n| matches!(n.tag_name().name(), "inline" | "anchor"))
             && let Some(wgp) = holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "wgp")
         {
@@ -2023,6 +2084,80 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             return Some(chart);
         }
         self.shape(drawing, rels)
+    }
+
+    /// A SmartArt graphic (`a:graphicData` of the diagram URI): its frame (a placeholder of the graphic, which the page's pictures and its text are made from) and the
+    /// shapes of the drawing Word keeps of it (`dsp:drawing`, the part its data part names by `dsp:dataModelExt`), read by the reader of a presentation's shapes and
+    /// floating where the frame is. The frame and the shapes are a group in `shape_groups` (the frame first). A graphic without a drawing (written by another program)
+    /// is not read.
+    fn smartart(&mut self, drawing: Node, rels: &Rels) -> Vec<FlowRunKind> {
+        let Some(holder) = elements(drawing).find(|n| matches!(n.tag_name().name(), "inline" | "anchor")) else { return Vec::new() };
+        let Some(data) = holder.descendants().find(|n| n.is_element() && n.tag_name().name() == "graphicData") else { return Vec::new() };
+        if !attr(data, "uri").is_some_and(|u| u.ends_with("/diagram")) {
+            return Vec::new();
+        }
+        let Some(ids) = data.descendants().find(|n| n.is_element() && n.tag_name().name() == "relIds") else { return Vec::new() };
+        let Some(rid) = ids.attributes().find(|a| a.name() == "dm" && a.namespace().is_some()).map(|a| a.value()) else { return Vec::new() };
+        let Some(data_part) = rels.get(rid).filter(|r| !r.external).map(|r| r.target.clone()) else { return Vec::new() };
+        let Ok(data_xml) = self.package.read_xml(&data_part) else { return Vec::new() };
+        let Some(drawing_rid) = data_xml.split("dataModelExt").nth(1).and_then(|s| s.split("relId=\"").nth(1)).and_then(|s| s.split('"').next()) else { return Vec::new() };
+        let Some(drawing_part) = rels.get(drawing_rid).filter(|r| !r.external && r.kind.ends_with("/diagramDrawing")).map(|r| r.target.clone()) else { return Vec::new() };
+
+        let extent = child(holder, "extent");
+        let cx = extent.and_then(|e| e.attribute("cx")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
+        let cy = extent.and_then(|e| e.attribute("cy")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
+        let anchor = Self::parse_floating_anchor(holder);
+        let (x, y) = anchor.as_ref().map_or((0, 0), |f| (f.offset_x, f.offset_y));
+        let doc_pr = child(holder, "docPr");
+        let frame_id = doc_pr.and_then(|d| attr(d, "id")).and_then(|v| v.parse::<u64>().ok()).map(ShapeId).unwrap_or_else(|| ShapeId(self.new_id() as u64));
+        let members = crate::reader::read_diagram_drawing(self.package, self.theme, self.theme_node, self.presentation, &drawing_part, (x, y));
+        if members.is_empty() {
+            return Vec::new();
+        }
+        // The drawing's shapes lie where the frame does: over it, from its corner, as the frame's anchor places it (an inline graphic: from its paragraph's).
+        let base = anchor.clone().unwrap_or_else(|| ibis_doc_model::FloatingAnchor {
+            relative_h: "column".to_string(),
+            relative_v: "paragraph".to_string(),
+            wrap: "none".to_string(),
+            allow_overlap: true,
+            layout_in_cell: true,
+            relative_height: ibis_doc_model::FloatingAnchor::DEFAULT_RELATIVE_HEIGHT,
+            ..Default::default()
+        });
+        let mut runs = vec![FlowRunKind::Shape(Box::new(Shape { id: frame_id, frame: EmuRect::new(x, y, cx, cy), rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Placeholder(ibis_doc_model::Placeholder::Diagram), floating: anchor.clone() }))];
+        let mut children = vec![ibis_doc_model::GroupMember::Shape(frame_id)];
+        for mut member in members {
+            member.id = ShapeId(self.new_id() as u64);
+            let mut floating = base.clone();
+            // A frame placed by an alignment (`wp:align`): its shapes follow it, from its corner, wherever the alignment puts it (the layout adds the offset to the frame's place).
+            floating.offset_x = member.frame.x;
+            floating.offset_y = member.frame.y;
+            if anchor.as_ref().is_some_and(|a| a.align_h.is_some() || a.align_v.is_some()) {
+                floating.frame_size = Some((cx, cy));
+                if floating.align_h.is_some() {
+                    floating.offset_x -= x;
+                }
+                if floating.align_v.is_some() {
+                    floating.offset_y -= y;
+                }
+            } else {
+                floating.align_h = None;
+                floating.align_v = None;
+            }
+            floating.wrap = "none".to_string();
+            floating.allow_overlap = true;
+            member.floating = Some(floating);
+            children.push(ibis_doc_model::GroupMember::Shape(member.id));
+            runs.push(FlowRunKind::Shape(Box::new(member)));
+        }
+        self.shape_groups.push(ibis_doc_model::ShapeGroup {
+            has_unmodelled_children: false,
+            soft_edge: None,
+            native_id: frame_id.0.to_string(),
+            name: doc_pr.and_then(|d| attr(d, "name")).unwrap_or("").to_string(),
+            children,
+        });
+        runs
     }
 
     /// A WordprocessingGroup (`wpg:wgp`, DOCX-FLOAT-016): its child shapes (`wps:wsp`, `wps:cxnSp`)
@@ -2317,6 +2452,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         relative_height,
         wrap_polygon,
         glue: Default::default(),
+        frame_size: None,
     })
 }
 
@@ -2611,7 +2747,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             let second = fill_el.and_then(|f| f.attribute("color2")).and_then(vml_color);
             let kind = fill_el.and_then(|f| f.attribute("type")).unwrap_or("");
             let alpha = fill_el.and_then(|f| f.attribute("opacity")).map_or(255, vml_opacity);
-            let with = |rgb: ibis_doc_model::Rgb| ibis_doc_model::Color { rgb, alpha };
+            let with = |rgb: ibis_doc_model::Rgb| ibis_doc_model::Color { rgb, alpha, theme: None };
             let stop = |position: u32, rgb| ibis_doc_model::GradientStop { position, color: with(rgb) };
             match (kind.starts_with("gradient"), second) {
                 (true, Some(second)) if kind == "gradientRadial" => Fill::Path { path: ibis_doc_model::GradientPath::Rect, focus: [50_000; 4], stops: vec![stop(0, second), stop(100_000, first)] },
@@ -2740,7 +2876,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
             let alpha = sh.attribute("opacity").map_or(255, vml_opacity);
             let distance = ((ox as f64).hypot(oy as f64)).round() as i64;
             let direction = ((oy as f64).atan2(ox as f64).to_degrees().rem_euclid(360.0) * 60_000.0) as i32;
-            Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb, alpha }, 0, distance, direction))
+            Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb, alpha, theme: None }, 0, distance, direction))
         });
         let rotation = style.get("rotation").and_then(|r| r.trim().parse::<f64>().ok()).map_or(0, |d| (d.rem_euclid(360.0) * 60_000.0) as i32);
         if let Some(f) = style.get("flip") {
@@ -2933,8 +3069,8 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 ),
                 // Word 2010's text effects (`w14:textOutline`, `w14:shadow`, `w14:glow`).
                 outline: f.effects.as_ref().and_then(|e| e.as_ref()).and_then(|e| e.outline).map(|(w, c)| (ibis_doc_model::Color::opaque(c), w)),
-                shadow: f.effects.as_ref().and_then(|e| e.as_ref()).and_then(|e| e.shadow).map(|s| ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: s.color, alpha: s.alpha }, s.blur, s.distance, s.direction)),
-                glow: f.effects.as_ref().and_then(|e| e.as_ref()).and_then(|e| e.glow).map(|(r, c, a)| (ibis_doc_model::Color { rgb: c, alpha: a }, r)),
+                shadow: f.effects.as_ref().and_then(|e| e.as_ref()).and_then(|e| e.shadow).map(|s| ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: s.color, alpha: s.alpha, theme: None }, s.blur, s.distance, s.direction)),
+                glow: f.effects.as_ref().and_then(|e| e.as_ref()).and_then(|e| e.glow).map(|(r, c, a)| (ibis_doc_model::Color { rgb: c, alpha: a, theme: None }, r)),
                 ..Default::default()
             }
         };
@@ -3308,7 +3444,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 self.blocks(tc, &tc_path, rels, style_id.as_deref(), &mut blocks);
                 cells.push(FlowCell { id: cell_id, own_borders, span, merge, blocks, borders: [None; 4], shading, shading_fill, shading_pattern, shading_color, anchor, margins: cell_margin, diagonals, style_fill: None, direction: tc_pr.and_then(|p| wval(p, "textDirection")).map_or_default(ibis_doc_model::CellDirection::from_name), no_wrap: tc_pr.and_then(|p| toggle(p, "noWrap")).unwrap_or(false) });
             }
-            rows.push(FlowRow { id: row_id, height, header, cant_split, cells });
+            rows.push(FlowRow { id: row_id, height, header, cant_split, cells, ..FlowRow::default() });
         }
         // The model's indent is to the table's left edge, as Word 2013 and
         // later read `w:tblInd`; before, it is to the first cell's text.
@@ -4036,6 +4172,12 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
     if section_watermarks.iter().all(|(_, w)| *w == watermark) {
         section_watermarks.clear();
     }
+    let genko = {
+        let mut parts: Vec<&String> = reader.sources.section_parts.iter().filter(|((_, k), _)| !PartKind::ALL[*k].is_footer()).map(|(_, p)| p).collect();
+        parts.sort();
+        parts.dedup();
+        parts.into_iter().find_map(|part| package.read_xml(part).ok().and_then(|xml| parse(part, &xml).ok().and_then(|d| genko_in(d.root_element()))))
+    };
     let linked: [bool; 6] = std::array::from_fn(|k| last_parts[k].is_none());
     reader.sources.header_part = reader.sources.section_parts.get(&(0, PartKind::Header.index())).cloned();
     reader.sources.footer_part = reader.sources.section_parts.get(&(0, PartKind::Footer.index())).cloned();
@@ -4229,11 +4371,15 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
             view_mode = ibis_doc_model::DocumentViewMode::from_wval(v);
         }
         let own = |name: &str| sect.is_some_and(|s| child(s, name).is_some());
+        // The notes' number format and place (`w:numFmt`, `w:pos`) of settings.xml's `w:footnotePr` and `w:endnotePr` are not Word's: its PDFs of a document with them there
+        // only (`v-p-kanji-set`, `v-p-beneath-set`, #188) show Arabic numbers at the page's side, as with none; it reads them from the section's properties.
         if let Some(n) = child(settings.root_element(), "footnotePr").filter(|_| !own("footnotePr")) {
-            page.footnotes = note_settings(n, page.footnotes);
+            let base = page.footnotes;
+            page.footnotes = ibis_doc_model::NoteSettings { format: base.format, position: base.position, ..note_settings(n, base) };
         }
         if let Some(n) = child(settings.root_element(), "endnotePr").filter(|_| !own("endnotePr")) {
-            page.endnotes = note_settings(n, page.endnotes);
+            let base = page.endnotes;
+            page.endnotes = ibis_doc_model::NoteSettings { format: base.format, position: base.position, ..note_settings(n, base) };
         }
         if let Some(vars) = child(settings.root_element(), "docVars") {
             for v in children(vars, "docVar") {
@@ -4302,6 +4448,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         styles: Arc::new(styles),
         id_floor,
         watermark,
+        genko,
         section_watermarks,
         page_color,
         paragraph_spacing_preset: None,
@@ -4324,6 +4471,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         split_pg_break_and_para_mark,
         compat_mode,
         theme_font_lang,
+        theme_fonts: theme_doc.as_ref().map(|_| theme.font_names()),
         update_fields,
         note_separators,
         mail_merge_type,
@@ -5177,6 +5325,24 @@ pub(crate) fn vml_color(value: &str) -> Option<ibis_doc_model::Rgb> {
         _ => return None,
     };
     Some(ibis_doc_model::Rgb(n))
+}
+
+/// Whether a `w:drawing` is Word's 原稿用紙設定 (a `wp:docPr` named `Genko:…`).
+fn is_genko_drawing(drawing: Node) -> bool {
+    drawing.descendants().any(|n| n.is_element() && n.tag_name().name() == "docPr" && n.attribute("name").is_some_and(|name| name.starts_with("Genko:")))
+}
+
+/// Word's 原稿用紙設定 in a header: the drawing named `Genko:<paper>:<chars>:<lines>:<L|P>:<style>::` and its line colour.
+pub(crate) fn genko_in(root: Node) -> Option<ibis_doc_model::GenkoPaper> {
+    let drawing = root.descendants().find(|n| n.is_element() && n.tag_name().name() == "drawing" && is_genko_drawing(*n))?;
+    let name = drawing.descendants().find(|n| n.is_element() && n.tag_name().name() == "docPr")?.attribute("name")?;
+    let color = drawing
+        .descendants()
+        .filter(|n| n.is_element() && n.tag_name().name() == "ln")
+        .find_map(|ln| ln.descendants().find(|c| c.is_element() && c.tag_name().name() == "srgbClr").and_then(|c| c.attribute("val")))
+        .and_then(|v| u32::from_str_radix(v, 16).ok())
+        .map_or(ibis_doc_model::GenkoPaper::DEFAULT_COLOR, ibis_doc_model::Rgb);
+    ibis_doc_model::GenkoPaper::from_name(name, color)
 }
 
 /// Word's text watermark in a header (`v:shape` `PowerPlusWaterMarkObject…`

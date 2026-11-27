@@ -1,25 +1,57 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! What depends on the culture, as Microsoft 365 Excel's Power Query gave it (Japanese install, `Culture.Current` = ja-JP; the values are
-//! those of `tasks/doc/requests/2026-11-17-k0039-m-semantics-result.md`, sections 6 and 8): how numbers, dates, times and durations are
-//! written as text, the names of the days and months, and how a text is read as a number or a date. Only `ja-JP` (the default) and
-//! `en-US` are known; another culture is an error, not a guess.
-use crate::error::MError;
-use crate::value::{civil_from_days, days_from_civil};
+//! What depends on the culture, as Microsoft 365 Excel's Power Query on Windows gave it (`Culture.Current` = ja-JP; the values are those of
+//! `tasks/doc/requests/2026-11-17-k0039-m-semantics-result.md`, sections 6 and 8, and of the seven-culture table of
+//! `2026-11-20-k0039-locales-result.tsv`, copied to `tests/data/` and run by `tests_locales.rs`): how numbers, dates, times and durations are
+//! written as text, the names of the days and months, and how a text is read as a number or a date. The data of a culture is in
+//! `culture_data.rs` (ja-JP, en-US, zh-CN, de-DE, fr-FR, en-GB, th-TH and the invariant culture); a name that is not one of them is the
+//! current culture, as in Excel.
+use crate::culture_data::{self as data, Data, DateOrder};
+use crate::value::days_from_civil;
 
+/// A culture of the ones this interpreter holds the data of (the seven Excel was measured in, and the invariant culture).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Culture {
     Ja,
     En,
+    Zh,
+    De,
+    Fr,
+    EnGb,
+    Th,
+    Invariant,
 }
 
 impl Culture {
-    pub fn parse(name: &str) -> Result<Culture, MError> {
-        match name {
-            "ja-JP" | "ja" => Ok(Culture::Ja),
-            "en-US" | "en" => Ok(Culture::En),
-            other => Err(MError::unsupported(&format!("the culture {other}"), 0)),
+    /// The culture of a name, as Excel's Power Query reads it: any case, `-` or `_` between the language and the country (`en_US` is en-US),
+    /// the empty name is the invariant culture. A name it does not know is `None`: the call then uses the current culture (Excel does not
+    /// refuse `xx-XX` or `zz`; it gives the result of ja-JP, the current culture of the measurement).
+    pub fn parse(name: &str) -> Option<Culture> {
+        let n = name.replace('_', "-").to_ascii_lowercase();
+        Some(match n.as_str() {
+            "" => Culture::Invariant,
+            "ja-jp" | "ja" => Culture::Ja,
+            "en-us" | "en" => Culture::En,
+            "zh-cn" => Culture::Zh,
+            "de-de" => Culture::De,
+            "fr-fr" => Culture::Fr,
+            "en-gb" => Culture::EnGb,
+            "th-th" => Culture::Th,
+            _ => return None,
+        })
+    }
+
+    pub fn data(self) -> &'static Data {
+        match self {
+            Culture::Ja => &data::JA,
+            Culture::En => &data::EN,
+            Culture::Zh => &data::ZH,
+            Culture::De => &data::DE,
+            Culture::Fr => &data::FR,
+            Culture::EnGb => &data::GB,
+            Culture::Th => &data::TH,
+            Culture::Invariant => &data::INVARIANT,
         }
     }
 }
@@ -64,87 +96,102 @@ pub fn number_text(n: f64) -> String {
     format!("{sign}{body}")
 }
 
-/// A number read from text: blanks around are allowed, a sign, digits with `,` as the group mark, `.` as the point and an exponent. `1.234,5`,
-/// `0x10`, `-`, full-width digits and the empty text are not numbers (the same in ja-JP and en-US).
-pub fn parse_number(s: &str) -> Option<f64> {
-    let t = s.trim();
-    if t.is_empty() {
-        return None;
+/// `number_text` with the culture's decimal separator (`Text.From(1234.5, "de-DE")` is `1234,5`).
+pub fn number_text_in(n: f64, c: Culture) -> String {
+    let t = number_text(n);
+    match c.data().decimal {
+        "." => t,
+        d => t.replace('.', d),
     }
-    let (sign, rest) = match t.as_bytes()[0] {
-        b'+' => (1.0, &t[1..]),
-        b'-' => (-1.0, &t[1..]),
+}
+
+/// A number read from text in the culture: blanks around are allowed, a sign, digits, the culture's group mark between digits of the integer
+/// part (its places are not checked: `1234,5` is 12345 in ja-JP), its decimal mark, an exponent, and a `%` at the end (the number divided by
+/// 100: `12,5%` is 1.25 in ja-JP, 0.125 in de-DE). Another group mark (`1 234,5` with U+00A0), full-width digits, `0x10`, `-` and the empty text
+/// are not numbers. As Excel read them in the seven cultures (`tests/data/k0039-locales-result.tsv`, sections 3 and 5).
+pub fn parse_number_in(s: &str, c: Culture) -> Option<f64> {
+    let d = c.data();
+    let t = s.trim();
+    let (t, percent) = match t.strip_suffix('%') {
+        Some(rest) => (rest.trim_end(), true),
+        None => (t, false),
+    };
+    let (sign, rest) = match t.chars().next()? {
+        '+' => (1.0, &t[1..]),
+        '-' => (-1.0, &t[1..]),
         _ => (1.0, t),
     };
-    if rest.is_empty() || !rest.bytes().all(|c| c.is_ascii_digit() || matches!(c, b',' | b'.' | b'e' | b'E' | b'+' | b'-')) {
-        return None;
-    }
-    // `,` only between digits of the integer part.
-    let (int_part, tail) = match rest.find(['.', 'e', 'E']) {
-        Some(i) => rest.split_at(i),
-        None => (rest, ""),
+    let (decimal, group) = (d.decimal.chars().next()?, d.group.chars().next()?);
+    // The mantissa and the exponent.
+    let (mantissa, exp) = match rest.find(['e', 'E']) {
+        Some(i) => (&rest[..i], Some(&rest[i + 1..])),
+        None => (rest, None),
     };
-    if int_part.is_empty() && !tail.starts_with('.') {
-        return None;
-    }
-    if int_part.contains(',') {
-        let groups: Vec<&str> = int_part.split(',').collect();
-        if groups[0].is_empty() || groups[0].len() > 3 || groups[1..].iter().any(|g| g.len() != 3) {
+    let (int_part, frac_part) = match mantissa.find(decimal) {
+        Some(i) => (&mantissa[..i], Some(&mantissa[i + decimal.len_utf8()..])),
+        None => (mantissa, None),
+    };
+    let ic: Vec<char> = int_part.chars().collect();
+    for (i, &ch) in ic.iter().enumerate() {
+        let ok = ch.is_ascii_digit() || (ch == group && i > 0 && i + 1 < ic.len() && ic[i - 1].is_ascii_digit() && ic[i + 1].is_ascii_digit());
+        if !ok {
             return None;
         }
     }
-    let clean: String = format!("{}{tail}", int_part.replace(',', ""));
-    if clean.contains(',') {
+    if let Some(f) = frac_part {
+        if !f.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+    }
+    if int_part.is_empty() && frac_part.is_none_or(str::is_empty) {
         return None;
     }
-    clean.parse::<f64>().ok().map(|v| sign * v)
+    let mut clean: String = int_part.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    if let Some(f) = frac_part {
+        clean.push('.');
+        clean.push_str(f);
+    }
+    if let Some(e) = exp {
+        let digits = e.strip_prefix(['+', '-']).unwrap_or(e);
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        clean.push('e');
+        clean.push_str(e);
+    }
+    let v = clean.parse::<f64>().ok()?;
+    Some(sign * if percent { v / 100.0 } else { v })
+}
+
+/// `parse_number_in` in ja-JP.
+pub fn parse_number(s: &str) -> Option<f64> {
+    parse_number_in(s, Culture::Ja)
 }
 
 pub const DAY_NAMES_JA: [&str; 7] = ["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"];
 pub const DAY_NAMES_EN: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTHS_EN: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+/// The full name of a day (0 = Sunday) in the culture.
 pub fn day_name(dow: usize, c: Culture) -> String {
-    match c {
-        Culture::Ja => DAY_NAMES_JA[dow % 7].to_string(),
-        Culture::En => DAY_NAMES_EN[dow % 7].to_string(),
-    }
+    c.data().days[dow % 7].to_string()
 }
 
+/// The full name of a month (1 to 12) in the culture.
 pub fn month_name(m: i64, c: Culture) -> String {
-    match c {
-        Culture::Ja => format!("{m}月"),
-        Culture::En => MONTHS_EN[((m - 1).rem_euclid(12)) as usize].to_string(),
-    }
+    c.data().months[((m - 1).rem_euclid(12)) as usize].to_string()
 }
 
-fn hms(secs: f64) -> (i64, i64, i64) {
-    let t = secs.floor() as i64;
-    (t / 3600, t % 3600 / 60, t % 60)
-}
-
+/// The text of a date, a time, a datetime as `Text.From` writes them: the culture's short date, short time and short date with long time.
 pub fn date_text(day: i64, c: Culture) -> String {
-    let (y, m, d) = civil_from_days(day);
-    match c {
-        Culture::Ja => format!("{y}/{m:02}/{d:02}"),
-        Culture::En => format!("{m}/{d}/{y}"),
-    }
+    crate::format::format_standard(day, 0.0, 'd', c)
 }
 
 pub fn time_text(secs: f64, c: Culture) -> String {
-    let (h, mi, _) = hms(secs);
-    match c {
-        Culture::Ja => format!("{h}:{mi:02}"),
-        Culture::En => format!("{}:{mi:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" }),
-    }
+    crate::format::format_standard(0, secs, 't', c)
 }
 
 pub fn datetime_text(day: i64, secs: f64, c: Culture) -> String {
-    let (h, mi, s) = hms(secs);
-    match c {
-        Culture::Ja => format!("{} {h}:{mi:02}:{s:02}", date_text(day, c)),
-        Culture::En => format!("{} {}:{mi:02}:{s:02} {}", date_text(day, c), if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" }),
-    }
+    crate::format::format_standard(day, secs, 'G', c)
 }
 
 /// `[-][d.]hh:mm:ss[.fffffff]`.
@@ -168,72 +215,160 @@ pub fn duration_text(secs: f64) -> String {
     out
 }
 
-fn month_of(word: &str) -> Option<i64> {
+const EN_MONTHS: [&str; 12] = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/// The month a word names: the culture's own names (full or abbreviated, the abbreviation's `.` left off), and always the English ones
+/// (full, three letters, `Sept`): `17 November 2026` is read in every culture, `17 novembre 2026` only in fr-FR (as Excel read them).
+fn month_of(word: &str, c: Culture) -> Option<i64> {
     let w = word.to_lowercase();
-    MONTHS_EN.iter().position(|m| {
+    let own = c.data();
+    let find = |names: &[&str; 12], abbr: bool| names.iter().position(|m| {
         let m = m.to_lowercase();
-        m == w || (w.len() == 3 && m.starts_with(&w)) || (w == "sept" && m == "september")
-    }).map(|i| i as i64 + 1)
+        let m = if abbr { m.trim_end_matches('.') } else { m.as_str() };
+        !m.is_empty() && m == w
+    });
+    find(&own.months, false)
+        .or_else(|| find(&own.months_abbr, true))
+        .or_else(|| EN_MONTHS.iter().position(|m| *m == w || (w.len() == 3 && m.starts_with(&w)) || (w == "sept" && *m == "september")))
+        .map(|i| i as i64 + 1)
 }
 
 fn valid(y: i64, m: i64, d: i64) -> Option<i64> {
     ((1..=9999).contains(&y) && (1..=12).contains(&m) && d >= 1 && d <= crate::builtin::days_in_month(y, m)).then(|| days_from_civil(y, m, d))
 }
 
-/// Runs of digits, of letters, and single other characters.
-fn pieces(s: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+#[derive(PartialEq, Debug)]
+enum Tok {
+    Num(String),
+    Word(String),
+    Other(char),
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphabetic() || matches!(c, '\u{0300}'..='\u{036F}' | '\u{0E31}'..='\u{0E3A}' | '\u{0E47}'..='\u{0E4E}')
+}
+
+/// Runs of digits, runs of letters (with the combining marks of the Thai names), and single other characters.
+fn tokens(s: &str) -> Vec<Tok> {
+    let mut out: Vec<Tok> = Vec::new();
     for c in s.chars() {
-        let kind = if c.is_ascii_digit() { 1 } else if c.is_alphabetic() { 2 } else { 0 };
         match out.last_mut() {
-            Some(last) if kind != 0 && last.chars().next().is_some_and(|f| (f.is_ascii_digit() && kind == 1) || (f.is_alphabetic() && kind == 2)) => last.push(c),
-            _ => out.push(c.to_string()),
+            Some(Tok::Num(n)) if c.is_ascii_digit() => n.push(c),
+            Some(Tok::Word(w)) if is_word_char(c) => w.push(c),
+            _ if c.is_ascii_digit() => out.push(Tok::Num(c.to_string())),
+            _ if is_word_char(c) => out.push(Tok::Word(c.to_string())),
+            _ => out.push(Tok::Other(c)),
         }
     }
     out
 }
 
-/// A date from text. Read: `2026-11-17`, `2026/11/17`, `11/17/2026` (month first in both cultures; `17/11/2026` is not a date),
-/// `2026年11月17日`, `20261117`, `Nov 17, 2026`, `17-Nov-2026`. A text with a time is not a date (`Date.FromText("2026-11-17 13:05:09")` fails).
-pub fn parse_date(s: &str) -> Option<i64> {
+/// A year as written: four digits are the year of the culture's calendar as they are; one or two digits are in the 100 years that end at the
+/// culture's `TwoDigitYearMax`; the Thai calendar's year is the Gregorian year + 543. `literal`: the year is Gregorian as written.
+fn year_of(text: &str, c: Culture, literal: bool) -> Option<i64> {
+    let y: i64 = text.parse().ok()?;
+    if text.len() > 4 {
+        return None;
+    }
+    let d = c.data();
+    let y = if text.len() <= 2 {
+        let top = d.two_digit_year_max;
+        let full = top / 100 * 100 + y;
+        if full > top { full - 100 } else { full }
+    } else {
+        y
+    };
+    Some(if d.buddhist && !literal { y - 543 } else { y })
+}
+
+/// A date read from text. `date_target`: the target is a date (`Date.FromText`), not a datetime: then `yyyy-MM-dd` is the Gregorian year as
+/// written even in th-TH (`2569-11-17` is year 2569 for a date; for a datetime every year is the Thai calendar's, and `2026-11-17` is 1483).
+///
+/// Read, as Excel read them in the seven cultures (`tests/data/k0039-locales-result.tsv`, section 4): `yyyy-MM-dd` and `yyyy/MM/dd` in every
+/// culture; the numbers `a/b/c` (also with `-` or `.`) in the culture's order (`DateOrder`: ja-JP, zh-CN year first, or month first when the
+/// year has four digits; en-US month first; de-DE, fr-FR, en-GB, th-TH day first); `2026年11月17日`; a day, a month name and a year
+/// (`17 November 2026`, `17-Nov-2026`), a month name, a day and a year (`Nov 17, 2026`) with the names of the culture and the English ones;
+/// `20261117`. Full-width digits and a text with a time are not dates.
+pub fn parse_date_in(s: &str, c: Culture, date_target: bool) -> Option<i64> {
     let t = s.trim();
-    let p = pieces(t);
-    let num = |i: usize| -> Option<i64> { p.get(i)?.parse().ok() };
-    let sep = |i: usize, c: &str| p.get(i).is_some_and(|x| x == c);
-    match p.len() {
-        1 if t.len() == 8 && t.bytes().all(|c| c.is_ascii_digit()) => valid(t[..4].parse().ok()?, t[4..6].parse().ok()?, t[6..].parse().ok()?),
-        5 if (sep(1, "-") && sep(3, "-") || sep(1, "/") && sep(3, "/")) && p[0].len() == 4 => valid(num(0)?, num(2)?, num(4)?),
-        5 if sep(1, "/") && sep(3, "/") && p[4].len() == 4 => valid(num(4)?, num(0)?, num(2)?),
-        6 if sep(1, "年") && sep(3, "月") && sep(5, "日") => valid(num(0)?, num(2)?, num(4)?),
-        5 if sep(1, "-") && sep(3, "-") && p[0].len() <= 2 && p[4].len() == 4 => valid(num(4)?, month_of(&p[2])?, num(0)?),
-        // `年` `月` `日` are letters, so the Japanese form is 6 pieces (digits 年 digits 月 digits 日).
-        _ => {
-            // `Nov 17, 2026`: word, blank, digits, comma, blank, digits.
-            let q: Vec<&String> = p.iter().filter(|x| x.as_str() != " ").collect();
-            if q.len() == 4 && q[2].as_str() == "," {
-                return valid(q[3].parse().ok()?, month_of(q[0])?, q[1].parse().ok()?);
-            }
-            None
+    if t.len() == 8 && t.bytes().all(|b| b.is_ascii_digit()) {
+        return valid(t[..4].parse().ok()?, t[4..6].parse().ok()?, t[6..].parse().ok()?);
+    }
+    let p = tokens(t);
+    let num = |i: usize| -> Option<&str> {
+        match p.get(i)? {
+            Tok::Num(n) => Some(n.as_str()),
+            _ => None,
         }
+    };
+    let other = |i: usize| -> Option<char> {
+        match p.get(i)? {
+            Tok::Other(c) => Some(*c),
+            _ => None,
+        }
+    };
+    // 2026年11月17日
+    if p.len() == 6 && other(1).is_none() && matches!(&p[1], Tok::Word(w) if w == "年") && matches!(&p[3], Tok::Word(w) if w == "月") && matches!(&p[5], Tok::Word(w) if w == "日") {
+        return valid(year_of(num(0)?, c, false)?, num(2)?.parse().ok()?, num(4)?.parse().ok()?);
+    }
+    // a/b/c
+    if let (5, Some(a), Some(b), Some(d), Some(sep)) = (p.len(), num(0), num(2), num(4), other(1)) {
+        if !matches!(sep, '/' | '-' | '.') || other(3) != Some(sep) {
+            return None;
+        }
+        let order = c.data().date_order;
+        let n = |x: &str| x.parse::<i64>().ok();
+        return if a.len() == 4 {
+            valid(year_of(a, c, date_target && sep == '-')?, n(b)?, n(d)?)
+        } else {
+            match order {
+                DateOrder::YearFirst if d.len() <= 2 => valid(year_of(a, c, false)?, n(b)?, n(d)?),
+                DateOrder::YearFirst if d.len() == 4 => valid(year_of(d, c, false)?, n(a)?, n(b)?),
+                DateOrder::YearFirst => None,
+                DateOrder::MonthFirst => valid(year_of(d, c, false)?, n(a)?, n(b)?),
+                DateOrder::DayFirst => valid(year_of(d, c, false)?, n(b)?, n(a)?),
+            }
+        };
+    }
+    // With a month's name: the blanks, commas, dots and dashes between the words and numbers are dropped.
+    let q: Vec<&Tok> = p.iter().filter(|x| !matches!(x, Tok::Other(' ' | ',' | '.' | '-'))).collect();
+    match q.as_slice() {
+        [Tok::Num(d), Tok::Word(m), Tok::Num(y)] => valid(year_of(y, c, false)?, month_of(m, c)?, d.parse().ok()?),
+        [Tok::Word(m), Tok::Num(d), Tok::Num(y)] => valid(year_of(y, c, false)?, month_of(m, c)?, d.parse().ok()?),
+        _ => None,
     }
 }
 
-/// A datetime from text: a date as `parse_date` reads it, alone, or followed by `T` or a blank and `h:mm[:ss[.f]]`.
-pub fn parse_datetime(s: &str) -> Option<(i64, f64)> {
+/// A date from text, for a date (see `parse_date_in`), in ja-JP.
+pub fn parse_date(s: &str) -> Option<i64> {
+    parse_date_in(s, Culture::Ja, true)
+}
+
+/// A datetime from text: a date as `parse_date_in` reads it, alone, or followed by `T` or a blank and a time as `parse_time` reads it with no
+/// offset (`2026-11-17 13:05:09`, `17.11.2026 13:05:09` in de-DE, `11/17/2026 1:05:09 PM` in ja-JP and en-US).
+pub fn parse_datetime_in(s: &str, c: Culture) -> Option<(i64, f64)> {
     let t = s.trim();
-    if let Some(d) = parse_date(t) {
+    if let Some(d) = parse_date_in(t, c, false) {
         return Some((d, 0.0));
     }
-    let (date, time) = t.split_once(['T', ' '])?;
-    let d = parse_date(date)?;
-    let mut parts = time.trim().split(':');
-    let h: f64 = parts.next()?.parse().ok()?;
-    let m: f64 = parts.next().map(|x| x.parse().ok()).unwrap_or(Some(0.0))?;
-    let sec: f64 = parts.next().map(|x| x.parse().ok()).unwrap_or(Some(0.0))?;
-    if parts.next().is_some() || !(0.0..24.0).contains(&h) || !(0.0..60.0).contains(&m) || !(0.0..60.0).contains(&sec) {
-        return None;
+    for (at, ch) in t.char_indices() {
+        if ch != 'T' && ch != ' ' {
+            continue;
+        }
+        let (left, right) = (&t[..at], t[at + 1..].trim());
+        if right.contains('+') || right.contains('-') || right.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        if let (Some(d), Some(secs)) = (parse_date_in(left, c, false), parse_time(right, c)) {
+            return Some((d, secs));
+        }
     }
-    Some((d, h * 3600.0 + m * 60.0 + sec))
+    None
+}
+
+/// `parse_datetime_in` in ja-JP.
+pub fn parse_datetime(s: &str) -> Option<(i64, f64)> {
+    parse_datetime_in(s, Culture::Ja)
 }
 
 /// Rounds half to even after scaling by a power of ten (the way Excel's `Number.Round` was measured: 2.675 → 2.68 and 1.005 → 1.00 come
@@ -290,19 +425,24 @@ pub fn simple_lower(c: char) -> char {
 }
 
 /// A time of day from text (seconds in the day): `13:05:09`, `1:05 PM` (also `13:05:09 PM`: the PM of a 24-hour time changes nothing),
-/// `13:05`, `13:05:09.5`, `13:5:9`, `1305`, `13時05分09秒`, blanks around, an offset (`+09:00`, dropped); `午後 1:05`, `1:05:09 午後` only in
-/// ja-JP. A time past 23:59:59 and a leading `T` are not times.
+/// `13:05`, `13:05:09.5`, `13:5:9`, `1305`, `13時05分09秒`, blanks around, an offset (`+09:00`, dropped); `午後 1:05`, `1:05:09 午後` with the culture's own designators (ja-JP 午前 午後, zh-CN 上午 下午). A time past 23:59:59 and a leading `T` are not times.
 pub fn parse_time(s: &str, c: Culture) -> Option<f64> {
     let mut t = s.trim().to_string();
     let mut pm = false;
     let mut am = false;
-    for (word, is_pm) in [("PM", true), ("pm", true), ("AM", false), ("am", false), ("午後", true), ("午前", false)] {
-        let japanese = word == "午後" || word == "午前";
-        if japanese && c != Culture::Ja {
-            continue;
-        }
-        if t.contains(word) {
+    // The culture's own designators (午前 午後 in ja-JP, 上午 下午 in zh-CN; de-DE and fr-FR have none) and always the English AM and PM in
+    // any case (`1:05 pm`).
+    let own = c.data();
+    for (word, is_pm) in [(own.pm, true), (own.am, false)] {
+        if !word.is_empty() && word != "AM" && word != "PM" && t.contains(word) {
             t = t.replace(word, " ");
+            if is_pm { pm = true } else { am = true }
+        }
+    }
+    for (word, is_pm) in [("PM", true), ("AM", false)] {
+        let upper = t.to_ascii_uppercase();
+        if let Some(at) = upper.find(word) {
+            t.replace_range(at..at + 2, " ");
             if is_pm { pm = true } else { am = true }
         }
     }

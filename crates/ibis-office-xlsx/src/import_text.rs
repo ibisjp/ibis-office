@@ -12,10 +12,14 @@ use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use gpui_kit::component::input::{InputState,InputEvent};
 use gpui_kit::component::{Sizable as _, h_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use ibis_calc::input::{DateOrder, Typed, parse_date_in_order, parse_imported};
 use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, SheetCommand, SlideId, StyleChange};
 use ibis_formats::csv::{ImportOptions, TextEncoding};
+use crate::import_delimited::{delimited_records, read_delimited_bytes};
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use crate::import_delimited::delimited_table;
 use crate::ext::*;
 
 /// How a column is read.
@@ -61,7 +65,7 @@ impl ColumnType {
     }
 }
 
-const ENCODINGS: [(TextEncoding, &str); 4] = [(TextEncoding::Auto, "_shell.auto"), (TextEncoding::Utf8, "UTF-8"), (TextEncoding::ShiftJis, "Shift_JIS"), (TextEncoding::Utf16, "UTF-16")];
+pub(crate) const ENCODINGS: [(TextEncoding, &str); 4] = [(TextEncoding::Auto, "_shell.auto"), (TextEncoding::Utf8, "UTF-8"), (TextEncoding::ShiftJis, "Shift_JIS"), (TextEncoding::Utf16, "UTF-16")];
 const DELIMITERS: [(Option<char>, &str); 5] = [(None, "_shell.auto"), (Some(','), "fix.text-columns.comma"), (Some('\t'), "fix.text-columns.tab"), (Some(';'), "fix.text-columns.semicolon"), (Some(' '), "fix.text-columns.space")];
 
 pub struct ImportTextPanel {
@@ -72,6 +76,8 @@ pub struct ImportTextPanel {
     pub data: Option<Vec<u8>>,
     pub(crate) encoding: TextEncoding,
     pub(crate) delimiter: Option<char>,
+    query: bool,
+    headers: bool,
     /// The row to start from (1 for the first).
     pub(crate) start_row: Entity<InputState>,
     /// How each column of the file is read (past the list: 標準).
@@ -163,6 +169,15 @@ impl SlideEditor {
         self.pick_import_text_file(window, cx);
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) fn open_delimited_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_import_text_panel(window, cx);
+        if let Some(panel) = self.wb_mut().panels.import_text.as_mut() {
+            panel.query = true;
+        }
+        self.pick_import_text_file(window, cx);
+    }
+
     /// The panel, with no file yet.
     pub fn show_import_text_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
@@ -183,6 +198,8 @@ impl SlideEditor {
             data: None,
             encoding: TextEncoding::Auto,
             delimiter: None,
+            query: false,
+            headers: true,
             start_row: input("1".into(), "1", window, cx),
             columns: Vec::new(),
             destination: input(ibis_doc_model::cell_name(column, row), "A1", window, cx),
@@ -216,7 +233,9 @@ impl SlideEditor {
 
     fn load_import_text_path(&mut self,path:std::path::PathBuf,w:&mut Window,cx:&mut Context<Self>){
         if let Some(p)=self.wb_mut().panels.import_text.as_mut(){p.file_path.update(cx,|i,cx|i.set_value(path.to_string_lossy().into_owned(),w,cx));}
-        match std::fs::read(&path){
+        let for_query = self.sheet_state().and_then(|state| state.panels.import_text.as_ref()).is_some_and(|panel| panel.query);
+        let result = if for_query { read_delimited_bytes(&path) } else { std::fs::read(&path).map_err(|error| error.to_string()) };
+        match result {
             Ok(data)=>{let name=path.file_name().map(|n|n.to_string_lossy().into_owned()).unwrap_or_default();self.set_import_text_data(name,data,cx);},
             Err(error)=>self.import_text_message(error.to_string(),cx),
         }
@@ -279,6 +298,20 @@ impl SlideEditor {
         let Some(data) = p.data.as_ref() else {
             return self.import_text_message(crate::shell::i18n::text("_xlsx.choose-a-file-to-load").into(), cx);
         };
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if p.query {
+            use ibis_doc_model::query::Source;
+            let options = p.options(cx);
+            let encoding = ENCODINGS.iter().find(|(encoding, _)| *encoding == options.encoding)
+                .map(|(_, id)| *id).unwrap_or("_shell.auto");
+            let definition = Source::Delimited {
+                name: p.name.clone().unwrap_or_default(), encoding: encoding.into(),
+                delimiter: options.delimiter, start_row: options.start_row, headers: p.headers,
+            };
+            let source = delimited_table(data, &options, p.headers);
+            self.finish_external_query(definition, source, None, false, window, cx);
+            return;
+        }
         let imported = match ibis_formats::csv::import(data, &p.options(cx)) {
             Ok(i) => i,
             Err(e) => return self.import_text_message(e.to_string(), cx),
@@ -349,9 +382,15 @@ impl SlideEditor {
     pub fn import_text_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let preview: Vec<Vec<String>> = {
             let p = self.sheet_state()?.panels.import_text.as_ref()?;
-            match p.data.as_ref().map(|d| ibis_formats::csv::import(d, &p.options(cx))) {
+            let options = p.options(cx);
+            if p.query {
+                p.data.as_ref().and_then(|data| ibis_formats::csv::decode_as(data, options.encoding).ok())
+                    .map_or_else(Vec::new, |text| delimited_records(&text, &options).take(6).collect())
+            } else {
+            match p.data.as_ref().map(|d| ibis_formats::csv::import(d, &options)) {
                 Some(Ok(i)) => i.rows.into_iter().take(6).collect(),
                 _ => Vec::new(),
+            }
             }
         };
         let p = self.sheet_state()?.panels.import_text.as_ref()?;
@@ -401,9 +440,18 @@ impl SlideEditor {
             .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("_shell.file"),crate::shell::chrome::text_field(&p.file_path).full_width().path_picker("import-text-pick",crate::shell::chrome::PathMode::File,&["csv","tsv","txt"],cx,|e,path,w,cx|e.load_import_text_path(path,w,cx))))
             .child(crate::shell::chrome::dropdown_row(encoding_label,mark("import-text-encoding",dropdown("import-text-encoding",crate::shell::i18n::text(encoding),encoding_choices).into_any_element())))
             .child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("query.field.separator"),mark("import-text-delimiter",dropdown("import-text-delimiter",crate::shell::i18n::text(delimiter),delimiter_choices).into_any_element())))
-            .child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("fix.series.type"),mark("import-text-fixed",dropdown("import-text-fixed",crate::shell::i18n::text(if p.fixed{"fix.text-columns.fixed-width"}else{"fix.text-columns.delimiters"}),mode_choices).into_any_element())))
+            .when(!p.query, |body| body.child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("fix.series.type"),mark("import-text-fixed",dropdown("import-text-fixed",crate::shell::i18n::text(if p.fixed{"fix.text-columns.fixed-width"}else{"fix.text-columns.delimiters"}),mode_choices).into_any_element()))))
             .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("_xlsx.start-at-row"),crate::shell::chrome::text_field(&p.start_row).spinner("import-text-start-row",crate::shell::chrome::SpinnerSpec::new(1.).range(1.,1_048_576.).integer_only(),cx,|_,_,_,cx|cx.notify())))
-            .child(crate::shell::i18n::text("_xlsx.column-data-format-click-to-change"));
+            ;
+        if p.query {
+            body = body.child(gpui_kit::component::checkbox::Checkbox::new("query-delimited-headers")
+                .label(crate::shell::i18n::text("query.delimited-headers")).checked(p.headers)
+                .on_change(cx.listener(|this, checked, _, cx| {
+                    if let Some(panel) = this.wb_mut().panels.import_text.as_mut() { panel.headers = *checked; }
+                    cx.notify();
+                })));
+        } else {
+        body = body.child(crate::shell::i18n::text("_xlsx.column-data-format-click-to-change"));
         let shown = preview.iter().map(Vec::len).max().unwrap_or(0).min(8);
         let mut types = h_flex().gap_1().flex_wrap();
         for i in 0..shown {
@@ -440,6 +488,7 @@ impl SlideEditor {
         ));
         if !p.new_sheet {
             body = body.child(crate::shell::i18n::text("fix.text-columns.destination")).child(mark("destination", super::range_field::local_range_field(&p.destination,"import-text-destination",true,cx).into_any_element()));
+        }
         }
         body = body.child(crate::shell::i18n::text("fix.text-columns.preview"));
         // Synthetic spreadsheet headings preserve the first CSV record as data.

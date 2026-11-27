@@ -429,6 +429,13 @@ fn write_body_properties(doc: &mut XmlDocument, body: NodeId, old: &TextBody, ne
     Ok(())
 }
 
+/// The colour of a style's text: the theme reference it follows, if it still does.
+fn text_colour(style: &TextStyle) -> ibis_doc_model::Color {
+    let mut c = ibis_doc_model::Color::opaque(style.color);
+    c.theme = style.color_theme;
+    c
+}
+
 /// `a:rPr` for a look, every format written out.
 fn run_props(x: &Prefixes, look: &Look, text: &str) -> String {
     let a = &x.a;
@@ -462,7 +469,7 @@ fn run_props(x: &Prefixes, look: &Look, text: &str) -> String {
     if let Some((color, width)) = look.outline {
         out.push_str(&format!("<{a}ln w=\"{width}\"><{a}solidFill>{}</{a}solidFill></{a}ln>", new::color_xml(x, color)));
     }
-    out.push_str(&format!("<{a}solidFill>{}</{a}solidFill>", new::color_xml(x, ibis_doc_model::Color::opaque(s.color))));
+    out.push_str(&format!("<{a}solidFill>{}</{a}solidFill>", new::color_xml(x, text_colour(s))));
     if let Some(list) = effect_list_xml(x, look.shadow, look.glow) {
         out.push_str(&list);
     }
@@ -619,11 +626,11 @@ fn write_run_format(doc: &mut XmlDocument, node: NodeId, x: &Prefixes, have: &Lo
             insert_ordered(doc, rpr, element);
         }
     }
-    if h.color != w.color {
+    if h.color != w.color || h.color_theme != w.color_theme {
         for c in doc.elements(rpr).filter(|&c| rpr_rank(doc.local_name(c)) == 1).collect::<Vec<_>>() {
             doc.detach(c);
         }
-        let fill = x.import(doc, &format!("<{a}solidFill>{}</{a}solidFill>", new::color_xml(x, ibis_doc_model::Color::opaque(w.color)), a = x.a))?;
+        let fill = x.import(doc, &format!("<{a}solidFill>{}</{a}solidFill>", new::color_xml(x, text_colour(w)), a = x.a))?;
         insert_ordered(doc, rpr, fill);
     }
     // ハイパーリンク.
@@ -777,7 +784,11 @@ fn write_paragraph_format(doc: &mut XmlDocument, p: NodeId, x: &Prefixes, have: 
             Some(b) => {
                 // Its colour and size, written out (the list style may set others).
                 let color = match b.color {
-                    Some(rgb) => format!("<{a}buClr>{}</{a}buClr>", new::color_xml(x, ibis_doc_model::Color::opaque(rgb))),
+                    Some(rgb) => {
+                        let mut c = ibis_doc_model::Color::opaque(rgb);
+                        c.theme = b.color_theme;
+                        format!("<{a}buClr>{}</{a}buClr>", new::color_xml(x, c))
+                    }
                     None => format!("<{a}buClrTx/>"),
                 };
                 replace_ppr(doc, ppr, x, &["buClr", "buClrTx"], Some(color))?;

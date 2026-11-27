@@ -204,6 +204,92 @@ pub fn csv_font() -> Option<ibis_formats::csv::CsvFont> {
     Some(ibis_formats::csv::CsvFont { name: name.unwrap_or_else(|| ibis_formats::csv::DEFAULT_FONT.to_string()), size_pt: csv_cell_pt() })
 }
 
+/// 編集記号 (GitHub issue #262): the marks a document window always shows, as Word's オプション > 表示 > 常に画面に表示する編集記号 lists them. Each is
+/// kept as `1` or `0` under `docx.marks.<name>`; the third is the default when the key is absent (the marks are shown at first: the
+/// paragraph mark is what tells where a paragraph ends; 隠し文字 is not, as in Word, because it changes what the page shows).
+pub const DOCX_MARKS: [(&str, &str, bool); 7] = [
+    ("docx.marks.tabs", "docx.view.marks.tabs", true),
+    ("docx.marks.spaces", "docx.view.marks.spaces", true),
+    ("docx.marks.paragraph", "docx.view.marks.paragraph", true),
+    ("docx.marks.line-breaks", "docx.view.marks.line-breaks", true),
+    ("docx.marks.hidden-text", "docx.view.marks.hidden", false),
+    ("docx.marks.optional-hyphens", "docx.view.marks.optional-hyphens", true),
+    ("docx.marks.anchors", "docx.view.marks.anchors", true),
+];
+
+/// Whether the mark `key` (one of [`DOCX_MARKS`]) is always shown.
+pub fn docx_mark_shown(key: &str) -> bool {
+    let default = DOCX_MARKS.iter().find(|(k, _, _)| *k == key).is_some_and(|(_, _, d)| *d);
+    match crate::settings::get(key).as_deref() {
+        Some("1") => true,
+        Some("0") => false,
+        _ => default,
+    }
+}
+
+/// How many times the marks' settings were changed here: the document windows read their marks again when it is not the number they
+/// last saw (`docx_marks_generation`).
+static DOCX_MARKS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The marks' settings were changed (the dialog does this itself): the document windows read them again.
+pub fn note_docx_marks_changed() {
+    DOCX_MARKS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The number of changes of the marks' settings so far.
+pub fn docx_marks_generation() -> u64 {
+    DOCX_MARKS_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The key of 限られたグリッド表示 (GitHub issue #273): on when `1`; off by default. On, a sheet shows its used range and a margin, and the grid grows as the selection nears its edge.
+pub const LIMITED_GRID_KEY: &str = "xlsx.grid.limited";
+
+/// What the setting was when last read: 0 not read, 1 off, 2 on (the sheets ask on every frame, so the file is read once until the dialog changes it).
+static LIMITED_GRID_CACHE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Whether the sheets show the limited grid.
+pub fn limited_grid() -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    match LIMITED_GRID_CACHE.load(Relaxed) {
+        0 => {
+            let on = crate::settings::get(LIMITED_GRID_KEY).as_deref() == Some("1");
+            LIMITED_GRID_CACHE.store(if on { 2 } else { 1 }, Relaxed);
+            on
+        }
+        v => v == 2,
+    }
+}
+
+/// Turn the limited grid on or off (kept, and shown at once).
+pub fn set_limited_grid(on: bool, cx: &mut App) {
+    crate::settings::set(LIMITED_GRID_KEY, if on { "1" } else { "0" });
+    note_limited_grid_changed();
+    cx.refresh_windows();
+}
+
+/// The setting was changed outside `set_limited_grid`: read it again.
+pub fn note_limited_grid_changed() {
+    LIMITED_GRID_CACHE.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The key of the number of sheets from which a workbook's sheet list has its search field (GitHub issue #262). Absent is
+/// [`SHEET_LIST_SEARCH_MIN_DEFAULT`] (a list of more than 20 sheets).
+pub const SHEET_LIST_SEARCH_MIN_KEY: &str = "xlsx.sheet-list.search-min";
+pub const SHEET_LIST_SEARCH_MIN_DEFAULT: usize = 21;
+const SHEET_LIST_SEARCH_MIN_RANGE: (f32, f32) = (1., 1000.);
+
+/// The number of sheets from which the sheet list has a search field.
+pub fn sheet_list_search_min() -> usize {
+    crate::settings::get(SHEET_LIST_SEARCH_MIN_KEY)
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map_or(SHEET_LIST_SEARCH_MIN_DEFAULT, |n| n.clamp(SHEET_LIST_SEARCH_MIN_RANGE.0 as usize, SHEET_LIST_SEARCH_MIN_RANGE.1 as usize))
+}
+
+/// Whether a dropdown list `id` of `count` rows has its search field: more than 20 rows, except the sheet list (the number is a setting).
+pub fn list_has_search(id: &str, count: usize) -> bool {
+    if id == "sheet-list" { count >= sheet_list_search_min() } else { count > 20 }
+}
+
 /// The key of スクロール バーを常に表示: on when `1` (on by default; an explicitly saved 0 still means hover).
 pub const SCROLLBARS_ALWAYS_KEY: &str = "view.scrollbars-always";
 
@@ -229,6 +315,7 @@ pub(crate) fn apply_scrollbar_mode_only(cx: &mut App) {
 impl SlideEditor {
     /// Show the settings dialog (modal) with the category `category` selected.
     pub fn open_settings(&mut self, category: usize, _window: &mut Window, cx: &mut Context<Self>) {
+        crate::render::shape_view::ensure_system_font_names(cx);
         self.settings = Some(SettingsDialog { category: category.min(CATEGORIES.len() - 1), nav_width: nav_width(), nav_drag: None, customize: None, cmyk_found: None, cmyk_message: None });
         self.sidebar_open = true;
         self.dialog.bounds = None;
@@ -283,7 +370,7 @@ impl SlideEditor {
             .size_full()
             .text_sm()
             .text_color(rgb(TEXT))
-            .child(h_flex().size_full().items_stretch().child(nav).child(settings_splitter(&editor, cx)).child(v_flex().flex_1().min_w_0().h_full().child(detail)))
+            .child(h_flex().size_full().items_stretch().child(nav).child(settings_splitter(&editor, self.splitter_mark(), cx)).child(v_flex().flex_1().min_w_0().h_full().child(detail)))
 ;
         Some(SidebarPanel { title: text("settings.title"), body: body.into_any_element() })
     }
@@ -344,12 +431,47 @@ impl SlideEditor {
                 .unit(text("settings.spreadsheet.csv-font-size-unit")),
             ))
             .child(panel_note(text("settings.spreadsheet.csv-note")))
+            .child(section_heading(text("settings.spreadsheet.sheet-list")))
+            .child(control_row(
+                text("settings.spreadsheet.sheet-list-search-min"),
+                crate::chrome::number_stepper("settings-sheet-list-search-min", sheet_list_search_min() as f32, cx, |_, n, _, cx| {
+                    crate::settings::set(SHEET_LIST_SEARCH_MIN_KEY, &format!("{}", n.round() as usize));
+                    cx.notify();
+                })
+                .range(SHEET_LIST_SEARCH_MIN_RANGE.0, SHEET_LIST_SEARCH_MIN_RANGE.1)
+                .step(1.)
+                .decimals(0)
+                .unit(text("settings.spreadsheet.sheet-list-search-min-unit")),
+            ))
+            .child(panel_note(text("settings.spreadsheet.sheet-list-note")))
+            .child(section_heading(text("settings.spreadsheet.grid")))
+            .child(checkbox_button("settings-limited-grid", text("settings.spreadsheet.limited-grid"), limited_grid(), false, cx.listener(|_, _, _, cx| {
+                set_limited_grid(!limited_grid(), cx);
+                cx.notify();
+            })))
+            .child(panel_note(text("settings.spreadsheet.limited-grid-note")))
             .child(self.settings_toolbar_section("xlsx", cx))
     }
 
     /// ドキュメント and プレゼンテーション: the format's settings, so far the toolbar's.
     fn settings_toolbar_page(&self, _category: usize, ext: &'static str, cx: &mut Context<Self>) -> Div {
-        v_flex().gap_2().child(self.settings_toolbar_section(ext, cx))
+        let page = v_flex().gap_2();
+        let page = if ext == "docx" { page.child(self.settings_marks_section(cx)) } else { page };
+        page.child(self.settings_toolbar_section(ext, cx))
+    }
+
+    /// 編集記号 of the document's page: which marks are always shown (Word's オプション > 表示), kept for every document window.
+    fn settings_marks_section(&self, cx: &mut Context<Self>) -> Div {
+        let section = v_flex().gap_2().child(section_heading(text("settings.document.marks"))).child(panel_note(text("settings.document.marks-note")));
+        DOCX_MARKS.iter().enumerate().fold(section, |section, (i, (key, label, _))| {
+            let key: &'static str = key;
+            section.child(checkbox_button(SharedString::from(format!("settings-marks-{i}")), text(label), docx_mark_shown(key), false, cx.listener(move |_, _, _, cx| {
+                crate::settings::set(key, if docx_mark_shown(key) { "0" } else { "1" });
+                note_docx_marks_changed();
+                cx.refresh_windows();
+                cx.notify();
+            })))
+        })
     }
 
     /// The toolbar's section of a format's page: the button that opens ツールバーのカスタマイズ, and whether the toolbar is the
@@ -450,9 +572,9 @@ impl SlideEditor {
 
 /// The splitter between the categories and the detail: the pointer drags it to change the left pane's width (within
 /// [`NAV_WIDTH_MIN`] and [`NAV_WIDTH_MAX`]); letting go keeps the width in the settings file.
-fn settings_splitter(editor: &WeakEntity<SlideEditor>, cx: &mut Context<SlideEditor>) -> impl IntoElement {
+fn settings_splitter(editor: &WeakEntity<SlideEditor>, mark: impl IntoElement, cx: &mut Context<SlideEditor>) -> impl IntoElement {
     let tracker = editor.clone();
-    div()
+    let splitter = div()
         .id("settings-splitter")
         .relative()
         .w(px(9.))
@@ -468,6 +590,8 @@ fn settings_splitter(editor: &WeakEntity<SlideEditor>, cx: &mut Context<SlideEdi
             }
             cx.stop_propagation();
         }))
+        // (A finger within reach of it takes hold of it too: K0084.)
+        .child(mark)
         .child(
             canvas(
                 |_, _, _| (),
@@ -502,5 +626,74 @@ fn settings_splitter(editor: &WeakEntity<SlideEditor>, cx: &mut Context<SlideEdi
             )
             .absolute()
             .size_0(),
-        )
+        );
+    // The scenario tests (K0084) read where it is drawn.
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
+    let splitter = splitter.child(canvas(|_, _, _| (), |bounds, _, _, _| crate::scenario::button_probe::record_bounds("settings-splitter", bounds)).absolute().inset_0());
+    splitter
+}
+
+#[cfg(test)]
+mod tests_262 {
+    // Not `use super::*`: it brings gpui's own `test` attribute in, which does not expand here.
+    use super::{DOCX_MARKS, SHEET_LIST_SEARCH_MIN_KEY, docx_mark_shown, list_has_search, sheet_list_search_min};
+    use crate::chrome::MenuItem;
+
+    /// The two tests set settings in a settings file of their own (not the user's), one at a time.
+    fn isolated() -> std::sync::MutexGuard<'static, ()> {
+        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = ONE.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/test-settings-262"));
+        let _ = std::fs::create_dir_all(&dir);
+        // SAFETY: only these tests read this variable, and they hold the lock above.
+        unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
+        guard
+    }
+
+    /// GitHub issue #262: the sheet list has its search box from the number of sheets the setting says (21 when it is not set), and a search by
+    /// full-width letters and digits finds the half-width name (and the other way round, and in the other case).
+    #[test]
+    fn the_sheet_list_search_follows_its_setting_and_ignores_width_and_case() {
+        let _one = isolated();
+        let key = SHEET_LIST_SEARCH_MIN_KEY;
+        crate::settings::remove(key);
+        assert_eq!(sheet_list_search_min(), 21);
+        assert!(!list_has_search("sheet-list", 20) && list_has_search("sheet-list", 21));
+        crate::settings::set(key, "1");
+        assert!(list_has_search("sheet-list", 1), "1 shows it always");
+        crate::settings::set(key, "5");
+        assert!(!list_has_search("sheet-list", 4) && list_has_search("sheet-list", 5));
+        crate::settings::set(key, "0");
+        assert_eq!(sheet_list_search_min(), 1, "at least 1");
+        crate::settings::set(key, "abc");
+        assert_eq!(sheet_list_search_min(), 21, "unreadable: the default");
+        crate::settings::remove(key);
+        // The other lists keep their rule: more than 20 rows.
+        assert!(!list_has_search("other", 20) && list_has_search("other", 21));
+
+        let items: Vec<MenuItem> = ["Sheet1", "売上Ａ", "Report 2026", "ＫＥＹ"].iter().enumerate().map(|(i, name)| MenuItem::new(["a", "b", "c", "d"][i], *name)).collect();
+        let found = |query: &str| crate::chrome::filter_menu_items(&items, query).iter().map(|i| i.label.to_string()).collect::<Vec<_>>();
+        assert_eq!(found("ｓｈｅｅｔ１"), ["Sheet1"], "full-width query, half-width name");
+        assert_eq!(found("ＳＨＥＥＴ"), ["Sheet1"], "and upper case");
+        assert_eq!(found("売上A"), ["売上Ａ"], "half-width query, full-width name");
+        assert_eq!(found("key"), ["ＫＥＹ"]);
+        assert_eq!(found("２０２６"), ["Report 2026"]);
+        assert_eq!(found("report　2026"), ["Report 2026"], "the ideographic space");
+        assert!(found("zzz").is_empty());
+    }
+
+    /// The marks' settings: the defaults, and each key's own value.
+    #[test]
+    fn the_marks_settings_have_defaults_and_each_its_own_key() {
+        let _one = isolated();
+        for (key, _, default) in DOCX_MARKS {
+            crate::settings::remove(key);
+            assert_eq!(docx_mark_shown(key), default, "{key} by default");
+            crate::settings::set(key, if default { "0" } else { "1" });
+            assert_eq!(docx_mark_shown(key), !default, "{key} set");
+            crate::settings::remove(key);
+        }
+        assert!(!docx_mark_shown("docx.marks.hidden-text"), "hidden text is not shown by default");
+        assert!(docx_mark_shown("docx.marks.paragraph"));
+    }
 }

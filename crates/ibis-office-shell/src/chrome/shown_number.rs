@@ -80,6 +80,11 @@ impl ShownText {
         Self { shown }
     }
 
+    /// A field for a text the person types that is not a value of the objects (a name, as the form ID of a panel): it shows `text`.
+    pub fn name_input(text: impl Into<String>, window: &mut Window, cx: &mut App) -> Entity<InputState> {
+        Self::new(Shown::One(text.into())).input(window, cx)
+    }
+
     pub(crate) fn text(&self) -> &str {
         self.shown.one().map_or("", String::as_str)
     }

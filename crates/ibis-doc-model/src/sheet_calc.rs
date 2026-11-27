@@ -199,6 +199,13 @@ impl<'a> BookView<'a> {
 }
 
 impl BookView<'_> {
+    /// The formula of a cell as a person may read it: `None` for a cell without one and for one whose formula the sheet hides (the
+    /// `Book::formula` of the calculation reads every formula, because calculating needs them).
+    pub fn visible_formula(&self, sheet: usize, row: u32, column: u32) -> Option<&str> {
+        let sheet = self.sheets.get(sheet)?.sheet?;
+        sheet.visible_formula(sheet.cell(row, column)?)
+    }
+
     fn table_info(&self, sheet: usize, t: &crate::sheet::SheetTable) -> ibis_calc::eval::TableInfo {
         ibis_calc::eval::TableInfo {
             sheet,

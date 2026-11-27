@@ -128,6 +128,10 @@ pub fn open_dpc_ef(data: &[u8]) -> Result<Opened, Error> {
     {
         first_meta.name = crate::words::text("medical.dpc.sheet-detail");
     }
+    // The sheet tab shows the slide's name, so set it as well (the blank workbook names it "Sheet1").
+    if let Some(slide) = opened.presentation.slides.first_mut() {
+        slide.name = Some(crate::words::text("medical.dpc.sheet-detail"));
+    }
     if let Some(slide) = opened.presentation.slides.first_mut() {
         for sh in &mut slide.shapes {
             if let ShapeKind::Sheet(sheet_arc) = &mut sh.kind {
@@ -167,6 +171,7 @@ pub fn open_dpc_ef(data: &[u8]) -> Result<Opened, Error> {
         .map(|sh| sh.frame)
         .unwrap_or_else(|| EmuRect::new(0, 0, 0, 0));
     let mut summary_slide = Slide::new(summary_slide_id);
+    summary_slide.name = Some(crate::words::text("medical.dpc.sheet-summary"));
     summary_slide.shapes.push(Shape::new(
         opened.presentation.new_shape_id(),
         frame,
@@ -321,6 +326,9 @@ mod tests {
         assert_eq!(wb.sheets.len(), 2);
         assert_eq!(wb.sheets[0].name, "DPC明細");
         assert_eq!(wb.sheets[1].name, "DPCサマリー");
+        // The tabs show the slides' names.
+        assert_eq!(opened.presentation.slides[0].name.as_deref(), Some("DPC明細"));
+        assert_eq!(opened.presentation.slides[1].name.as_deref(), Some("DPCサマリー"));
 
         let ShapeKind::Sheet(summary) = &opened.presentation.slides[1].shapes[0].kind else {
             panic!("expected sheet");

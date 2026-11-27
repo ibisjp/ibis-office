@@ -504,12 +504,12 @@ pub(crate) fn render(id: &'static str, height: f32, v: Virtual, editor: WeakEnti
                                     .child(icon(a.icon, 18., rgb(0x1f1f1f).into()))
                                     .children({
                                         // Scenario tests click the row's buttons where they were painted.
-                                        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+                                        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
                                         {
                                             let key = format!("{id}-{}-{i}", a.id);
                                             Some(canvas(|_, _, _| (), move |b, _, _, _| crate::scenario::button_probe::record_bounds(&key, b)).absolute().inset_0())
                                         }
-                                        #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+                                        #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows))))]
                                         {
                                             None::<Div>
                                         }

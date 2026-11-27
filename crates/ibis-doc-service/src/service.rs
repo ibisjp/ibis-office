@@ -58,6 +58,17 @@ impl Fingerprint {
     }
 }
 
+/// Which version of the file was read (design 159, 3.2).
+#[derive(Clone, Debug)]
+pub(crate) struct RevisionInfo {
+    /// `working_tree`, `git` or `open_document`.
+    pub kind: &'static str,
+    /// The full SHA of the commit (`git`).
+    pub commit: Option<String>,
+    /// The path from the folder it was opened from, with `/`.
+    pub path: Option<String>,
+}
+
 /// A file that is open.
 pub(crate) struct Open {
     pub kind: Kind,
@@ -67,6 +78,73 @@ pub(crate) struct Open {
     pub fingerprint: Fingerprint,
     pub signed: bool,
     pub has_macros: bool,
+    pub revision: RevisionInfo,
+    /// The state after 0, 1, 2 … undo steps (`states.len() == undo steps + 1`); the last is the document's state now.
+    pub states: Vec<String>,
+    /// The states the undone steps led to (the last is the next one a redo gives).
+    pub redo_states: Vec<String>,
+    /// A version out of Git: it is not written over `path`.
+    pub pinned: bool,
+}
+
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+impl Open {
+    /// The first state of a file that was read: the start of its SHA-256.
+    pub fn first_state(fingerprint: &Fingerprint) -> String {
+        hex(&fingerprint.sha256)[..16].to_string()
+    }
+
+    /// The identifier of the document as it is now: it changes with every edit, goes back with an undo, and is the same for the same edits of the same file.
+    pub fn state(&self) -> &str {
+        self.states.last().map(String::as_str).unwrap_or("")
+    }
+
+    /// The `revision` of a result: which version was read and the document's state now.
+    pub fn revision_json(&self) -> Value {
+        let mut revision = serde_json::json!({ "kind": self.revision.kind, "file_sha256": hex(&self.fingerprint.sha256), "state": self.state(), "dirty": self.document.is_dirty() });
+        if let Some(commit) = &self.revision.commit {
+            revision["commit"] = serde_json::json!(commit);
+        }
+        if let Some(path) = &self.revision.path {
+            revision["path"] = serde_json::json!(path);
+        }
+        revision
+    }
+
+    /// After a tool ran: bring `states` in line with the undo history (an edit adds a state made from the one before and what was asked; an undo and a redo move along).
+    fn follow_history(&mut self, tool: &str, args: &Value) {
+        let steps = self.document.undo_len();
+        while self.states.len() > steps + 1 {
+            let state = self.states.pop().unwrap_or_default();
+            if tool == "app_undo_document" {
+                self.redo_states.push(state);
+            }
+        }
+        while self.states.len() < steps + 1 {
+            let redone = if tool == "app_redo_document" { self.redo_states.pop() } else { None };
+            let next = if let Some(state) = redone {
+                state
+            } else {
+                self.redo_states.clear();
+                let mut asked = args.clone();
+                if let Some(map) = asked.as_object_mut() {
+                    map.remove("document_id");
+                    map.remove("expected_revision");
+                }
+                let mut hash = Sha256::new();
+                hash.update(self.state().as_bytes());
+                hash.update([0]);
+                hash.update(tool.as_bytes());
+                hash.update([0]);
+                hash.update(asked.to_string().as_bytes());
+                hex(&hash.finalize())[..16].to_string()
+            };
+            self.states.push(next);
+        }
+    }
 }
 
 pub struct Service {
@@ -130,7 +208,38 @@ impl Service {
         if !args.is_object() {
             return Err(ToolError::invalid("the arguments are not an object"));
         }
-        (tool.run)(self, args)
+        let document_id = args.get("document_id").and_then(Value::as_str).map(str::to_string);
+        // Design 159, 3.3: `expected_revision` is checked once, before anything is changed (a save checks it against the file itself, in the tool).
+        let mut stripped;
+        let mut run_args = args;
+        if tool.access != Access::Read && name != "app_save_document" && args.get("expected_revision").is_some() {
+            let expected = match args.get("expected_revision") {
+                Some(Value::Null) => None,
+                Some(Value::String(s)) => Some(s.clone()),
+                _ => return Err(ToolError::invalid("expected_revision is a string")),
+            };
+            if let (Some(expected), Some(id)) = (&expected, &document_id) {
+                let open = self.open_document(id)?;
+                if open.state() != expected {
+                    return Err(ToolError::new("revision_mismatch", format!("the document is at state {} but expected_revision is {expected}: read it again and redo the change", open.state())));
+                }
+            }
+            stripped = args.clone();
+            if let Some(map) = stripped.as_object_mut() {
+                map.remove("expected_revision");
+            }
+            run_args = &stripped;
+        }
+        let mut result = (tool.run)(self, run_args)?;
+        // Every result of a call on a document says which state it is of (so a position it names belongs to a version).
+        if let Some(open) = document_id.as_ref().and_then(|id| self.documents.get_mut(id)) {
+            open.follow_history(name, run_args);
+            if let (Some(map), Some(id)) = (result.as_object_mut(), &document_id) {
+                map.entry("document_id").or_insert_with(|| Value::String(id.clone()));
+                map.entry("state").or_insert_with(|| Value::String(open.state().to_string()));
+            }
+        }
+        Ok(result)
     }
 }
 

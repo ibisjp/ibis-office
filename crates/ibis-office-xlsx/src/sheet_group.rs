@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use ibis_doc_model::{Command, Presentation, SheetCommand, SlideId};
 
 use crate::ext::*;
+use crate::shell::chrome::MenuEntry;
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
 use gpui_kit::*;
@@ -27,7 +28,77 @@ fn refused_in_group(command: &SheetCommand) -> bool {
             | SheetCommand::Sort { .. }
             | SheetCommand::SortByKeys { .. }
             | SheetCommand::RemoveDuplicates { .. }
+            // Greyed out in Excel while several sheets are selected (the Windows check of #238, 2026-11-20): hyperlinks, comments, input
+            // rules, conditional formats, filters, sheet protection and the What-If scenarios.
+            | SheetCommand::SetHyperlink { .. }
+            | SheetCommand::SetComment { .. }
+            | SheetCommand::SetThreadedComment { .. }
+            | SheetCommand::SetValidation { .. }
+            | SheetCommand::SetProtection { .. }
+            | SheetCommand::AddConditional { .. }
+            | SheetCommand::UpdateConditional { .. }
+            | SheetCommand::DuplicateConditionalRule { .. }
+            | SheetCommand::DeleteConditionalRule { .. }
+            | SheetCommand::MoveConditionalRule { .. }
+            | SheetCommand::SetConditionalStop { .. }
+            | SheetCommand::ClearConditional { .. }
+            | SheetCommand::SetAutoFilter { .. }
+            | SheetCommand::AdvancedFilter { .. }
+            | SheetCommand::AddScenario { .. }
+            | SheetCommand::EditScenario { .. }
+            | SheetCommand::DeleteScenario { .. }
+            | SheetCommand::CreateScenarioSummary { .. }
     )
+}
+
+/// The menu lines Excel greys out while several sheets are selected: the lines of the commands `refused_in_group` refuses (the Windows check of #238), kept
+/// beside it so the two are changed together (`refused_menu_lines_are_the_refused_commands` in the tests names the pairs).
+pub(crate) const GREYED_MENU_IDS: &[&str] = &[
+    "xlsx.insert-table",
+    "xlsx.insert-slicer",
+    "xlsx.insert-link",
+    "xlsx.insert-picture",
+    "xlsx.insert-picture-in-cell",
+    "xlsx.insert-picture-over-cells",
+    "xlsx.insert-pivot-chart",
+    // The menu bar's Insert submenus of charts and shapes (`menu_layout_data.rs`: `insert.chart`, `insert.shape`).
+    "insert.chart",
+    "insert.shape",
+    "xlsx.recommended-charts",
+    "xlsx.comment-new",
+    "xlsx.new-note",
+    "xlsx.sort",
+    "xlsx.sort-descending",
+    "xlsx.sort-manage",
+    "xlsx.filter",
+    "xlsx.filter-clear",
+    "xlsx.reapply-filter",
+    "xlsx.remove-duplicates",
+    "xlsx.text-to-columns",
+    "xlsx.what-if-analysis",
+    "xlsx.scenario-manager",
+    "xlsx.goal-seek",
+    "xlsx.validation",
+    "xlsx.conditional",
+    "xlsx.conditional-menu",
+    "xlsx.format-as-table",
+    "xlsx.protect-sheet",
+    "xlsx.tab-protect",
+];
+
+/// Greys the lines of `GREYED_MENU_IDS` in `entries` (every level of the submenus).
+pub(crate) fn grey_for_group(entries: &mut [MenuEntry]) {
+    fn grey(entries: &mut [MenuEntry], all: bool) {
+        for entry in entries {
+            match entry {
+                MenuEntry::Item(item) if all || GREYED_MENU_IDS.contains(&item.id) => item.disabled = true,
+                // A submenu in the list is greyed whole (its lines can no longer be reached).
+                MenuEntry::Submenu(sub) => grey(&mut sub.items, all || GREYED_MENU_IDS.contains(&sub.id)),
+                _ => {}
+            }
+        }
+    }
+    grey(entries, false);
 }
 
 /// `command` made for the sheet `to`, when it is one that goes to every sheet of the group (typing, formats, sizes, fitting rows and columns to their contents,
@@ -39,12 +110,7 @@ fn for_sheet(command: &SheetCommand, to: SlideId) -> Option<SheetCommand> {
         SheetCommand::SetCells { .. }
         | SheetCommand::SetRuns { .. }
         | SheetCommand::SetFormat { .. }
-        | SheetCommand::SetColumnWidthFitted { .. }
         | SheetCommand::SetColumnWidthAuto { .. }
-        | SheetCommand::SetRowHeightFitted { .. }
-        | SheetCommand::SetHyperlink { .. }
-        | SheetCommand::SetValidation { .. }
-        | SheetCommand::AddConditional { .. }
         | SheetCommand::PasteCells { .. }
         | SheetCommand::ClearFormats { .. }
         | SheetCommand::SetSize { .. }
@@ -60,12 +126,7 @@ fn for_sheet(command: &SheetCommand, to: SlideId) -> Option<SheetCommand> {
         | SheetCommand::PasteCells { sheet, .. }
         | SheetCommand::ClearFormats { sheet, .. }
         | SheetCommand::SetSize { sheet, .. }
-        | SheetCommand::SetColumnWidthFitted { sheet, .. }
         | SheetCommand::SetColumnWidthAuto { sheet, .. }
-        | SheetCommand::SetRowHeightFitted { sheet, .. }
-        | SheetCommand::SetHyperlink { sheet, .. }
-        | SheetCommand::SetValidation { sheet, .. }
-        | SheetCommand::AddConditional { sheet, .. }
         | SheetCommand::Insert { sheet, .. }
         | SheetCommand::Delete { sheet, .. }
         | SheetCommand::InsertOrDeleteCells { sheet, .. } => *sheet = to,
@@ -106,12 +167,7 @@ pub(crate) fn sheet_target(command: &SheetCommand) -> Option<SlideId> {
         | SheetCommand::PasteCells { sheet, .. }
         | SheetCommand::ClearFormats { sheet, .. }
         | SheetCommand::SetSize { sheet, .. }
-        | SheetCommand::SetColumnWidthFitted { sheet, .. }
         | SheetCommand::SetColumnWidthAuto { sheet, .. }
-        | SheetCommand::SetRowHeightFitted { sheet, .. }
-        | SheetCommand::SetHyperlink { sheet, .. }
-        | SheetCommand::SetValidation { sheet, .. }
-        | SheetCommand::AddConditional { sheet, .. }
         | SheetCommand::Insert { sheet, .. }
         | SheetCommand::Delete { sheet, .. }
         | SheetCommand::InsertOrDeleteCells { sheet, .. } => Some(*sheet),
@@ -200,23 +256,19 @@ impl SlideEditor {
             return;
         }
         if ctrl {
+            // Excel (Windows check of #238): Ctrl + click adds a sheet, the present sheet stays the present one; a sheet of the group is taken away
+            // by it too, but not the present one.
             let mut members = if group.is_empty() { vec![self.current_slide] } else { group };
-            let mut next = None;
             if members.contains(&id) {
-                if members.len() > 1 {
+                if id != self.current_slide && members.len() > 1 {
                     members.retain(|s| *s != id);
-                    if id == self.current_slide {
-                        next = members.first().copied();
-                    }
                 }
             } else {
                 members.push(id);
-                next = Some(id);
             }
+            // In the order of the tabs.
+            members.sort_by_key(|m| order.iter().position(|o| o == m));
             self.set_group(members);
-            if let Some(next) = next {
-                self.select_slide(next, window, cx);
-            }
             cx.notify();
             return;
         }

@@ -83,7 +83,7 @@ impl SlideEditor {
         let cell_name_str = ibis_doc_model::cell_name(col, row);
         let cell_label = format!("{}!${}${}", sheet_name, cell_name_str.trim_end_matches(|c: char| c.is_ascii_digit()), row + 1);
 
-        let formula_opt = book_view.formula(sheet_idx, row, col).map(|s| s.to_string());
+        let formula_opt = book_view.visible_formula(sheet_idx, row, col).map(|s| s.to_string());
 
         let panel = match formula_opt {
             Some(formula) => {
@@ -448,7 +448,7 @@ impl SlideEditor {
                         }
                         ibis_doc_model::CellValue::Error(e) => e.to_string(),
                     };
-                    let formula_text = book_view.formula(sheet_idx, row, col).map(|f| format!("={f}"));
+                    let formula_text = book_view.visible_formula(sheet_idx, row, col).map(|f| format!("={f}"));
                     (col, row, sheet_name.clone(), cell_ref, name, value_text, formula_text)
                 })
                 .collect()
@@ -526,7 +526,7 @@ impl SlideEditor {
                         ibis_doc_model::CellValue::Bool(b) => if b { "TRUE".into() } else { "FALSE".into() },
                         ibis_doc_model::CellValue::Error(e) => e.to_string(),
                     };
-                    let formula_str = book_view.formula(sheet_idx, entry.row, entry.col).map(|f| format!("={f}"));
+                    let formula_str = book_view.visible_formula(sheet_idx, entry.row, entry.col).map(|f| format!("={f}"));
                     (name, val_str, formula_str)
                 } else {
                     (entry.sheet_name.clone(), entry.value_text.clone(), entry.formula_text.clone())

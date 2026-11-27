@@ -68,7 +68,7 @@ impl SlideEditor {
 
     /// Hit-test actual laid-out character intervals, including the last character and vertical text.
     pub(crate) fn doc_link_position_at_point(&self,page:usize,x:f32,y:f32)->Option<ibis_doc_model::FlowPos>{
-        let lines=self.flow_lines();
+        let lines=self.flow_lines_arc();
         for line in lines.iter().filter(|l|l.page==page){
             let axis=if line.vertical {if x<line.x||x>=line.x+line.h{continue;}y-line.y}
                 else {if y<line.y||y>=line.y+line.h{continue;}x-line.x};

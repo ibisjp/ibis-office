@@ -39,10 +39,10 @@ fn symbols_uax50_upright_stand_in_a_column() {
 /// § ° × €, ℃ Ⅰ, 𝒜, 🂡) and the ones it stands (Hangul, the supplementary kanji, 😀, ☆ ♪ ① ❶ ➀ ✓ ■, the brackets including 〖〗).
 fn powerpoint_eavert_orientation() {
     use crate::render::vertical_text::powerpoint_upright as stands;
-    for c in "\u{E000}\u{E123}\u{F0000}⌘⏰⌒§°×€℃Ⅰ𝒜🂡←∀─⤀—᐀ｱA".chars() {
+    for c in "〡〩〸〺〾〿㉠㉿\u{E000}\u{E123}\u{F0000}⌘⏰⌒§°×€℃Ⅰ𝒜🂡←∀─⤀—᐀ｱA".chars() {
         assert!(!stands(c), "U+{:04X} lies", c as u32);
     }
-    for c in "가각힣ㄱ가𠀋𠀀😀☆♪❶➀①✓■「」〈〉【】『』〔〕（）‘’“”〖〗〘〙〚〛あ漢".chars() {
+    for c in "☞가각힣ㄱ가𠀋𠀀😀☆♪❶➀①✓■「」〈〉【】『』〔〕（）‘’“”〖〗〘〙〚〛あ漢".chars() {
         assert!(stands(c), "U+{:04X} stands", c as u32);
     }
 }

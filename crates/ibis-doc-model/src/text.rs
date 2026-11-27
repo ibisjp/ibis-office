@@ -31,6 +31,8 @@ pub struct TextStyle {
     pub bold: bool,
     pub italic: bool,
     pub color: Rgb,
+    /// The theme colour `color` follows (it is dropped from here when `color` is set to another colour; see [`crate::ThemeRef`]).
+    pub color_theme: Option<crate::theme_color::ThemeRef>,
     pub align: TextAlign,
     /// Font family; `None` is the UI's default font.
     pub font: Option<String>,
@@ -74,6 +76,7 @@ impl TextStyle {
             bold: run.bold.unwrap_or(self.bold),
             italic: run.italic.unwrap_or(self.italic),
             color: run.color.unwrap_or(self.color),
+            color_theme: if run.color.is_some() { run.color_theme } else { self.color_theme },
             align: self.align,
             font: run.font.clone().or_else(|| self.font.clone()),
             fallback_font: run.fallback_font.clone().or_else(|| self.fallback_font.clone()),
@@ -90,6 +93,7 @@ impl Default for TextStyle {
             bold: false,
             italic: false,
             color: Rgb::BLACK,
+            color_theme: None,
             align: TextAlign::Left,
             font: None,
             fallback_font: None,
@@ -258,6 +262,8 @@ pub struct RunStyle {
     /// (negative to tighten; OOXML's `spc`).
     pub spacing: i32,
     pub color: Option<Rgb>,
+    /// The theme colour `color` follows.
+    pub color_theme: Option<crate::theme_color::ThemeRef>,
     pub font: Option<String>,
     /// The other script's font, for when `font` is not installed.
     pub fallback_font: Option<String>,
@@ -412,6 +418,8 @@ pub struct Bullet {
     pub size: u32,
     /// `None` uses the colour of the paragraph's first run.
     pub color: Option<Rgb>,
+    /// The theme colour `color` follows (`a:buClr/a:schemeClr`), worked out again when the theme is replaced.
+    pub color_theme: Option<crate::theme_color::ThemeRef>,
     /// A numbered bullet (`a:buAutoNum`): `text` is the label it shows now.
     pub auto: Option<AutoNumber>,
     /// A bullet drawn with a symbol typeface (`a:buFont` Wingdings, Symbol): `text` is the Unicode character that stands in
@@ -630,6 +638,8 @@ pub struct CharacterFormat {
     /// How the underline is drawn (`a:rPr/@u`); set with `underline: Some(true)`.
     pub underline_kind: Option<Underline>,
     pub color: Option<Rgb>,
+    /// A colour that follows the theme (set with `color`, which holds what it works out to): the run keeps the reference.
+    pub color_theme: Option<crate::theme_color::ThemeRef>,
     /// `Some(None)` returns to the theme's font.
     pub font: Option<Option<String>>,
     /// Latin and East Asian families, chosen for each target run by its script.
@@ -685,6 +695,7 @@ impl CharacterFormat {
         }
         if self.reset.color {
             run.color = None;
+            run.color_theme = None;
         }
         if let Some(v) = self.font_size {
             run.font_size = Some(v.clamp(TextStyle::MIN_FONT_SIZE, TextStyle::MAX_FONT_SIZE));
@@ -703,6 +714,7 @@ impl CharacterFormat {
         }
         if let Some(v) = self.color {
             run.color = Some(v);
+            run.color_theme = self.color_theme;
         }
         if let Some(v) = &self.font {
             run.font = v.clone();
@@ -1037,6 +1049,9 @@ pub struct TextBody {
     /// The text is a Word text box's, laid out by Word's rules: the last line of a justified paragraph is not spread, whatever
     /// follows it (PowerPoint spreads it when the next paragraph has no space before it).
     pub word_lines: bool,
+    /// The text of a SmartArt's shape in Word: its lines are as high as the font makes them (ascent plus descent, from which a percentage of line spacing is
+    /// taken), not 1.2 times the size (PowerPoint's single spacing).
+    pub font_lines: bool,
 }
 
 impl Default for TextBody {
@@ -1062,6 +1077,7 @@ impl Default for TextBody {
             warp_adjust: Vec::new(),
             clip: false,
             word_lines: false,
+            font_lines: false,
         }
     }
 }
@@ -1192,6 +1208,23 @@ impl TextBody {
             }
             pos += 1;
         }
+    }
+
+    /// The highlight (`a:highlight`) of the text at character `at`: of the run before it, or, at the start of a paragraph, of the first run.
+    pub fn highlight_at(&self, at: usize) -> Option<Rgb> {
+        let (para, offset) = self.locate(at);
+        let runs = &self.paragraphs.get(para)?.runs;
+        if offset == 0 {
+            return runs.first().and_then(|r| r.style.highlight);
+        }
+        let mut end = 0;
+        for run in runs {
+            end += run.text.chars().count();
+            if offset <= end {
+                return run.style.highlight;
+            }
+        }
+        None
     }
 
     /// The paragraph and the character in it at character `at` of the text.
@@ -1438,7 +1471,7 @@ impl TextBody {
                         scheme: s.name().to_string(),
                         start_at: if shown == start_for_level { start_for_level } else { 1 },
                     });
-                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto, symbol: None, font: None });
+                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, color_theme: None, auto, symbol: None, font: None });
                     // A hanging indent the width of the mark, as PowerPoint sets.
                     if paragraph.indent >= 0 {
                         let hang = if scheme.is_some() { 342_900 } else { 228_600 };
@@ -1470,10 +1503,10 @@ impl TextBody {
                                     scheme: s.name().to_string(),
                                     start_at: if shown == start_for_level { start_for_level } else { 1 },
                                 });
-                                let (picture, size, color) = paragraph.bullet.as_ref()
-                                    .map(|b| (b.picture.clone(), b.size, b.color))
-                                    .unwrap_or((None, 100_000, None));
-                                paragraph.bullet = Some(Bullet { text, picture, size, color, auto, symbol: None, font: None });
+                                let (picture, size, color, color_theme) = paragraph.bullet.as_ref()
+                                    .map(|b| (b.picture.clone(), b.size, b.color, b.color_theme))
+                                    .unwrap_or((None, 100_000, None, None));
+                                paragraph.bullet = Some(Bullet { text, picture, size, color, color_theme, auto, symbol: None, font: None });
                             }
                         }
                     }
@@ -1534,7 +1567,11 @@ impl TextBody {
 
     /// Set the body's style. Run and paragraph overrides of every field that
     /// changes are dropped, so the new value applies to all of the text.
-    pub fn apply_style(&mut self, style: TextStyle) {
+    pub fn apply_style(&mut self, mut style: TextStyle) {
+        // A colour set directly (`color` changed under the old reference) no longer follows the theme.
+        if style.color_theme.is_some_and(|t| t.resolved_rgb != style.color) {
+            style.color_theme = None;
+        }
         let old = std::mem::replace(&mut self.style, style);
         let new = &self.style;
         for paragraph in &mut self.paragraphs {
@@ -1552,8 +1589,9 @@ impl TextBody {
                 if new.italic != old.italic {
                     run.italic = None;
                 }
-                if new.color != old.color {
+                if new.color != old.color || new.color_theme != old.color_theme {
                     run.color = None;
+                    run.color_theme = None;
                 }
                 if new.font != old.font {
                     run.font = None;
@@ -1566,6 +1604,20 @@ impl TextBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_highlight_at_a_position_is_that_of_the_run_before_it() {
+        let mut body = TextBody::plain("ab", TextStyle::default());
+        let mut marked = Run { text: "cd".into(), style: RunStyle::default() };
+        marked.style.highlight = Some(Rgb(0xffff00));
+        body.paragraphs[0].runs.push(marked);
+        body.paragraphs.push(Paragraph { runs: vec![Run { text: "x".into(), style: RunStyle::default() }], ..Default::default() });
+        assert_eq!(body.highlight_at(0), None);
+        assert_eq!(body.highlight_at(2), None);
+        assert_eq!(body.highlight_at(3), Some(Rgb(0xffff00)));
+        assert_eq!(body.highlight_at(4), Some(Rgb(0xffff00)));
+        assert_eq!(body.highlight_at(6), None, "inside the second paragraph");
+    }
 
     #[test]
     fn an_autofit_shrink_gives_a_whole_point_size() {

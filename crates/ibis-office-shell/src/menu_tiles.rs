@@ -223,7 +223,7 @@ fn tile(item: &MenuItem, index: usize, current: bool, active: &Rc<Cell<usize>>, 
         )
         .child(div().h(px(LABEL_HEIGHT)).overflow_hidden().text_size(px(12.)).line_height(px(15.)).text_color(rgb(TEXT)).child(label));
     // The scenarios find a tile by its item's id, as they find a line.
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     let tile = {
         let id = SharedString::from(format!("menu-item-{}", item.id));
         crate::scenario::button_probe::observe_control(tile, id.into())

@@ -8,6 +8,7 @@ use gpui_kit::component::input::InputEvent;
 use crate::docx::ext::*;
 pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("shell::dropdown_search_threshold_and_width",dropdown_threshold),
+    ("shell::issue262_sheet_list_search_follows_its_setting",sheet_list_search),
     ("shell::autocorrect_dictionary_fixed_header",dictionary),
     ("shell::print_copies_spinner_and_full_content",print_content),
 ]}
@@ -70,4 +71,26 @@ fn dropdown_threshold(){
         else{s.type_text("Choice 20");s.key("enter");assert_eq!(s.with(|_,cx|DROPDOWN_INPUT.with(|f|f.borrow().as_ref().unwrap().read(cx).value().to_string())),"Choice 20");}
     }
     crate::shell::chrome::FORCED_SIDEBAR.with(|c|c.set(None));DROPDOWN_INPUT.with(|f|{f.borrow_mut().take();});
+}
+
+/// GitHub issue #262: the sheet list of a workbook has its search field from the number of sheets the setting says (21 when it is not set): the
+/// list the workbook offers has as many rows as it has sheets, and the rule the list is drawn by says yes or no to that many.
+fn sheet_list_search(){
+    use crate::shell::settings_dialog::{SHEET_LIST_SEARCH_MIN_KEY as KEY,list_has_search};
+    struct Restore;impl Drop for Restore{fn drop(&mut self){crate::shell::settings::remove(KEY);}}
+    let _restore=Restore;
+    let mut s=Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("xlsx.insert-sheet");s.menu("xlsx.insert-sheet");s.settle();
+    let rows=s.with(|e,_|crate::shell::chrome::flatten_menu_entries(&crate::xlsx::sheet_ui::sheet_list_menu_entries(e)).len());
+    assert!((3..21).contains(&rows),"the sheet list has a few rows ({rows})");
+    crate::shell::settings::remove(KEY);
+    assert!(!list_has_search("sheet-list",rows),"{rows} sheets: no search field by default");
+    crate::shell::settings::set(KEY,"1");
+    assert!(list_has_search("sheet-list",rows),"the setting 1 shows it with {rows} sheets");
+    crate::shell::settings::set(KEY,&(rows+1).to_string());
+    assert!(!list_has_search("sheet-list",rows),"one more than the sheets: not shown");
+    crate::shell::settings::set(KEY,&rows.to_string());
+    assert!(list_has_search("sheet-list",rows),"as many as the sheets: shown");
+    // The other lists keep their own rule.
+    assert!(!list_has_search("font",20)&&list_has_search("font",21));
 }

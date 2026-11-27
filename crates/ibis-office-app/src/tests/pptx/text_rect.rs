@@ -67,7 +67,7 @@ fn a_zero_text_rectangle_of_a_custom_shape_is_one_line() {
         color: Default::default(),
         handout: None,
         frame: false,
-        handout_landscape: false,
+        handout_landscape: false, paper: None, fit_paper: true,
         notes_pages: false,
         outline_pages: false,
         notes_source: None,

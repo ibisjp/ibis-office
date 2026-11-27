@@ -26,7 +26,7 @@ fn labels(s: &mut Scenario, id: &str) -> (String, String) {
 fn i8_language_switch_and_kept() {
     let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     // The settings are kept in the scenario's folder, not the user's.
-    let dir = crate::shell::scenario::repo_root().join("target/scenario/shell::i8_language_switch_and_kept/settings");
+    let dir = crate::shell::scenario::scenario_dir("shell::i8_language_switch_and_kept").join("settings");
     let _ = std::fs::remove_dir_all(&dir);
     // SAFETY: the scenarios run one at a time on the main thread; nothing
     // else reads the environment meanwhile.
@@ -260,10 +260,13 @@ fn fix36_font_lists_from_the_system() {
     assert_eq!(checked, [chosen.clone()]);
     // The cell's style holds the listed name (what is saved in the workbook).
     assert_eq!(s.with(|e, _| e.current_style().font), Some(chosen.clone()));
-    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::Font(Some("メイリオ".into())), cx));
+    // メイリオ is not on a Mac but is installed with Windows (and so listed there): on the other systems a
+    // name no system has stands for "a font the system lacks".
+    let lacking = if cfg!(target_os = "macos") { "メイリオ" } else { "存在しない書体ibis" };
+    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::Font(Some(lacking.into())), cx));
     let (value, list, checked) = font_box(&mut s);
-    assert_eq!(value, "メイリオ");
-    assert!(checked.is_empty() && !list.iter().any(|n| n == "メイリオ"));
+    assert_eq!(value, lacking);
+    assert!(checked.is_empty() && !list.iter().any(|n| n == lacking));
     s.screenshot("fix36-xlsx-font-not-installed");
 }
 

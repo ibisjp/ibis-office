@@ -61,7 +61,7 @@ const ROW_HEIGHT: f32 = 26.;
 /// The file name's longest length (what the file systems allow).
 const NAME_MAX: usize = 255;
 /// The extensions the editor opens.
-const OPEN_EXTENSIONS: [&str; 6] = ["docx", "xlsx", "pptx", "doc", "xls", "ppt"];
+const OPEN_EXTENSIONS: [&str; 8] = ["docx", "xlsx", "pptx", "doc", "xls", "ppt", "xdw", "xbd"];
 
 /// What the window is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -288,8 +288,16 @@ impl HostFileDialogState {
     fn checked_name(&self, typed: &str) -> Result<String, NameError> {
         let typed = typed.trim();
         let ext = &self.extension;
+        let text_family = |e: &str| ["csv", "tsv", "tab"].iter().any(|t| e.eq_ignore_ascii_case(t));
+        let mut ext = ext.as_str();
         let stem = match typed.rsplit_once('.') {
             Some((stem, e)) if !stem.is_empty() && e.eq_ignore_ascii_case(ext) => stem,
+            // A text file is saved as the other text format when the name says so (.csv, .tsv, .tab).
+            // A workbook read from a text file can be saved as a workbook (.xlsx): Excel's 名前を付けて保存 offers it for a csv it opened.
+            Some((stem, e)) if !stem.is_empty() && text_family(ext) && (text_family(e) || e.eq_ignore_ascii_case("xlsx")) => {
+                ext = e;
+                stem
+            }
             _ => typed,
         };
         let stem = stem.trim_end();
@@ -522,12 +530,23 @@ impl SlideEditor {
         let extension = match (&export, mode) {
             (Some(job), _) => job.extension.clone(),
             (None, Mode::Open) => String::new(),
-            (None, _) => own_extension(ibis_formats::Kind::of(self.presentation())).to_string(),
+            // A workbook read from a text file is saved as text again (.csv, .tsv); the others in their own format.
+            (None, _) => match self.host_text_format(self.file_name.as_ref().map(|n| n.to_string()).as_deref()) {
+                Some(format) => self.file_name.as_ref().and_then(|n| n.rsplit_once('.')).map(|(_, e)| e.to_ascii_lowercase()).filter(|e| e == "tab").unwrap_or_else(|| format.to_string()),
+                None => own_extension(ibis_formats::Kind::of(self.presentation())).to_string(),
+            },
         };
         let default_name = match (&export, mode) {
             (Some(job), _) => job.name.clone(),
             (None, Mode::Open) => String::new(),
-            (None, _) => self.file_name.as_ref().map(|n| n.to_string()).unwrap_or_default(),
+            (None, _) => {
+                let name = self.file_name.as_ref().map(|n| n.to_string()).unwrap_or_default();
+                // An old binary file (.xls, .doc, .ppt) is offered under the name of the current format.
+                match name.rsplit_once('.') {
+                    Some((stem, _)) if self.opened_from_legacy && !stem.is_empty() => format!("{stem}.{extension}"),
+                    _ => name,
+                }
+            }
         };
         let name_input = cx.new(|cx| InputState::new(window, cx).default_value(default_name));
         let search_input = cx.new(|cx| InputState::new(window, cx));
@@ -1241,7 +1260,7 @@ impl SlideEditor {
         let note = state.export.as_ref().and_then(|job| job.note.clone());
         let bytes = match state.export.as_ref() {
             Some(job) => Ok(job.bytes.clone()),
-            None => self.host_bytes(window, cx),
+            None => self.host_bytes_named(Some(&name), window, cx),
         };
         let bytes = match bytes {
             Ok(bytes) => bytes,
@@ -1311,7 +1330,7 @@ impl SlideEditor {
         };
         let bytes = match state.export.as_ref() {
             Some(job) => Ok(job.bytes.clone()),
-            None => self.host_bytes(window, cx),
+            None => self.host_bytes_named(Some(&name), window, cx),
         };
         match bytes {
             Ok(bytes) => {

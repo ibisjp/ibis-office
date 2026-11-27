@@ -7,12 +7,14 @@
 //! M a user wrote with this crate and turns the result into its own table (the mapping lives above this crate, in `ibis-doc-model`).
 pub mod ast;
 pub mod culture;
+mod culture_data;
 mod builtin;
 mod format;
 mod lib_date;
 mod lib_io;
 mod lib_list;
 mod lib_text;
+mod lib_zone;
 mod table;
 mod table_more;
 pub mod error;
@@ -45,5 +47,7 @@ mod tests_excel_values2;
 mod tests_host;
 #[cfg(test)]
 mod tests_lib;
+#[cfg(test)]
+mod tests_locales;
 #[cfg(test)]
 mod tests_table;

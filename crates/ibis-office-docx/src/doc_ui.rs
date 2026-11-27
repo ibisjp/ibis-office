@@ -114,26 +114,9 @@ fn page_at(content: &WorkspaceContent, pages: &[EmuSize], offset: f32, side_to_s
     }
 }
 
-/// The characters of the body text, not counting white space (Word's
-/// 文字数 in the status bar).
+/// The characters of the text, not counting white space (Word's 文字数 in the status bar): what the 文字カウント panel counts with its box checked.
 pub(crate) fn count_characters(document: &FlowDocument) -> usize {
-    fn count(blocks: &[Block]) -> usize {
-        blocks
-            .iter()
-            .map(|block| match block {
-                Block::Paragraph(p) => p
-                    .runs
-                    .iter()
-                    .map(|run| match &run.kind {
-                        FlowRunKind::Text(text) => text.chars().filter(|c| !c.is_whitespace()).count(),
-                        _ => 0,
-                    })
-                    .sum::<usize>(),
-                Block::Table(t) => t.rows.iter().flat_map(|r| &r.cells).map(|c| count(&c.blocks)).sum(),
-            })
-            .sum()
-    }
-    count(&document.body)
+    crate::help_panels::characters_no_spaces(document)
 }
 
 #[ibis_office_macros::editor_ext(DocUi)]
@@ -376,10 +359,11 @@ impl SlideEditor {
                         .min_h_0()
                         .overflow_hidden()
                         .child(
-                            div()
+                            gpui_kit::base::ScrollBounce::new("docx-body-bounce-0", &self.workspace_scroll, div()
                                 .id("workspace-scroll")
                                 .size_full()
                                 .overflow_scroll()
+                                .no_bounce()
                                 .track_scroll(&self.workspace_scroll)
                                 .when_some(content, |d, content| {
                                     d.child(
@@ -390,7 +374,7 @@ impl SlideEditor {
                                             .h(content.size.height)
                                             .children(bottom_pages),
                                     )
-                                }),
+                                })).enabled(true).touch_only().report_displacement(&self.overscroll_y),
                         )
                         .when(self.dialog_is_modal(), |d| d.child(crate::shell::dialog::viewport_shield()))
                         .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both),
@@ -407,10 +391,11 @@ impl SlideEditor {
                 .size_full()
                 .overflow_hidden()
                 .child(
-                    div()
+                    gpui_kit::base::ScrollBounce::new("docx-body-bounce-1", &self.workspace_scroll, div()
                         .id("workspace-scroll")
                         .size_full()
                         .overflow_scroll()
+                        .no_bounce()
                         .track_scroll(&self.workspace_scroll)
                         .when_some(content, |d, content| {
                             d.child(
@@ -421,7 +406,7 @@ impl SlideEditor {
                                     .h(content.size.height)
                                     .children(pages),
                             )
-                        }),
+                        })).enabled(true).touch_only().report_displacement(&self.overscroll_y),
                 )
                 .when(self.dialog_is_modal(), |d| d.child(crate::shell::dialog::viewport_shield()))
                 .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both)
@@ -545,7 +530,7 @@ impl SlideEditor {
         };
         let scale = content.scale;
         let k = scale * EMU_PER_POINT as f32;
-        let lines = self.flow_lines();
+        let lines = self.flow_lines_arc();
         let selection = self.ordered_selection();
         let caret = self.text_selection().map(|(_, c)| c);
         let marked = self.doc_state().and_then(|s| s.marked.clone());
@@ -626,7 +611,7 @@ impl SlideEditor {
                         let b = self.caret_box(&lines, c)?;
                         Some((line.vertical, b, (line.x, line.y, line.base, line.avail)))
                     }).filter(|(_, b, _)| b.0 == index).map(|(vertical, (_, x, y, h), (line_x, line_y, base, avail))| {
-                        let caret_color = crate::shell::caret::color_over(self.flow().and_then(|d| d.page_color), ibis_doc_model::Rgb::WHITE);
+                        let caret_color = crate::shell::caret::color_over(self.flow().map(|d| crate::caret_backdrop::under_caret(d, caret.map_or(0, |c| c.para), caret.map_or(0, |c| c.offset), self.resources.dark_page)), ibis_doc_model::Rgb::WHITE);
                         let bar = if vertical { caret.and_then(|c| self.tate_chu_yoko_caret(&lines, c)).filter(|b| b.0 == index) } else { None };
                         let caret = if let Some((_, bx, by, bh)) = bar {
                             div().absolute().left(px(bx * k - 0.5)).top(px(by * k)).w(px(1.5)).h(px(bh * k)).bg(caret_color)
@@ -760,6 +745,17 @@ impl SlideEditor {
     }
 
     /// The top-left corner of page `index` in the window, and pixels per point.
+    /// Whether `point` (the window's) is on one of the pages, not on the grey around them (K0091).
+    pub(crate) fn doc_tap_on_page(&self, point: Point<Pixels>) -> bool {
+        let points_per_emu = 72.0 / ibis_doc_model::EMU_PER_INCH as f32;
+        self.page_sizes().iter().enumerate().any(|(index, size)| {
+            let Some((origin, k)) = self.page_origin(index) else { return false };
+            let (w, h) = (size.width as f32 * points_per_emu * k, size.height as f32 * points_per_emu * k);
+            let (x, y) = (f32::from(point.x) - f32::from(origin.x), f32::from(point.y) - f32::from(origin.y));
+            x >= 0.0 && y >= 0.0 && x <= w && y <= h
+        })
+    }
+
     pub fn page_origin(&self, index: usize) -> Option<(Point<Pixels>, f32)> {
         self.page_origin_pane(index, false)
     }
@@ -1420,55 +1416,20 @@ impl SlideEditor {
                     return;
                 }
                 let o = bounds.origin;
-                let (margin_l, margin_r, margin_t, margin_b, pitch_emu) = match setup {
-                    Some(s) => (
-                        s.left as f32 * scale,
-                        s.right as f32 * scale,
-                        s.top as f32 * scale,
-                        s.bottom as f32 * scale,
-                        s.line_pitch.unwrap_or(ibis_doc_model::EMU_PER_POINT * 18),
-                    ),
-                    None => {
-                        let d = 72.0 * EMU_PER_POINT as f32 * scale;
-                        (d, d, d, d, ibis_doc_model::EMU_PER_POINT * 18)
-                    }
-                };
-                let area_left = margin_l;
-                let area_right = (w - margin_r).max(area_left);
-                let area_top = margin_t;
-                let area_bottom = (h - margin_b).max(area_top);
-                if area_right <= area_left || area_bottom <= area_top {
-                    return;
-                }
-
-                let pitch = (pitch_emu as f32 * scale).max(8.0);
+                let Some(grid) = gridline_stops(setup, w, h, scale) else { return };
+                let [area_left, area_top, area_right, area_bottom] = grid.area;
                 let line_color = rgb(0xd0d4dc);
                 let min_thick = 1.0;
-
-                // 水平グリッド線（横線）
-                let mut y = area_top;
-                while y <= area_bottom + 0.5 {
-                    let r = Bounds::new(
-                        point(o.x + px(area_left), o.y + px(y)),
-                        size(px(area_right - area_left), px(min_thick)),
-                    );
+                for stop in grid.stops {
+                    let (at, size) = if grid.vertical {
+                        (point(o.x + px(stop), o.y + px(area_top)), size(px(min_thick), px(area_bottom - area_top)))
+                    } else {
+                        (point(o.x + px(area_left), o.y + px(stop)), size(px(area_right - area_left), px(min_thick)))
+                    };
+                    let r = Bounds::new(at, size);
                     if r.intersects(&visible) {
                         window.paint_quad(fill(r, line_color));
                     }
-                    y += pitch;
-                }
-
-                // 垂直グリッド線（縦線）
-                let mut x = area_left;
-                while x <= area_right + 0.5 {
-                    let r = Bounds::new(
-                        point(o.x + px(x), o.y + px(area_top)),
-                        size(px(min_thick), px(area_bottom - area_top)),
-                    );
-                    if r.intersects(&visible) {
-                        window.paint_quad(fill(r, line_color));
-                    }
-                    x += pitch;
                 }
             },
         )
@@ -1498,25 +1459,56 @@ impl SlideEditor {
         if let Some(doc) = doc {
             body_paras.extend(doc.body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.id) } else { None }));
             content_right = Some(w / k - doc.page.right as f32 / 12_700.0);
-            fn collect_paras(blocks: &[Block], out: &mut std::collections::HashMap<u32, std::sync::Arc<[char]>>) {
+            // Only the paragraphs that have a line on this page (the marks are on by default: a long document must not be read whole for every page).
+            let on_page: std::collections::HashSet<u32> = lines.iter().filter(|l| l.page == page_index).map(|l| l.para).collect();
+            fn collect_paras(blocks: &[Block], on_page: &std::collections::HashSet<u32>, out: &mut std::collections::HashMap<u32, std::sync::Arc<[char]>>) {
                 for b in blocks {
                     match b {
                         Block::Paragraph(p) => {
-                            out.insert(p.id, p.text().chars().collect::<Vec<_>>().into());
+                            if on_page.contains(&p.id) {
+                                out.insert(p.id, p.text().chars().collect::<Vec<_>>().into());
+                            }
                         }
                         Block::Table(t) => {
                             for row in &t.rows {
                                 for cell in &row.cells {
-                                    collect_paras(&cell.blocks, out);
+                                    collect_paras(&cell.blocks, on_page, out);
                                 }
                             }
                         }
                     }
                 }
             }
-            collect_paras(&doc.body, &mut para_texts);
-            collect_paras(&doc.header, &mut para_texts);
-            collect_paras(&doc.footer, &mut para_texts);
+            collect_paras(&doc.body, &on_page, &mut para_texts);
+            collect_paras(&doc.header, &on_page, &mut para_texts);
+            collect_paras(&doc.footer, &on_page, &mut para_texts);
+        }
+
+        // The paragraphs with an object that is not in the line (a floating shape): Word shows its anchor at the paragraph's start.
+        let mut anchor_paras: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        if let Some(doc) = doc {
+            fn collect_anchors(blocks: &[Block], on_page: &std::collections::HashSet<u32>, out: &mut std::collections::HashSet<u32>) {
+                for b in blocks {
+                    match b {
+                        Block::Paragraph(p) => {
+                            if on_page.contains(&p.id) && p.runs.iter().any(|r| matches!(&r.kind, ibis_doc_model::FlowRunKind::Shape(s) if s.floating.is_some())) {
+                                out.insert(p.id);
+                            }
+                        }
+                        Block::Table(t) => {
+                            for row in &t.rows {
+                                for cell in &row.cells {
+                                    collect_anchors(&cell.blocks, on_page, out);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let on_page: std::collections::HashSet<u32> = lines.iter().filter(|l| l.page == page_index).map(|l| l.para).collect();
+            collect_anchors(&doc.body, &on_page, &mut anchor_paras);
+            collect_anchors(&doc.header, &on_page, &mut anchor_paras);
+            collect_anchors(&doc.footer, &on_page, &mut anchor_paras);
         }
 
         let mut mark_lines = Vec::new();
@@ -1527,7 +1519,13 @@ impl SlideEditor {
                     && (l.page > line.page
                         || (l.page == line.page && (if l.vertical { l.x < line.x - 0.1 } else { l.y > line.y + 0.1 })))
             });
+            let is_first_line = !lines.iter().any(|l| {
+                l.para == line.para
+                    && (l.page < line.page
+                        || (l.page == line.page && (if l.vertical { l.x > line.x + 0.1 } else { l.y < line.y - 0.1 })))
+            });
             mark_lines.push(MarkLine {
+                anchor: is_first_line && anchor_paras.contains(&line.para),
                 para: line.para,
                 x: line.x,
                 y: line.y,
@@ -1555,7 +1553,7 @@ impl SlideEditor {
                     return;
                 }
                 let o = bounds.origin;
-                let mark_color = rgb(0x8295a8);
+                let mark_color = rgb(crate::prefs::MARK_COLOR);
                 let font = Font::default();
 
                 for line in &mark_lines {
@@ -1575,6 +1573,19 @@ impl SlideEditor {
                             paint_tab_arrow(window, cx, &font, mark_color.into(), o, k, line.x + from, to - from, line.y, line.h);
                         } else {
                             paint_tab_arrow_vertical(window, cx, &font, mark_color.into(), o, k, line.x, line.y + from, to - from, line.h);
+                        }
+                    }
+
+                    // 0'. アンカー（オブジェクトの位置）: ⚓ at the paragraph's start, in the margin as Word draws it.
+                    if line.anchor && options.is_object_anchors_visible(all_open) {
+                        let font_size_px = (line.h * 0.7 * k).clamp(9.0, 16.0);
+                        let shaped = shape_mark(window, &font, "\u{2693}", font_size_px, mark_color.into());
+                        if !line.vertical {
+                            let origin = point(o.x + px(line.x * k) - shaped.width - px(2.0), o.y + px(line.y * k + (line.h * k - font_size_px) * 0.5));
+                            shaped.paint(origin, px(font_size_px), TextAlign::Left, None, window, cx).ok();
+                        } else {
+                            let centre = point(o.x + px((line.x + line.h * 0.5) * k), o.y + px(line.y * k) - shaped.width * 0.5 - px(2.0));
+                            paint_turned_mark(window, &shaped, font_size_px, mark_color.into(), centre);
                         }
                     }
 
@@ -1640,6 +1651,18 @@ impl SlideEditor {
                                         paint_tab_arrow(window, cx, &font, mark_color.into(), o, k, line.x + x_offset, char_w, line.y, line.h);
                                     } else {
                                         paint_tab_arrow_vertical(window, cx, &font, mark_color.into(), o, k, line.x, line.y + x_offset, char_w, line.h);
+                                    }
+                                }
+                                '\u{00AD}' if options.is_optional_hyphens_visible(all_open) => {
+                                    // 任意指定のハイフン: ¬ (it has no width unless the line breaks there).
+                                    let font_size_px = (line.h * 0.7 * k).clamp(8.0, 16.0);
+                                    let shaped = shape_mark(window, &font, "\u{00AC}", font_size_px, mark_color.into());
+                                    if !line.vertical {
+                                        let origin = point(o.x + px((line.x + x_offset) * k), o.y + px(line.y * k + (line.h * k - font_size_px) * 0.5));
+                                        shaped.paint(origin, px(font_size_px), TextAlign::Left, None, window, cx).ok();
+                                    } else {
+                                        let centre = point(o.x + px((line.x + line.h * 0.5) * k), o.y + px((line.y + x_offset) * k + f32::from(shaped.width) * 0.5));
+                                        paint_turned_mark(window, &shaped, font_size_px, mark_color.into(), centre);
                                     }
                                 }
                                 '\u{000B}' if options.is_line_breaks_visible(all_open) => {
@@ -1796,6 +1819,8 @@ fn paint_turned_mark(window: &mut Window, shaped: &ShapedLine, size_px: f32, col
 }
 
 struct MarkLine {
+    /// The paragraph has an object that is not in the line, and this is its first line: the anchor is shown here.
+    anchor: bool,
     #[allow(dead_code)]
     para: u32,
     x: f32,
@@ -1863,4 +1888,55 @@ mod tests {
         assert!((x1 - (PAGE_GAP + w + PAGE_GAP)).abs() < 0.01);
         assert_eq!(y0, f32::from(content.slide_origin.y));
     }
+}
+
+/// The grid lines of a page (表示 > グリッド線, #287), in pixels of the page: the lines follow the text direction, so across writing has lines across
+/// (from the top of the text area down, one per line pitch) and vertical writing (縦書き) has lines down (from the right edge of the text area to the
+/// left). `area` is left, top, right, bottom. `scale` is pixels per EMU. `None` when the area is empty.
+pub(crate) struct GridLines {
+    pub(crate) vertical: bool,
+    pub(crate) area: [f32; 4],
+    pub(crate) stops: Vec<f32>,
+}
+
+pub(crate) fn gridline_stops(setup: Option<ibis_doc_model::PageSetup>, w: f32, h: f32, scale: f32) -> Option<GridLines> {
+    let default_margin = 72.0 * EMU_PER_POINT as f32 * scale;
+    let (vertical, [margin_l, margin_t, margin_r, margin_b], gutter, gutter_at_top, pitch_emu) = match setup {
+        Some(s) => (
+            matches!(s.direction, ibis_doc_model::CellDirection::TbRl | ibis_doc_model::CellDirection::BtLr),
+            [s.left as f32 * scale, s.top as f32 * scale, s.right as f32 * scale, s.bottom as f32 * scale],
+            s.gutter as f32 * scale,
+            s.gutter_at_top,
+            s.line_pitch.unwrap_or(ibis_doc_model::EMU_PER_POINT * 18),
+        ),
+        None => (false, [default_margin; 4], 0.0, false, ibis_doc_model::EMU_PER_POINT * 18),
+    };
+    let (mut left, mut top, mut right, bottom) = (margin_l, margin_t, w - margin_r, h - margin_b);
+    // The gutter: on the top (the top of the paper) when set, else on the right of vertical writing and on the left of across writing (Word, Windows, #287).
+    if gutter_at_top {
+        top += gutter;
+    } else if vertical {
+        right -= gutter;
+    } else {
+        left += gutter;
+    }
+    if right <= left || bottom <= top {
+        return None;
+    }
+    let pitch = (pitch_emu as f32 * scale).max(8.0);
+    let mut stops = Vec::new();
+    if vertical {
+        let mut x = right;
+        while x >= left - 0.5 {
+            stops.push(x);
+            x -= pitch;
+        }
+    } else {
+        let mut y = top;
+        while y <= bottom + 0.5 {
+            stops.push(y);
+            y += pitch;
+        }
+    }
+    Some(GridLines { vertical, area: [left, top, right, bottom], stops })
 }

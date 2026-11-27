@@ -30,7 +30,33 @@ pub enum ImeBridgeEvent {
     Enter,
 }
 
+/// The kind of the soft keyboard on the screen (K0064): the OS tells it with its frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyboardKind {
+    /// At the bottom of the screen, across its width, with no key of its own to hide it (an iPhone's).
+    Docked,
+    /// The same on an iPad: its right-bottom key hides it.
+    DockedWithHideKey,
+    /// A small keyboard that floats (an iPad's), or one split in two: narrower than the screen or not at its bottom.
+    Floating,
+    /// A hardware keyboard is connected: only the small bar of suggestions (an iPad's shortcut bar) or nothing is shown.
+    Hardware,
+}
+
+/// The soft keyboard now: how much of the bottom of the view it covers (points), its kind, and how long it takes to move (seconds).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KeyboardInfo {
+    pub height: f32,
+    pub kind: KeyboardKind,
+    pub duration: f32,
+}
+
+impl KeyboardInfo {
+    pub const HIDDEN: KeyboardInfo = KeyboardInfo { height: 0.0, kind: KeyboardKind::Docked, duration: 0.0 };
+}
+
 struct BridgeState {
+    keyboard: Mutex<KeyboardInfo>,
     next_request_id: AtomicI64,
     open_waiters: Mutex<HashMap<i64, oneshot::Sender<anyhow::Result<Option<Vec<PathBuf>>>>>>,
     save_waiters: Mutex<HashMap<i64, oneshot::Sender<anyhow::Result<Option<PathBuf>>>>>,
@@ -43,6 +69,7 @@ static BRIDGE: OnceLock<Arc<BridgeState>> = OnceLock::new();
 fn state() -> &'static Arc<BridgeState> {
     BRIDGE.get_or_init(|| {
         Arc::new(BridgeState {
+            keyboard: Mutex::new(KeyboardInfo::HIDDEN),
             next_request_id: AtomicI64::new(1),
             open_waiters: Mutex::new(HashMap::new()),
             save_waiters: Mutex::new(HashMap::new()),
@@ -50,6 +77,23 @@ fn state() -> &'static Arc<BridgeState> {
             ime_queue: Mutex::new(VecDeque::new()),
         })
     })
+}
+
+/// The soft keyboard as the OS last told (`UIKeyboardWillChangeFrameNotification`, `apps/ios/main.m`).
+pub fn keyboard() -> KeyboardInfo {
+    *state().keyboard.lock()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ibis_ios_keyboard_changed(height: f32, kind: i32, duration: f32) {
+    let kind = match kind {
+        1 => KeyboardKind::Floating,
+        2 => KeyboardKind::Hardware,
+        3 => KeyboardKind::DockedWithHideKey,
+        _ => KeyboardKind::Docked,
+    };
+    *state().keyboard.lock() = KeyboardInfo { height: height.max(0.0), kind, duration: duration.max(0.0) };
+    wake_main();
 }
 
 pub fn wake_main() {

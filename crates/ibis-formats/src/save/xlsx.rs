@@ -175,6 +175,8 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
                             hyperlinks: Vec::new(),
                             outline_rows: Default::default(),
                             outline_columns: Default::default(),
+                            collapsed_rows: Default::default(),
+                            collapsed_columns: Default::default(),
                             frozen: None,
                             split: None,
                             ..(**content).clone()
@@ -269,7 +271,7 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
     let multi_names: HashSet<String> = workbook.names.iter().filter(|n| n.formula.contains(':') || n.formula.contains(',')).map(|n| n.name.to_lowercase()).collect();
     let mut moved_chart_ids = move_chart_drawings(package, map, baseline, current, chart_data)?;
     moved_chart_ids.extend(shape_edits::write_shape_edits(package, map, baseline, current, &moved_chart_ids.clone(), new_charts, chart_data)?);
-    let mut writer = Writer { package, map, baseline, styles: None, strings: None, calc: CalcChanges::default(), multi_names, books: external_book_names(current) };
+    let mut writer = Writer { package, map, baseline, styles: None, new_styles: None, strings: None, calc: CalcChanges::default(), multi_names, books: external_book_names(current) };
     for (old_slide, new_slide) in baseline.slides.iter().zip(&current.slides) {
         if old_slide == new_slide && sheet_of(old_slide).zip(sheet_of(new_slide)).is_none_or(|(a,b)| sizes::conditional_sources_eq(&a.conditional,&b.conditional)) {
             continue;
@@ -926,7 +928,7 @@ fn repair_legacy_formulas(package: &mut Package, map: &SourceMap, baseline: &Pre
         return Ok(());
     }
     let vm = {
-        let mut writer = Writer { package, map, baseline, styles: None, strings: None, calc: CalcChanges::default(), multi_names: HashSet::new(), books: Vec::new() };
+        let mut writer = Writer { package, map, baseline, styles: None, new_styles: None, strings: None, calc: CalcChanges::default(), multi_names: HashSet::new(), books: Vec::new() };
         writer.rich_spill_metadata().unwrap_or(None)
     };
     let Some(vm) = vm else { return Ok(()) };
@@ -950,6 +952,8 @@ struct Writer<'a> {
     map: &'a SourceMap,
     baseline: &'a Presentation,
     styles: Option<StylesWriter>,
+    /// The styles part added by this save for a workbook that had none.
+    new_styles: Option<String>,
     strings: Option<StringsWriter>,
     calc: CalcChanges,
     /// The defined names that stand for more than one cell (lower case),
@@ -1042,6 +1046,8 @@ impl Writer<'_> {
             comments: Vec::new(),
             outline_rows: Default::default(),
             outline_columns: Default::default(),
+            collapsed_rows: Default::default(),
+            collapsed_columns: Default::default(),
             print: Default::default(),
             print_area: None,
             grid_lines: true,
@@ -1051,6 +1057,8 @@ impl Writer<'_> {
             page_layout: false,
             show_ruler: true,
             tab_color: None,
+            outline_summary_above: false,
+            outline_summary_left: false,
             auto_filter: None,
             filtered_rows: Default::default(),
             conditional: Vec::new(),
@@ -1078,7 +1086,7 @@ impl Writer<'_> {
         if bare(old) != bare(new) {
             return Err(unsupported("表示・印刷などシートの設定の変更"));
         }
-        if old.outline_rows != new.outline_rows || old.outline_columns != new.outline_columns {
+        if old.outline_rows != new.outline_rows || old.outline_columns != new.outline_columns || old.collapsed_rows != new.collapsed_rows || old.collapsed_columns != new.collapsed_columns {
             let digit = self.map.digit;
             let doc = self.package.xml_mut(part)?;
             sizes::write_outline(doc, old, new, digit)?;
@@ -1151,6 +1159,10 @@ impl Writer<'_> {
         if old.tab_color != new.tab_color {
             let doc = self.package.xml_mut(part)?;
             sizes::write_tab_color(doc, new.tab_color)?;
+        }
+        if (old.outline_summary_above, old.outline_summary_left) != (new.outline_summary_above, new.outline_summary_left) {
+            let doc = self.package.xml_mut(part)?;
+            sizes::write_outline_summary(doc, new.outline_summary_above, new.outline_summary_left)?;
         }
         if old.grid_lines != new.grid_lines {
             let doc = self.package.xml_mut(part)?;
@@ -1703,8 +1715,13 @@ impl Writer<'_> {
     fn xf_for(&mut self, style: &CellStyle) -> Result<u32, Error> {
         // A check box format names a check box feature property bag (the part is made when the workbook has none).
         let complement = if style.checkbox && !self.checkbox_formats_read(style) { Some(self.checkbox_complement()?) } else { None };
+        // A workbook with no styles part (Excel opens and saves one): the smallest one is added first.
+        if self.map.styles.is_none() && self.new_styles.is_none() {
+            self.new_styles = Some(add_minimal_styles_part(self.package, &self.map.workbook)?);
+        }
+        let part = self.map.styles.as_deref().or(self.new_styles.as_deref());
         let styles = self.styles.get_or_insert_with(|| StylesWriter::new(self.baseline));
-        styles.xf_for(self.package, self.map.styles.as_deref(), style, complement)
+        styles.xf_for(self.package, part, style, complement)
     }
 
     /// Whether the style is a format the workbook had as a check box, still unchanged in that (nothing to name).
@@ -5785,6 +5802,63 @@ fn relative_target(from: &str, part: &str) -> String {
         return rest.to_string();
     }
     format!("/{part}")
+}
+
+const REL_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+const CT_STYLES: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml";
+
+/// The smallest `styles.xml` (what Excel writes for a new workbook, without its theme-bound parts): the default font, the two fills
+/// every file starts with (none, gray125), an empty border, `cellStyleXfs` 0 and `cellXfs` 0 (the default format), the Normal style.
+/// Added to the package with its content type and the workbook's relationship; returns the part's name.
+fn add_minimal_styles_part(package: &mut Package, workbook: &str) -> Result<String, Error> {
+    let part = "xl/styles.xml";
+    let mut doc = XmlDocument::new_with_declaration();
+    let root = doc.append_element(XmlDocument::ROOT, "styleSheet");
+    doc.set_attr(root, "xmlns", MAIN_NS);
+    let list = |doc: &mut XmlDocument, name: &str| {
+        let n = doc.append_element(root, name);
+        doc.set_attr(n, "count", "1");
+        n
+    };
+    let fonts = list(&mut doc, "fonts");
+    let font = doc.append_element(fonts, "font");
+    let sz = doc.append_element(font, "sz");
+    doc.set_attr(sz, "val", "11");
+    let name = doc.append_element(font, "name");
+    doc.set_attr(name, "val", "Calibri");
+    let family = doc.append_element(font, "family");
+    doc.set_attr(family, "val", "2");
+    let fills = list(&mut doc, "fills");
+    doc.set_attr(fills, "count", "2");
+    for kind in ["none", "gray125"] {
+        let fill = doc.append_element(fills, "fill");
+        let p = doc.append_element(fill, "patternFill");
+        doc.set_attr(p, "patternType", kind);
+    }
+    let borders = list(&mut doc, "borders");
+    let border = doc.append_element(borders, "border");
+    for side in ["left", "right", "top", "bottom", "diagonal"] {
+        doc.append_element(border, side);
+    }
+    let style_xfs = list(&mut doc, "cellStyleXfs");
+    let xf = doc.append_element(style_xfs, "xf");
+    for (k, v) in [("numFmtId", "0"), ("fontId", "0"), ("fillId", "0"), ("borderId", "0")] {
+        doc.set_attr(xf, k, v);
+    }
+    let cell_xfs = list(&mut doc, "cellXfs");
+    let xf = doc.append_element(cell_xfs, "xf");
+    for (k, v) in [("numFmtId", "0"), ("fontId", "0"), ("fillId", "0"), ("borderId", "0"), ("xfId", "0")] {
+        doc.set_attr(xf, k, v);
+    }
+    let cell_styles = list(&mut doc, "cellStyles");
+    let style = doc.append_element(cell_styles, "cellStyle");
+    doc.set_attr(style, "name", "Normal");
+    doc.set_attr(style, "xfId", "0");
+    doc.set_attr(style, "builtinId", "0");
+    package.set_xml(part, doc);
+    package.set_override(part, CT_STYLES)?;
+    package.add_relationship(workbook, REL_STYLES, &relative_target(workbook, part), false)?;
+    Ok(part.to_string())
 }
 
 /// Making `cellXfs` entries for changed formats.

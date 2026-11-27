@@ -3836,6 +3836,23 @@ fn smooth_curve(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
 /// automatic one takes the series' turn in Office's order (a diamond, a square, a triangle, an x, a star, a
 /// circle, a plus, a dash); the others are the filled shapes of [`marker_shape`].
 fn marker_marks(m: &ibis_doc_model::Marker, series_index: usize, x: f32, y: f32, r: f32, color: Hsla, other: Option<Background>, px_per_point: f32) -> Vec<Mark> {
+    let mut marks = marker_fills(m, series_index, x, y, r, color, other, px_per_point);
+    // The marker's own line round each shape it fills.
+    if let Some(edge) = &m.edge {
+        let width = edge.width as f32 / ibis_doc_model::EMU_PER_POINT as f32 * px_per_point;
+        let outlines: Vec<Mark> = marks
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Fill(points, _) => Some(Mark::Stroke(points.iter().chain(points.first()).copied().collect(), width, hsla(edge.color))),
+                _ => None,
+            })
+            .collect();
+        marks.extend(outlines);
+    }
+    marks
+}
+
+fn marker_fills(m: &ibis_doc_model::Marker, series_index: usize, x: f32, y: f32, r: f32, color: Hsla, other: Option<Background>, px_per_point: f32) -> Vec<Mark> {
     use ibis_doc_model::MarkerSourceSymbol as S;
     const AUTO: [S; 8] = [S::Diamond, S::Square, S::Triangle, S::Cross, S::Star, S::Circle, S::Plus, S::Dash];
     let named = m.source.as_ref().and_then(|s| s.symbol);
@@ -4314,8 +4331,8 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
     let surface = chart.groups.iter().find(|g| is_surface(g));
     // Each entry's name, colour and, for a line, its series (whose line and
     // markers the key shows).
-    let entries: Vec<(String, Option<Hsla>, Option<(&Series, bool, usize)>)> = if let Some(ChartEx::Treemap { nodes, .. } | ChartEx::Sunburst(nodes)) = &chart.ex {
-        nodes.iter().map(|n| (n.name.clone(), Some(hsla(n.color)), None)).collect()
+    let entries: Vec<(String, Option<Hsla>, Option<(&Series, bool, usize)>, Option<Background>)> = if let Some(ChartEx::Treemap { nodes, .. } | ChartEx::Sunburst(nodes)) = &chart.ex {
+        nodes.iter().map(|n| (n.name.clone(), Some(hsla(n.color)), None, None)).collect()
     } else if let Some(surf) = surface {
         let (min_val, max_val) = surface_min_max(surf);
         let count = 4;
@@ -4326,7 +4343,7 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
                 let high = min_val + (k + 1) as f64 * step;
                 let name = format!("{low:.0}-{high:.0}");
                 let color = surface_band_color(k as f32 / (count - 1) as f32);
-                (name, Some(color), None)
+                (name, Some(color), None, None)
             })
             .collect()
     } else {
@@ -4337,13 +4354,13 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
                 .categories
                 .iter()
                 .enumerate()
-                .map(|(i, name)| (name.clone(), point_stroke(series, i).map(|s| hsla(s.color)).or_else(|| series_color(series)), Some((series, false, 0))))
+                .map(|(i, name)| (name.clone(), point_stroke(series, i).map(|s| hsla(s.color)).or_else(|| series_color(series)), Some((series, false, 0)), None))
                 .collect(),
             Some(series) => series
                 .categories
                 .iter()
                 .enumerate()
-                .map(|(i, name)| (name.clone(), background_color(point_fill(series, i)), None))
+                .map(|(i, name)| (name.clone(), background_color(point_fill(series, i)), None, dots_background(point_fill(series, i))))
                 .collect(),
             None => chart
                 .groups
@@ -4366,14 +4383,14 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
                     } else {
                         series_color(s)
                     };
-                    (s.name.clone(), color, line.then_some((s, is_radar_marker, index)))
+                    (s.name.clone(), color, line.then_some((s, is_radar_marker, index)), if line { None } else { dots_background(&s.fill) })
                 })
                 .chain(
                     // The trendlines follow the series: a dashed key (`usize::MAX` marks it).
                     chart.groups.iter().flat_map(|g| g.series.iter().filter(|s| listed(s))).filter_map(|s| {
                         let t = s.trendline.as_ref()?;
                         let color = t.stroke.as_ref().map(|st| hsla(st.color)).or_else(|| series_color(s));
-                        Some((trendline_legend_name(s, t), color, Some((s, false, usize::MAX))))
+                        Some((trendline_legend_name(s, t), color, Some((s, false, usize::MAX)), None))
                     }),
                 )
                 .collect(),
@@ -4440,13 +4457,13 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
     // coverage suites PCHT and XCHT); one given its own box spreads them
     // wider (1.75 sizes: decks with legends placed by hand).
     let entry_gap = size * if legend.layout.is_some() { 1.75 } else { 0.56 };
-    let widest = entries.iter().map(|(name, _, _)| key_w + key_gap + text_width(name, &legend.text, px_per_point)).fold(0.0, f32::max);
+    let widest = entries.iter().map(|(name, _, _, _)| key_w + key_gap + text_width(name, &legend.text, px_per_point)).fold(0.0, f32::max);
     // Entries stack when the legend is at a side (unless its box is wide
     // enough for them in a row), or when a row of the widest entry does
     // not fit the box.
     // Measured in the legend's font: whether the entries fit in a row.
     let measured = |name: &str| res.text_width(name, &chart_font(&legend.text, name, res), size);
-    let total: f32 = entries.iter().map(|(name, _, _)| key_w + key_gap + measured(name)).sum();
+    let total: f32 = entries.iter().map(|(name, _, _, _)| key_w + key_gap + measured(name)).sum();
     let pp_wrap = power_point_legend_wraps(chart, legend);
     let fits_row = total.min(visible * widest) + (visible - 1.0) * entry_gap <= if pp_wrap { area.w - 2.0 * CHART_PADDING_PT * px_per_point } else { area.w };
     // A row narrows its gaps to stay within the box, down to half a size.
@@ -4454,7 +4471,7 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
     // Two entries' widths side by side (with 5 % to spare: the substitute
     // fonts here run a little wider than Office's): a grid rather than one
     // column.
-    let two_fit = 2.0 * entries.iter().map(|(name, _, _)| key_w + key_gap + measured(name)).fold(0.0, f32::max) <= area.w * 1.05;
+    let two_fit = 2.0 * entries.iter().map(|(name, _, _, _)| key_w + key_gap + measured(name)).fold(0.0, f32::max) <= area.w * 1.05;
     let column = match legend.layout {
         Some(_) if matches!(legend.side, Side::Left | Side::Right) => !two_fit || area.w < w * 0.45,
         Some(_) => !fits_row && !two_fit && area.h >= visible * size * 1.2,
@@ -4463,7 +4480,7 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
     };
     // Entries in a row that do not fit it wrap into a grid of equal
     // columns, as many as fit (Excel's bottom legend of eight series).
-    let measured_widest = entries.iter().map(|(name, _, _)| key_w + key_gap + measured(name)).fold(0.0, f32::max);
+    let measured_widest = entries.iter().map(|(name, _, _, _)| key_w + key_gap + measured(name)).fold(0.0, f32::max);
     // Only a row well past the box wraps: one a little over it (as the
     // substitute fonts here make it) stays a row with its gaps narrowed.
     let row_least = total + (visible - 1.0) * size * 0.5;
@@ -4479,7 +4496,7 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
     let grid_columns = by_width.max((visible / rows_fit).ceil()).min(visible);
     // (A hair under the share, so rounding does not wrap the last column.)
     let grid_width = if excel_key { measured_widest + 4.9 * px_per_point } else { area.w / grid_columns - 0.5 };
-    let items = entries.into_iter().filter_map(|(name, color, line)| {
+    let items = entries.into_iter().filter_map(|(name, color, line, key_bg)| {
         let swatch = match line {
             // A line's key is its line, as thick as the series', with its
             // marker in the middle at the marker's size.
@@ -4515,7 +4532,7 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
                                 .when_some(fill, |d, c| d.bg(c)),
                         )
                     } else {
-                        let marker = series.marker.clone().unwrap_or(ibis_doc_model::Marker { source: None, symbol: MarkerSymbol::Circle, size: 5, fill: Fill::None });
+                        let marker = series.marker.clone().unwrap_or(ibis_doc_model::Marker { source: None, symbol: MarkerSymbol::Circle, size: 5, fill: Fill::None, edge: None });
                         let marks = match fill {
                             Some(c) => marker_marks(&marker, index, d / 2.0, d / 2.0, d / 2.0, c, Some(c.into()), px_per_point),
                             None => Vec::new(),
@@ -4533,7 +4550,7 @@ fn legend_element(chart: &Chart, legend: &ibis_doc_model::Legend, w: f32, h: f32
                     .children((series.stroke.is_some() || !has_marker).then(|| key_line(series.stroke.as_ref(), key_w, size, thickness, color)).into_iter().flatten())
                     .children(marker)
             }
-            None => div().flex_shrink_0().w(px(key_w)).h(px(size * 0.56)).when_some(color, |d, c| d.bg(c)),
+            None => div().flex_shrink_0().w(px(key_w)).h(px(size * 0.56)).when_some(color, |d, c| d.bg(c)).when_some(key_bg, |d, b| d.bg(b)),
         };
         let entry = div().flex().items_center().gap(px(key_gap)).child(swatch).child(text_div(&name, &legend.text, px_per_point, res)?);
         // A grid gives every entry the widest one's width.
@@ -4715,6 +4732,14 @@ fn draw_sunburst(nodes: &[ibis_doc_model::TreeNode], area: Area, px_per_point: f
         }
     }
     arcs(nodes, -std::f32::consts::FRAC_PI_2, std::f32::consts::TAU, 0, (cx, cy), (ring, hole), px_per_point, white, &style, marks, labels);
+}
+
+/// The background of a fill that is the dots of the pure black and white print (`shape_view::print_dots_background`), for a legend's key.
+fn dots_background(fill: &Fill) -> Option<Background> {
+    match fill {
+        Fill::Pattern { preset, .. } if crate::shape_view::print_dots_of(preset).is_some() => background(fill),
+        _ => None,
+    }
 }
 
 fn background_color(fill: &Fill) -> Option<Hsla> {
@@ -5472,11 +5497,11 @@ mod marker_tests {
         let blue = Fill::Solid(Color::opaque(Rgb(0x4472c4)));
         let red = Fill::Solid(Color::opaque(Rgb(0xff0000)));
         let green = Fill::Solid(Color::opaque(Rgb(0x00ff00)));
-        let marker = Marker { source: None, symbol: MarkerSymbol::Circle, size: 5, fill: red.clone() };
+        let marker = Marker { source: None, symbol: MarkerSymbol::Circle, size: 5, fill: red.clone(), edge: None };
         let series = Series {
             name: "S1".into(), categories: vec![], values: vec![], format: "General".into(),
             fill: blue, stroke: None, point_fills: vec![(1, green.clone()), (2, Fill::None)],
-            point_strokes: vec![], explosion: 0, point_explosions: vec![], marker: Some(marker.clone()), labels: None, trendline: None, error_bars: None, x_values: vec![], bubble_sizes: vec![], bubble_3d: false,
+            point_strokes: vec![], explosion: 0, point_explosions: vec![], marker: Some(marker.clone()), labels: None, trendline: None, error_bars: None, x_values: vec![], bubble_sizes: vec![], bubble_3d: false, has_format: true, has_outline: true,
             inner_shadow: None,
         };
         assert_eq!(marker_fill(&series, 0, &marker), &red);
@@ -5484,6 +5509,27 @@ mod marker_tests {
         assert_eq!(marker_fill(&series, 2, &marker), &Fill::None);
         let unfilled = Marker { fill: Fill::None, ..marker };
         assert_eq!(marker_fill(&series, 0, &unfilled), &Fill::None);
+    }
+
+    /// #225: a marker's edge (set by the pure black and white print) is a closed line round its shape; the legend key of a series takes the series' own fill, so
+    /// the black, white and striped series of that print have a black, a white and a striped (drawn black) key.
+    #[test]
+    fn a_marker_has_its_edge_and_the_legend_key_follows_the_series_fill() {
+        use super::{Mark, marker_marks, series_color};
+        let marker = Marker { source: None, symbol: MarkerSymbol::Square, size: 5, fill: Fill::Solid(Color::BLACK), edge: Some(ibis_doc_model::Stroke::solid(Color::BLACK, 7_620)) };
+        let marks = marker_marks(&marker, 0, 10.0, 10.0, 5.0, gpui_kit::hsla(0.0, 0.0, 0.0, 1.0), Some(gpui_kit::hsla(0.0, 0.0, 0.0, 1.0).into()), 1.0);
+        assert!(marks.iter().any(|m| matches!(m, Mark::Fill(..))) && marks.iter().any(|m| matches!(m, Mark::Stroke(p, w, _) if p.first() == p.last() && (*w - 0.6).abs() < 1e-3)));
+        let mut series = Series {
+            name: "S".into(), categories: vec![], values: vec![], format: "General".into(),
+            fill: Fill::Solid(Color::BLACK), stroke: Some(ibis_doc_model::Stroke::solid(Color::BLACK, 7_620)), point_fills: vec![],
+            point_strokes: vec![], explosion: 0, point_explosions: vec![], marker: None, labels: None, trendline: None, error_bars: None, x_values: vec![], bubble_sizes: vec![], bubble_3d: false, has_format: false, has_outline: false,
+            inner_shadow: None,
+        };
+        assert_eq!(series_color(&series).map(|c| c.l), Some(0.0), "a black series: a black key");
+        series.fill = Fill::Solid(Color::WHITE);
+        assert_eq!(series_color(&series).map(|c| c.l), Some(1.0), "a white series: a white key");
+        series.fill = Fill::Pattern { preset: "dkUpDiag".into(), foreground: Color::BLACK, background: Color::WHITE };
+        assert_eq!(series_color(&series).map(|c| c.l), Some(0.0), "a striped series: its edge's black");
     }
 }
 

@@ -305,6 +305,11 @@ impl SlideEditor {
         } else {
             return;
         };
+        // No pictures yet: told in a message box with one OK (as the slicer's, #261), not by a button that does nothing.
+        if pics.is_empty() {
+            self.show_alert(crate::shell::i18n::text("pptx.photo-album.title"), crate::shell::i18n::text("pptx.photo-album.no-pictures"), cx);
+            return;
+        }
         if self.create_photo_album(&pics, options, cx) {
             if let Some(s) = self.pptx_mut().and_then(|p| p.photo_album.as_mut()) {
                 s.message = Some(crate::shell::i18n::text("pptx.photo-album.create-success"));
@@ -569,27 +574,7 @@ impl SlideEditor {
         let panel_actions = crate::shell::chrome::action_bar()
                 .action(
                     crate::shell::chrome::ActionDefinition::new("pptx-photo-album-create", crate::shell::i18n::text("pptx.photo-album.create"), crate::shell::chrome::ActionButtonKind::Primary)
-                        .on_click(cx.listener(|e, _, _, cx| {
-                            let (pics, options) = if let Some(s) = e.pptx().and_then(|p| p.photo_album.as_ref()) {
-                                (
-                                    s.pictures.clone(),
-                                    PhotoAlbum {
-                                        bw: s.bw,
-                                        show_captions: s.show_captions,
-                                        layout: s.layout,
-                                        frame: s.frame,
-                                    },
-                                )
-                            } else {
-                                return;
-                            };
-                            if e.create_photo_album(&pics, options, cx) {
-                                if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) {
-                                    s.message = Some(crate::shell::i18n::text("pptx.photo-album.create-success"));
-                                }
-                                cx.notify();
-                            }
-                        })),
+                        .on_click(cx.listener(|e, _, _, cx| e.photo_album_apply_create(cx))),
                 )
 
             .action(crate::shell::chrome::dialog_cancel_definition(cx));

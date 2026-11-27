@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::component::{Icon, Selectable as _, Sizable as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::*;
@@ -100,14 +100,20 @@ pub fn visible(entries: &[MenuEntry], start: usize, height: f32) -> Visible {
 
 struct MenuScroll {
     entries: Rc<Vec<MenuEntry>>,
+    /// The first line shown (partly or whole): kept from the pixel offset for what reads it by lines.
     start: usize,
     width: f32,
     editor: WeakEntity<SlideEditor>,
     popup: WeakEntity<PopupMenu>,
     room: MenuRoom,
+    /// The bar the menu hangs from is at the window's bottom (`narrow_layout::bars_at_bottom`), set when the menu opens.
+    at_bottom: bool,
     bars: [Bounds<Pixels>; 2],
     scrollbar: Rc<crate::menu_scrollbar::ScrollbarState>,
     scroll_task: Option<Task<()>>,
+    /// The scroll of the menu's lines: a cut menu is a scrolling `Div` (the popup's own, K0078), so a finger's drag moves it by pixels, it coasts and stretches past
+    /// its ends as every scroll does since K0065, and the wheel is the `Div`'s.
+    handle: ScrollHandle,
 }
 
 /// Where a menu opens, which sets how tall it may be.
@@ -123,7 +129,7 @@ impl MenuScroll {
     /// How tall the menu may be in `window`.
     fn room(&self, window: &Window) -> f32 {
         match self.room {
-            MenuRoom::BelowBar => SlideEditor::menu_room(window),
+            MenuRoom::BelowBar => SlideEditor::menu_room(window, self.at_bottom),
             MenuRoom::Beside => SlideEditor::submenu_room(window),
         }
     }
@@ -137,33 +143,62 @@ impl MenuScroll {
         bounds.size.height += slack;
         bounds.contains(&at)
     }
+
+    /// The top of line `index` from the top of the lines.
+    fn row_top(&self, index: usize) -> f32 {
+        self.entries[..index.min(self.entries.len())].iter().map(height_of).sum()
+    }
+
+    /// How far the lines are scrolled (pixels; 0 at the top).
+    fn offset(&self) -> f32 {
+        (-f32::from(self.handle.offset().y)).max(0.0)
+    }
+
+    /// The most they can be scrolled: as the scroll area laid out says, and before it has laid out, all the lines' height less the room.
+    fn max_offset(&self, window: &Window) -> f32 {
+        let laid_out = f32::from(self.handle.max_offset().y);
+        if laid_out > 0.0 {
+            laid_out
+        } else {
+            (self.entries.iter().map(height_of).sum::<f32>() + MENU_PADDING - self.room(window)).max(0.0)
+        }
+    }
+
+    /// The first line that is shown at `offset` (the one the top edge is in).
+    fn first_row_at(&self, offset: f32) -> usize {
+        let mut top = 0.0;
+        for (index, entry) in self.entries.iter().enumerate() {
+            top += height_of(entry);
+            if top > offset + 0.5 {
+                return index;
+            }
+        }
+        self.entries.len().saturating_sub(1)
+    }
 }
 
+/// Scroll the menu so that line `start` is at the top (moved into the possible range); whether anything moved.
 fn scroll_menu_to(state: &Rc<std::cell::RefCell<MenuScroll>>, start: usize, window: &mut Window, cx: &mut App) -> bool {
-    let (popup, changed) = {
-        let mut s = state.borrow_mut();
-        let room = s.room(window);
-        let view = visible(&s.entries, start, room);
-        if view.start == s.start {
-            return false;
-        }
-        s.start = view.start;
-        (s.popup.clone(), true)
-    };
-    if changed {
-        let state_rebuild = state.clone();
-        popup
-            .update(cx, |popup, cx| {
-                popup.rebuild(window, cx, move |menu, window, cx| fill_menu_window(menu, &state_rebuild, window, cx));
-            })
-            .ok();
-        window.refresh();
+    let _ = cx;
+    let mut s = state.borrow_mut();
+    let target = s.row_top(start).min(s.max_offset(window));
+    let before = s.offset();
+    if (target - before).abs() < 0.5 {
+        return false;
     }
-    changed
+    let x = s.handle.offset().x;
+    s.handle.set_offset(point(x, px(-target)));
+    s.start = s.first_row_at(target);
+    drop(s);
+    window.refresh();
+    true
 }
 
 fn scroll_menu_by(state: &Rc<std::cell::RefCell<MenuScroll>>, lines: i32, window: &mut Window, cx: &mut App) -> bool {
-    let current = state.borrow().start;
+    let current = {
+        let s = state.borrow();
+        s.first_row_at(s.offset())
+    };
     let next = (current as i64 + lines as i64).max(0) as usize;
     scroll_menu_to(state, next, window, cx)
 }
@@ -199,119 +234,103 @@ fn menu_hover_scroll(state: &Rc<std::cell::RefCell<MenuScroll>>, dir: i32, hover
     state.borrow_mut().scroll_task = Some(task);
 }
 
-fn menu_scroll_row(
-    dir: i32,
-    with_overlay: bool,
-    view: Visible,
-    entries: Rc<Vec<MenuEntry>>,
-    state: &Rc<std::cell::RefCell<MenuScroll>>,
-) -> PopupMenuItem {
-    let state = state.clone();
-    PopupMenuItem::element(move |_, _| {
-        let state_hover = state.clone();
-        let state_click = state.clone();
-        let state_prepaint = state.clone();
-        let state_canvas = state.clone();
-        let entries_canvas = entries.clone();
-        div()
-            .id(if dir < 0 { "menu-scroll-up" } else { "menu-scroll-down" })
-            .occlude()
-            .relative()
-            .w_full()
-            .h(px(ITEM_HEIGHT - 2.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                Icon::new(Material(if dir < 0 { "keyboard_arrow_up" } else { "keyboard_arrow_down" }))
-                    .size(px(18.))
-                    .text_color(rgb(0x5f6368)),
-            )
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                scroll_menu_by(&state_click, dir, window, cx);
-                cx.stop_propagation();
-            })
-            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_hover(move |hovered, window, cx| {
-                menu_hover_scroll(&state_hover, dir, *hovered, window, cx);
-            })
-            .on_prepaint(move |bounds, _, _| {
-                state_prepaint.borrow_mut().bars[usize::from(dir > 0)] = bounds;
-            })
-            .when(with_overlay, |d| {
-                // Deferred: drawn after all the rows, so the highlighted row's background does not cover the scroll bar
-                // (the canvas sits in the first scroll row, which is drawn before the items when the menu is scrolled; #175).
-                d.child(deferred(
-                    canvas(
-                        |bounds, _, _| bounds,
-                        move |bounds, _, window, _| {
-                            let total = entries_canvas.len().max(1);
-                            let items_h: f32 = entries_canvas[view.start..view.end].iter().map(height_of).sum();
-                            let up_h = if view.start > 0 { ITEM_HEIGHT } else { 0.0 };
-                            let down_h = if view.end < total { ITEM_HEIGHT } else { 0.0 };
-                            let total_h = up_h + items_h + down_h;
-                            let menu_top = if dir < 0 {
-                                bounds.origin.y
-                            } else {
-                                bounds.origin.y + bounds.size.height - px(total_h)
-                            };
-                            // `bounds` is the popup's whole width (the canvas reaches out of the row to its edges).
-                            let menu_bounds = Bounds::new(
-                                point(bounds.origin.x, menu_top - px(MENU_PADDING / 2.0)),
-                                size(bounds.size.width, px(total_h + MENU_PADDING)),
-                            );
-                            let track_top = menu_top + px(up_h);
-                            let track_bounds = Bounds::new(
-                                point(bounds.origin.x + bounds.size.width - px(crate::menu_scrollbar::TRACK_WIDTH), track_top),
-                                size(px(crate::menu_scrollbar::TRACK_WIDTH), px(items_h.max(16.0))),
-                            );
-                            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
-                            crate::scenario::button_probe::record_bounds("submenu-popup", bounds);
-                            let (scrollbar_state, scroll_state) = (state_canvas.borrow().scrollbar.clone(), state_canvas.clone());
-                            crate::menu_scrollbar::paint(window, crate::menu_scrollbar::Scrollbar {
-                                track: track_bounds,
-                                start: view.start,
-                                end: view.end,
-                                total,
-                                state: scrollbar_state,
-                                scroll_to: Rc::new(move |start, window, cx| { scroll_menu_to(&scroll_state, start, window, cx); }),
-                                // Only the names the scenarios find them by differ.
-                                probes: match state_canvas.borrow().room {
-                                    MenuRoom::BelowBar => ("menu-scrollbar-track", "menu-scrollbar-thumb"),
-                                    MenuRoom::Beside => ("submenu-scroll-track", "submenu-scroll-thumb"),
-                                },
-                            });
+/// The ▲ (`dir` -1) or ▼ (1) of a cut menu: laid over the first or the last line, scrolls by a line when pressed and while hovered.
+fn menu_scroll_row(dir: i32, state: &Rc<std::cell::RefCell<MenuScroll>>, background: Hsla) -> Stateful<Div> {
+    let state_hover = state.clone();
+    let state_click = state.clone();
+    let state_prepaint = state.clone();
+    div()
+        .id(if dir < 0 { "menu-scroll-up" } else { "menu-scroll-down" })
+        .occlude()
+        .absolute()
+        .left_0()
+        .right_0()
+        .map(|d| if dir < 0 { d.top_0() } else { d.bottom_0() })
+        .h(px(ITEM_HEIGHT - 2.))
+        .bg(background)
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            Icon::new(Material(if dir < 0 { "keyboard_arrow_up" } else { "keyboard_arrow_down" }))
+                .size(px(18.))
+                .text_color(rgb(0x5f6368)),
+        )
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            scroll_menu_by(&state_click, dir, window, cx);
+            cx.stop_propagation();
+        })
+        .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_hover(move |hovered, window, cx| {
+            menu_hover_scroll(&state_hover, dir, *hovered, window, cx);
+        })
+        .on_prepaint(move |bounds, _, _| {
+            state_prepaint.borrow_mut().bars[usize::from(dir > 0)] = bounds;
+            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
+            crate::scenario::button_probe::record_bounds(if dir < 0 { "menu-scroll-up" } else { "menu-scroll-down" }, bounds);
+        })
+}
 
-                            let state_wheel = state_canvas.clone();
-                            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                                if phase == DispatchPhase::Capture && menu_bounds.contains(&event.position) {
-                                    let dy = f32::from(event.delta.pixel_delta(px(ITEM_HEIGHT)).y);
-                                    let lines = (-dy / ITEM_HEIGHT).round() as i32;
-                                    let lines = if lines == 0 && dy != 0.0 {
-                                        if dy < 0.0 { 1 } else { -1 }
-                                    } else {
-                                        lines
-                                    };
-                                    if lines != 0 {
-                                        scroll_menu_by(&state_wheel, lines, window, cx);
-                                    }
-                                    cx.stop_propagation();
-                                }
-                            });
-
+/// What is laid over a cut menu: the ▲ and ▼ where there is more above or below, and the scroll bar. They do not scroll with the lines.
+fn menu_overlay(state: &Rc<std::cell::RefCell<MenuScroll>>, window: &mut Window, cx: &mut App) -> AnyElement {
+    let (offset, max) = {
+        let s = state.borrow();
+        (s.offset(), s.max_offset(window))
+    };
+    let background = cx.theme().popover;
+    let state_canvas = state.clone();
+    div()
+        .absolute()
+        .inset_0()
+        .when(offset > 0.5, |d| d.child(menu_scroll_row(-1, state, background)))
+        .when(offset < max - 0.5, |d| d.child(menu_scroll_row(1, state, background)))
+        .child(
+            canvas(
+                |bounds, _, _| bounds,
+                move |bounds, _, window, _| {
+                    let (entries_len, offset, view_h, scrollbar_state) = {
+                        let s = state_canvas.borrow();
+                        (s.entries.len().max(1), s.offset(), f32::from(bounds.size.height) - MENU_PADDING, s.scrollbar.clone())
+                    };
+                    let (start, end) = {
+                        let s = state_canvas.borrow();
+                        let start = s.first_row_at(offset);
+                        let mut end = start;
+                        let mut used = s.row_top(start) - offset;
+                        while end < s.entries.len() && used < view_h {
+                            used += height_of(&s.entries[end]);
+                            end += 1;
+                        }
+                        (start, end.max(start + 1))
+                    };
+                    state_canvas.borrow_mut().start = start;
+                    // The track is the popup's right edge, the height of its lines.
+                    let track_bounds = Bounds::new(
+                        point(bounds.origin.x + bounds.size.width - px(crate::menu_scrollbar::TRACK_WIDTH), bounds.origin.y + px(MENU_PADDING / 2.0)),
+                        size(px(crate::menu_scrollbar::TRACK_WIDTH), px((f32::from(bounds.size.height) - MENU_PADDING).max(16.0))),
+                    );
+                    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux",windows)))]
+                    crate::scenario::button_probe::record_bounds("submenu-popup", bounds);
+                    let scroll_state = state_canvas.clone();
+                    crate::menu_scrollbar::paint(window, crate::menu_scrollbar::Scrollbar {
+                        track: track_bounds,
+                        start,
+                        end,
+                        total: entries_len,
+                        state: scrollbar_state,
+                        scroll_to: Rc::new(move |start, window, cx| { scroll_menu_to(&scroll_state, start, window, cx); }),
+                        // Only the names the scenarios find them by differ.
+                        probes: match state_canvas.borrow().room {
+                            MenuRoom::BelowBar => ("menu-scrollbar-track", "menu-scrollbar-thumb"),
+                            MenuRoom::Beside => ("submenu-scroll-track", "submenu-scroll-thumb"),
                         },
-                    )
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left(px(-POPUP_ROW_INSET_X))
-                    .right(px(-POPUP_ROW_INSET_X)),
-                )
-                // Above the popup's own deferred layer (POPUP_PRIORITY), or the popup's background would cover it.
-                .with_priority(gpui_kit::base::POPUP_PRIORITY + 1))
-            })
-    })
-    .disabled(true)
+                    });
+                },
+            )
+            .absolute()
+            .inset_0(),
+        )
+        .into_any_element()
 }
 
 fn fill_menu_window(
@@ -320,25 +339,21 @@ fn fill_menu_window(
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
-    let (entries, view, width, editor) = {
-        let mut s = state.borrow_mut();
-        let room = s.room(window);
-        let view = visible(&s.entries, s.start, room);
-        s.start = view.start;
-        (s.entries.clone(), view, s.width, s.editor.clone())
+    let (entries, room, width, editor) = {
+        let s = state.borrow();
+        (s.entries.clone(), s.room(window), s.width, s.editor.clone())
     };
-    let width=fitted_menu_width(width,f32::from(window.viewport_size().width));
-    let mut menu = menu.min_w(px(width)).max_w(px(width)).scrollable(false);
-    let has_up = view.cut && view.start > 0;
-    let has_down = view.cut && view.end < entries.len();
-    if has_up {
-        menu = menu.item(menu_scroll_row(-1, true, view, entries.clone(), state));
+    let width = fitted_menu_width(width, f32::from(window.viewport_size().width));
+    let menu = menu.min_w(px(width)).max_w(px(width));
+    if !visible(&entries, 0, room).cut {
+        return fill_menu_entries(menu.scrollable(false), &entries, width, &editor, window, cx);
     }
-    menu = fill_menu_entries(menu, &entries[view.start..view.end], width, &editor, window, cx);
-    if has_down {
-        menu = menu.item(menu_scroll_row(1, !has_up, view, entries, state));
-    }
-    menu
+    // A cut menu is the popup's own scrolling `Div` (K0078): all its lines, as tall as the room, scrolled by pixels. Its scroll bar and arrows are ours, laid over it.
+    let mut menu = menu.scrollable(true).show_scrollbar(false).max_h(px(room));
+    state.borrow_mut().handle = menu.scroll_handle();
+    let overlay_state = state.clone();
+    menu = menu.overlay(move |window, cx| menu_overlay(&overlay_state, window, cx));
+    fill_menu_entries(menu, &entries, width, &editor, window, cx)
 }
 
 /// Fill a submenu or dropdown `PopupMenu` with `entries`, using the same `▲`/`▼` hover rows,
@@ -365,9 +380,11 @@ pub(crate) fn fill_scrollable_popup_menu(
         editor: editor.clone(),
         popup: cx.entity().downgrade(),
         room: MenuRoom::Beside,
+        at_bottom: false,
         bars: Default::default(),
         scrollbar: Default::default(),
         scroll_task: None,
+        handle: ScrollHandle::new(),
     }));
     fill_menu_window(menu, &state, window, cx)
 }
@@ -388,9 +405,32 @@ impl OpenMenu {
     pub fn index(&self) -> usize {
         self.ix
     }
+    /// The menu's popup (the keys of the bar ask it whether an arrow is the bar's).
+    pub fn popup_entity(&self) -> &Entity<PopupMenu> {
+        &self.popup
+    }
     /// The first line shown.
     pub fn start(&self) -> usize {
-        self.scroll.borrow().start
+        let s = self.scroll.borrow();
+        s.first_row_at(s.offset())
+    }
+
+    /// How far the menu is scrolled, in pixels (the heights of the lines above the first one shown). Read by the scenarios of
+    /// `tasks/doc/test-design/K0077-menu-finger-scroll.md`; the fix makes the menu scroll by pixels and keeps this the pixel offset.
+    pub fn scrolled_px(&self) -> f32 {
+        self.scroll.borrow().offset()
+    }
+
+    /// The most the menu can be scrolled, 0 when it is not cut.
+    pub fn max_scrolled_px(&self, window: &Window) -> f32 {
+        let s = self.scroll.borrow();
+        if visible(&s.entries, 0, s.room(window)).cut { s.max_offset(window) } else { 0.0 }
+    }
+
+    /// How far the menu's lines are drawn past an end by a finger's pull (positive past the top, negative past the bottom), in pixels:
+    /// the rubber band of K0065.
+    pub fn stretch_px(&self) -> f32 {
+        f32::from(self.scroll.borrow().handle.bounce_offset().y)
     }
 }
 
@@ -486,24 +526,86 @@ fn static_fold_rank(kind: ibis_formats::Kind, id: MenuId) -> Fold {
 }
 
 /// The slots of the bar's menus, in the bar's order (the static menus, then the context menus: these fold from the right).
-fn bar_slots(items: &[(BarMenu, Vec<MenuEntry>)], kind: ibis_formats::Kind, window: &Window) -> Vec<BarSlot> {
-    let contexts = items.iter().filter(|(m, _)| matches!(m, BarMenu::Context(_))).count();
+fn bar_slots(menus: &[BarMenu], kind: ibis_formats::Kind, window: &Window) -> Vec<BarSlot> {
+    let contexts = menus.iter().filter(|m| matches!(m, BarMenu::Context(_))).count();
     let mut seen_contexts = 0;
-    items
+    menus
         .iter()
-        .map(|(menu, _)| {
-            let label = menu.label();
+        .map(|menu| {
             match menu {
-                BarMenu::Static(id) => BarSlot { width: crate::chrome::dropdown_list::label_width(window, &menu.display().text, 14.) + 2. * MENU_BAR_BUTTON_PADDING, fold: static_fold_rank(kind, *id) },
+                BarMenu::Static(id) => BarSlot {
+                    width: cached_bar_label_width(window, &menu.display().text, false) + 2. * MENU_BAR_BUTTON_PADDING,
+                    fold: static_fold_rank(kind, *id),
+                },
                 BarMenu::Context(_) => {
+                    let label = menu.label();
                     let first = seen_contexts == 0;
                     let rank = 1000 + (contexts - 1 - seen_contexts) as u32;
                     seen_contexts += 1;
-                    BarSlot { width: bold_label_width(window, &label, 14.) + 2. * MENU_BAR_BUTTON_PADDING + if first { GROUP_LINE_WIDTH } else { 0.0 }, fold: Fold::Rank(rank) }
+                    BarSlot {
+                        width: cached_bar_label_width(window, &label, true) + 2. * MENU_BAR_BUTTON_PADDING + if first { GROUP_LINE_WIDTH } else { 0.0 },
+                        fold: Fold::Rank(rank),
+                    }
                 }
             }
         })
         .collect()
+}
+
+struct BarWidthEntry {
+    ts_gen: u64,
+    font: gpui_kit::Font,
+    bold: bool,
+    label: String,
+    width: f32,
+}
+
+fn cached_bar_label_width(window: &Window, label: &str, bold: bool) -> f32 {
+    use std::hash::{Hash, Hasher};
+    let ts_gen = (std::sync::Arc::as_ptr(window.text_system()) as usize as u64)
+        ^ crate::render::shape_view::fonts_generation().wrapping_mul(0xA24B_AED4_963E_E407);
+    let font = window.text_style().font();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    ts_gen.hash(&mut hasher);
+    font.hash(&mut hasher);
+    bold.hash(&mut hasher);
+    label.hash(&mut hasher);
+    let key = hasher.finish();
+    thread_local! {
+        static WIDTHS: std::cell::RefCell<std::collections::HashMap<u64, BarWidthEntry>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    if let Some(width) = WIDTHS.with(|cache| {
+        cache
+            .borrow()
+            .get(&key)
+            .filter(|e| e.ts_gen == ts_gen && e.bold == bold && e.label == label && e.font == font)
+            .map(|e| e.width)
+    }) {
+        return width;
+    }
+    let width = if bold {
+        bold_label_width(window, label, 14.)
+    } else {
+        crate::chrome::dropdown_list::label_width(window, label, 14.)
+    };
+    WIDTHS.with(|cache| {
+        let mut map = cache.borrow_mut();
+        if map.len() >= 256 {
+            map.clear();
+        }
+        map.insert(
+            key,
+            BarWidthEntry {
+                ts_gen,
+                font,
+                bold,
+                label: label.to_owned(),
+                width,
+            },
+        );
+    });
+    width
 }
 
 /// How wide `label` is in the bold type of a context menu's name.
@@ -544,7 +646,11 @@ pub(crate) fn overflow_split(slots: &[BarSlot], available: f32, more_width: f32)
 
 impl SlideEditor {
     /// How tall a menu may be in this window.
-    pub(crate) fn menu_room(window: &Window) -> f32 {
+    pub(crate) fn menu_room(window: &Window, at_bottom: bool) -> f32 {
+        if at_bottom {
+            // The menu rises from the bar at the bottom: above it are the toolbar's and the menu bar's rows below it, and the title row above.
+            return f32::from(window.viewport_size().height) - 28.0 - 44.0 - 44.0 - WINDOW_MARGIN;
+        }
         f32::from(window.viewport_size().height) - BAR_BOTTOM - WINDOW_MARGIN
     }
 
@@ -589,6 +695,9 @@ impl SlideEditor {
         // A menu of the bar hangs from the left of its name; the Draw button's follows the one rule of the drop-down buttons.
         let anchor = if ix == DRAW_IX {
             self.draw_button_bounds.get().map_or(Anchor::TopRight, |b| crate::chrome::dropdown_list::below_button(b, px(width), window.viewport_size()).1)
+        } else if crate::narrow_layout::bars_at_bottom(self, window) {
+            // The bar is at the window's bottom (a narrow window of a touch device, K0061, K0077): the menu rises from its name.
+            Anchor::BottomLeft
         } else {
             Anchor::TopLeft
         };
@@ -600,9 +709,11 @@ impl SlideEditor {
             editor: cx.entity().downgrade(),
             popup: WeakEntity::new_invalid(),
             room: MenuRoom::BelowBar,
+            at_bottom: crate::narrow_layout::bars_at_bottom(self, window),
             bars: Default::default(),
             scrollbar: Default::default(),
             scroll_task: None,
+            handle: ScrollHandle::new(),
         }));
         let built = scroll.clone();
         let popup = PopupMenu::build(window, cx, move |menu, window, cx| {
@@ -631,6 +742,22 @@ impl SlideEditor {
         let mut items: Vec<(BarMenu, Vec<MenuEntry>)> = bar.statics.menus.into_iter().map(|(id, entries)| (BarMenu::Static(id), entries)).collect();
         items.extend(bar.contexts.into_iter().map(|(id, entries)| (BarMenu::Context(id), entries)));
         items
+    }
+
+    /// The bar's menu IDs without constructing full menu entry trees and command handlers.
+    pub(crate) fn bar_menu_ids(&self) -> Vec<BarMenu> {
+        if !self.has_document {
+            return self.start_menus().into_iter().map(|(id, _)| BarMenu::Static(id)).collect();
+        }
+        let specs = crate::menu_layout::layout(self.kind());
+        let mut menus = Vec::with_capacity(specs.len() + self.bar_contexts.len());
+        for spec in specs {
+            menus.push(BarMenu::Static(spec.id));
+        }
+        for &context in &self.bar_contexts {
+            menus.push(BarMenu::Context(context));
+        }
+        menus
     }
 
     /// Which menus of `items` show in the bar and which are folded into the ▾ at this window's width.
@@ -697,19 +824,19 @@ impl SlideEditor {
     /// The menu bar: the static menus, a thin line and the context menus of the selection (coloured), then the ▾ that holds
     /// the menus that do not fit (right after the last one that does). The Help menu is in the row like the others
     /// (the first to be folded into the ▾).
-    pub(crate) fn render_menu_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let items = self.bar_items();
-        let layout = self.bar_layout(&items, window);
+    pub(crate) fn render_menu_bar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let menus = self.bar_menu_ids();
+        let layout = self.bar_layout_menus(&menus, window);
         let open_ix = self.open_menu.as_ref().map(|o| o.ix);
         let logo_height = LOGO_HEIGHT_IN_BAR;
         let dark = crate::palette::is_dark();
         // The Help menu stands with the others, at the left (the user's decision, 2026-11-08); it is still the first folded into the ▾.
         let main: Vec<usize> = layout.visible.clone();
         let help: Option<usize> = None;
-        let first_context = main.iter().copied().find(|i| matches!(items[*i].0, BarMenu::Context(_)));
+        let first_context = main.iter().copied().find(|i| matches!(menus[*i], BarMenu::Context(_)));
         let kind = self.kind();
         let one = |cx: &mut Context<Self>, ix: usize| -> AnyElement {
-            let menu = items[ix].0;
+            let menu = menus[ix];
             let selected = open_ix == Some(ix);
             let id_key = menu.key();
             let tone = matches!(menu, BarMenu::Context(_)).then(|| context_tone(kind, dark));
@@ -772,7 +899,8 @@ impl SlideEditor {
         };
         let overflow_open = open_ix == Some(OVERFLOW_IX);
         let muted: Hsla = rgb(crate::chrome::TEXT_SECONDARY).into();
-        h_flex()
+        let scrolls = self.bars_scroll(window);
+        let bar = h_flex()
             .h(px(28.))
             .flex_shrink_0()
             .pl(px(layout.leading))
@@ -840,20 +968,42 @@ impl SlideEditor {
             .child(div().flex_1())
             .when_some(self.menu_notice.clone(), |bar, text| bar.child(div().px(px(8.)).text_size(px(12.)).text_color(muted).child(text)))
             .when_some(help, |bar, ix| bar.child(one(cx, ix)))
-            .child(div().w(px(BAR_TRAILING)))
+            .child(div().w(px(BAR_TRAILING)));
+        if !scrolls {
+            return bar.into_any_element();
+        }
+        // A touch device's narrow window: the bar scrolls sideways by a swipe (no scroll bar), with a shadow at each end with more to show.
+        let scroll = self.menu_bar_scroll.clone();
+        div()
+            .relative()
+            .w_full()
+            .h(px(28.))
+            .flex_shrink_0()
+            .overflow_hidden()
+            .bg(rgb(APP_BG))
+            // The swipe stretches past an end and springs back, as `UIScrollView` does (K0065, `gpui-base`'s `ScrollBounce`).
+            .child(gpui_kit::base::ScrollBounce::new("menu-bar-bounce", &scroll, div().id("menu-bar-scroll").flex().size_full().overflow_x_scroll().no_bounce().track_scroll(&scroll).child(bar.flex_none().min_w_full())).axis(Axis::Horizontal).enabled(true).touch_only())
+            .child(crate::narrow_layout::edge_shadows(&scroll))
+            .into_any_element()
     }
 
     /// Where the bar's parts go at this window's width: whether the logo shows, the room at its left, and which menus of
     /// `items` show and which are folded into the ▾.
     pub(crate) fn bar_layout(&self, items: &[(BarMenu, Vec<MenuEntry>)], window: &Window) -> BarLayout {
-        let slots = bar_slots(items, self.kind(), window);
+        let menus: Vec<BarMenu> = items.iter().map(|(m, _)| *m).collect();
+        self.bar_layout_menus(&menus, window)
+    }
+
+    pub(crate) fn bar_layout_menus(&self, menus: &[BarMenu], window: &Window) -> BarLayout {
+        let slots = bar_slots(menus, self.kind(), window);
         let viewport = f32::from(window.viewport_size().width);
         let total: f32 = slots.iter().map(|s| s.width).sum();
         let logo_width = LOGO_HEIGHT_IN_BAR * crate::chrome::LOGO_ASPECT + 2.0 * MENU_BAR_BUTTON_PADDING;
         let show_logo = viewport >= 8. + total + 16. + LOGO_HEIGHT_IN_BAR * crate::chrome::LOGO_ASPECT + 12.;
         let leading = bar_leading(show_logo);
         let available = viewport - leading - if show_logo { logo_width } else { 0.0 } - BAR_TRAILING;
-        let (visible, hidden) = overflow_split(&slots, available, MORE_WIDTH);
+        // A touch device's narrow window scrolls the bar sideways: nothing is folded into the ▾ (K0061).
+        let (visible, hidden) = if self.bars_scroll(window) { ((0..slots.len()).collect(), Vec::new()) } else { overflow_split(&slots, available, MORE_WIDTH) };
         BarLayout { show_logo, leading, visible, hidden }
     }
 
@@ -905,7 +1055,7 @@ impl SlideEditor {
                 let corner = div().absolute().top(px(32.));
                 d.child(if anchor == Anchor::TopLeft { corner.left_0() } else { corner.right_0() }.child(self.render_open_menu()))
             });
-        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
         let button = crate::scenario::button_probe::observe_control(button, "title-draw".into());
         button.into_any_element()
     }
@@ -918,7 +1068,8 @@ impl SlideEditor {
             anchored().anchor(open.anchor).snap_to_window_with_margin(px(8.)).child(
                 div()
                     .occlude()
-                    .top_1()
+                    .when(matches!(open.anchor, Anchor::BottomLeft | Anchor::BottomRight), |d| d.bottom_1())
+                    .when(!matches!(open.anchor, Anchor::BottomLeft | Anchor::BottomRight), |d| d.top_1())
                     .relative()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
@@ -945,7 +1096,7 @@ pub(crate) fn menu_bar_button(id: SharedString) -> Button {
         .h(px(MENU_BAR_BUTTON_HEIGHT))
         .px(px(MENU_BAR_BUTTON_PADDING))
         .rounded(px(MENU_BAR_BUTTON_RADIUS));
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     let button = crate::scenario::button_probe::observe(button, id.into());
     button
 }

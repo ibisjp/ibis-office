@@ -122,6 +122,7 @@ pub(crate) use super::names::NamesCrate as _;
 pub use super::names_panel::NamesPanelExt as _;
 pub(crate) use super::names_panel::NamesPanelExtCrate as _;
 pub(crate) use super::notes::NotesCrate as _;
+pub(crate) use super::outline_gutter::OutlineGutterCrate as _;
 pub use super::page_layout::PageLayout as _;
 pub(crate) use super::page_layout::PageLayoutCrate as _;
 pub(crate) use super::paste_names_dialog::PasteNamesDialogCrate as _;

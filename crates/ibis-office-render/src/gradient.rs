@@ -125,7 +125,8 @@ pub fn paint_gradient_mode(
     powerpoint: bool,
     map: &dyn Fn(&[Pt]) -> Vec<Point<Pixels>>,
 ) {
-    let mut paint = |pieces: Vec<Vec<Pt>>, color: Hsla| {
+    let cached = cached_gradient_bands(fill, subpaths, (w, h), px_per_unit, powerpoint);
+    for (pieces, color) in cached.iter() {
         let mut builder = PathBuilder::fill();
         let mut any = false;
         for piece in pieces.iter().filter(|p| p.len() >= 3) {
@@ -138,10 +139,183 @@ pub fn paint_gradient_mode(
             any = true;
         }
         if any && let Ok(path) = builder.build() {
-            window.paint_path(path, color);
+            window.paint_path(path, *color);
         }
-    };
-    gradient_pieces(fill, subpaths, (w, h), px_per_unit, powerpoint, &mut paint);
+    }
+}
+
+fn hash_color(color: &ibis_doc_model::Color, hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    color.rgb.0.hash(hasher);
+    color.alpha.hash(hasher);
+}
+
+fn hash_stops(stops: &[ibis_doc_model::GradientStop], hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    stops.len().hash(hasher);
+    for stop in stops {
+        stop.position.hash(hasher);
+        hash_color(&stop.color, hasher);
+    }
+}
+
+fn hash_fill(fill: &Fill, hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    std::mem::discriminant(fill).hash(hasher);
+    match fill {
+        Fill::None => {}
+        Fill::Solid(c) => hash_color(c, hasher),
+        Fill::Linear { angle, scaled, stops } => {
+            angle.hash(hasher);
+            scaled.hash(hasher);
+            hash_stops(stops, hasher);
+        }
+        Fill::TileLinear { angle, scaled, stops, tile, flip } => {
+            angle.hash(hasher);
+            scaled.hash(hasher);
+            hash_stops(stops, hasher);
+            tile.hash(hasher);
+            std::mem::discriminant(flip).hash(hasher);
+        }
+        Fill::Path { path, focus, stops } => {
+            std::mem::discriminant(path).hash(hasher);
+            focus.hash(hasher);
+            hash_stops(stops, hasher);
+        }
+        Fill::Pattern { preset, foreground, background } => {
+            preset.hash(hasher);
+            hash_color(foreground, hasher);
+            hash_color(background, hasher);
+        }
+        Fill::Image(media) => media.0.hash(hasher),
+        Fill::TileImage { media, tx, ty, sx, sy, flip, align } => {
+            media.0.hash(hasher);
+            tx.hash(hasher);
+            ty.hash(hasher);
+            sx.hash(hasher);
+            sy.hash(hasher);
+            std::mem::discriminant(flip).hash(hasher);
+            std::mem::discriminant(align).hash(hasher);
+        }
+        Fill::Blip(blip) => {
+            blip.media.0.hash(hasher);
+            blip.fill_rect.hash(hasher);
+            blip.tile.is_some().hash(hasher);
+            blip.rot_with_shape.hash(hasher);
+        }
+    }
+}
+
+fn subpaths_bits_eq(a: &[Vec<Pt>], b: &[Vec<Pt>]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b.iter()).all(|(sa, sb)| {
+            sa.len() == sb.len()
+                && sa
+                    .iter()
+                    .zip(sb.iter())
+                    .all(|(&(ax, ay), &(bx, by))| ax.to_bits() == bx.to_bits() && ay.to_bits() == by.to_bits())
+        })
+}
+
+fn gradient_cache_key(
+    fill: &Fill,
+    subpaths: &[Vec<Pt>],
+    (w, h): (f32, f32),
+    px_per_unit: f32,
+    powerpoint: bool,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_fill(fill, &mut hasher);
+    subpaths.len().hash(&mut hasher);
+    for sp in subpaths {
+        sp.len().hash(&mut hasher);
+        for &(x, y) in sp {
+            x.to_bits().hash(&mut hasher);
+            y.to_bits().hash(&mut hasher);
+        }
+    }
+    w.to_bits().hash(&mut hasher);
+    h.to_bits().hash(&mut hasher);
+    px_per_unit.to_bits().hash(&mut hasher);
+    powerpoint.hash(&mut hasher);
+    hasher.finish()
+}
+
+struct CachedGradient {
+    fill: Fill,
+    subpaths: Vec<Vec<Pt>>,
+    w_bits: u32,
+    h_bits: u32,
+    px_per_unit_bits: u32,
+    powerpoint: bool,
+    bands: std::rc::Rc<Vec<(Vec<Vec<Pt>>, Hsla)>>,
+}
+
+impl CachedGradient {
+    fn matches(
+        &self,
+        fill: &Fill,
+        subpaths: &[Vec<Pt>],
+        (w, h): (f32, f32),
+        px_per_unit: f32,
+        powerpoint: bool,
+    ) -> bool {
+        self.w_bits == w.to_bits()
+            && self.h_bits == h.to_bits()
+            && self.px_per_unit_bits == px_per_unit.to_bits()
+            && self.powerpoint == powerpoint
+            && self.fill == *fill
+            && subpaths_bits_eq(&self.subpaths, subpaths)
+    }
+}
+
+fn cached_gradient_bands(
+    fill: &Fill,
+    subpaths: &[Vec<Pt>],
+    (w, h): (f32, f32),
+    px_per_unit: f32,
+    powerpoint: bool,
+) -> std::rc::Rc<Vec<(Vec<Vec<Pt>>, Hsla)>> {
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<u64, CachedGradient>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let key = gradient_cache_key(fill, subpaths, (w, h), px_per_unit, powerpoint);
+    if let Some(bands) = CACHE.with(|c| {
+        c.borrow()
+            .get(&key)
+            .filter(|entry| entry.matches(fill, subpaths, (w, h), px_per_unit, powerpoint))
+            .map(|entry| entry.bands.clone())
+    }) {
+        return bands;
+    }
+    let mut out = Vec::new();
+    gradient_pieces(fill, subpaths, (w, h), px_per_unit, powerpoint, &mut |pieces, color| {
+        if pieces.iter().any(|p| p.len() >= 3) {
+            out.push((pieces, color));
+        }
+    });
+    let bands = std::rc::Rc::new(out);
+    CACHE.with(|c| {
+        let mut map = c.borrow_mut();
+        if map.len() >= 512 {
+            map.clear();
+        }
+        map.insert(
+            key,
+            CachedGradient {
+                fill: fill.clone(),
+                subpaths: subpaths.to_vec(),
+                w_bits: w.to_bits(),
+                h_bits: h.to_bits(),
+                px_per_unit_bits: px_per_unit.to_bits(),
+                powerpoint,
+                bands: bands.clone(),
+            },
+        );
+    });
+    bands
 }
 
 /// The bands `paint_gradient_mode` paints, in painting order (each laid over the ones before): polygons in the shape's own coordinates and the
@@ -379,5 +553,28 @@ mod tests {
         let cut = clip_convex(&square, &diamond);
         let area: f32 = cut.iter().enumerate().map(|(i, a)| { let b = cut[(i + 1) % cut.len()]; a.0 * b.1 - b.0 * a.1 }).sum::<f32>().abs() / 2.0;
         assert!((area - 50.0).abs() < 0.01, "{cut:?}");
+    }
+
+    #[test]
+    fn gradient_cache_reuses_and_distinguishes_inputs() {
+        let stop = |position, rgb| GradientStop { position, color: DocColor::opaque(Rgb(rgb)) };
+        let fill_a = ibis_doc_model::Fill::Linear {
+            angle: 0,
+            scaled: false,
+            stops: vec![stop(0, 0xFF0000), stop(100_000, 0x0000FF)],
+        };
+        let fill_b = ibis_doc_model::Fill::Linear {
+            angle: 5_400_000,
+            scaled: false,
+            stops: vec![stop(0, 0xFF0000), stop(100_000, 0x0000FF)],
+        };
+        let square = vec![vec![(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)]];
+        let a1 = super::cached_gradient_bands(&fill_a, &square, (100.0, 100.0), 1.0, false);
+        let a2 = super::cached_gradient_bands(&fill_a, &square, (100.0, 100.0), 1.0, false);
+        let b1 = super::cached_gradient_bands(&fill_b, &square, (100.0, 100.0), 1.0, false);
+        assert!(std::rc::Rc::ptr_eq(&a1, &a2), "identical gradient parameters should hit cache");
+        assert!(!std::rc::Rc::ptr_eq(&a1, &b1), "different angle should produce distinct cached bands");
+        assert!(!a1.is_empty());
+        assert!(!b1.is_empty());
     }
 }

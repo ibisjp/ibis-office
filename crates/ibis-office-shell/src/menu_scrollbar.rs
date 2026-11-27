@@ -65,7 +65,7 @@ pub(crate) fn paint(window: &mut Window, bar: Scrollbar) {
     let Scrollbar { track, start, end, total, state, scroll_to, probes } = bar;
     let _ = probes;
     let thumb = thumb_bounds(track, start, end, total);
-    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
     {
         crate::scenario::button_probe::record_bounds(probes.0, track);
         crate::scenario::button_probe::record_bounds(probes.1, thumb);

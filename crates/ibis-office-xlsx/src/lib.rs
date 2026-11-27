@@ -63,6 +63,7 @@ pub(crate) mod error_check;
 pub(crate) mod external_links;
 pub(crate) use crate::shell::xls_note as export_xls;
 pub(crate) mod import_text;
+pub(crate) mod import_delimited;
 pub(crate) mod text_columns;
 pub(crate) mod goto_special;
 pub(crate) mod split_view;
@@ -103,7 +104,8 @@ pub(crate) mod find;
 pub(crate) mod links;
 pub(crate) mod drag_autoscroll;
 pub(crate) mod headers;
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+pub(crate) mod outline_gutter;
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
 #[path = "tests/scenarios.rs"]
 pub mod scenarios;
 pub mod export_hooks;
@@ -112,6 +114,7 @@ mod sheet_tab_scroll;
 pub(crate) mod sheet_tab_drag;
 mod right_pane;
 pub mod sheet_view;
+pub(crate) mod limited_grid;
 pub(crate) mod view_position;
 pub(crate) mod sheet_group;
 pub(crate) mod replace_fonts;
@@ -243,6 +246,8 @@ pub struct State {
     pub fill_source: Option<ibis_doc_model::CellRange>,
     /// The selection's border being dragged to move or copy it.
     pub(crate) cell_move: Option<fill::CellMove>,
+    /// A table's resize handle being dragged (#303): the table and the range it would have.
+    pub(crate) table_resize: Option<(usize, ibis_doc_model::CellRange)>,
     /// Option is held while the fill handle is dragged (a copy, not a series).
     pub(crate) fill_copy: bool,
     /// A range let go over cells with data, waiting for the answer of Excel's question.
@@ -318,6 +323,9 @@ pub struct State {
     pub tab_scroll: ScrollHandle,
     pub(crate) tab_reveal: Option<SlideId>,
     pub(crate) tab_last_click: Option<(SlideId, usize)>,
+    /// Whether the last frame drew the + fixed at the strip's right (not inline after the last tab); the decision of the next frame reads it to recover the width
+    /// the strip has with the + inline (K0085). Not a setting.
+    pub(crate) tab_plus_fixed: std::cell::Cell<Option<bool>>,
     /// The sheets selected together with the present one (作業グループ, `sheet_group.rs`; in use only while the present sheet is one of them).
     pub(crate) group: Vec<SlideId>,
     /// Whether the formula bar is shown.
@@ -371,6 +379,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("delete", CellDelete, c),
         KeyBinding::new(&m("b"), CellBold, c),
         KeyBinding::new(&m("t"), InsertTable, c),
+        KeyBinding::new(if crate::shell::app::is_mac() { "cmd-shift-k" } else { "alt-shift-right" }, GroupLines, c),
+        KeyBinding::new(if crate::shell::app::is_mac() { "cmd-shift-j" } else { "alt-shift-left" }, UngroupLines, c),
         KeyBinding::new(&m("i"), CellItalic, c),
         KeyBinding::new(&m("u"), CellUnderline, c),
         KeyBinding::new(&m("c"), CellCopy, c),
@@ -511,6 +521,7 @@ impl crate::shell::format::GestureView for State {
             header_select,
             header_hover: _,
             header_popup: _,
+            table_resize: _,
             fill_source,
             cell_move,
             fill_copy,
@@ -554,6 +565,7 @@ impl crate::shell::format::GestureView for State {
             tab_scroll: _,
             tab_reveal: _,
             tab_last_click: _,
+            tab_plus_fixed: _,
             group: _,
             show_formula_bar: _,
             validation_circles: _,
@@ -623,6 +635,26 @@ impl SlideEditor {
 
     pub fn sheet_state_mut(&mut self) -> Option<&mut State> {
         self.format_state_mut::<State>()
+    }
+
+    /// For the scenarios (K0073): the sheet's pop-up menu (a cell's, a header's, a tab's) is open; `close_sheet_popup` closes it.
+    #[cfg(feature = "scenarios")]
+    pub fn sheet_popup_open(&self) -> bool {
+        self.sheet_state().is_some_and(|s| s.header_popup.is_some())
+    }
+
+    /// For the scenarios (K0078, `tasks/doc/test-design/K0079.md`): the sheet tab that is drawn lifted, with its drop shadow (a tab being
+    /// dragged along the strip; for a finger also the tab held 500 ms, before it moves).
+    #[cfg(feature = "scenarios")]
+    pub fn sheet_tab_lifted(&self) -> Option<SlideId> {
+        self.sheet_state()?.tab_drag.as_ref().filter(|d| d.active).map(|d| d.id)
+    }
+
+    #[cfg(feature = "scenarios")]
+    pub fn close_sheet_popup(&mut self) {
+        if let Some(s) = self.sheet_state_mut() {
+            s.header_popup = None;
+        }
     }
 
     /// The selected cell of the current worksheet: (column, row) of the cell
@@ -1340,7 +1372,7 @@ impl FormatEditor for Workbook {
             _ => None,
         });
         conditional::apply_ahead(sheets.collect());
-        Box::new(State { range_pick: None, range_pick_click_release: false, cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, drag_scroll: None, deselect_drag: None, split_drag: None, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), bar_marked_rect: Default::default(), bar_expanded: false, bar_visual_lines: Vec::new(), bar_caret_row:None, bar_shapes:Vec::new(), bar_scroll: ScrollHandle::new(), clip: None, copy_outline: false, header_geometry: Default::default(), header_drag: None, timeline_drag: None, control_drag: None, ruler_margin_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, cell_move: None, fill_copy: false, move_overwrite: None, tab_start: None, painter: None, names: None, validation: None, validation_warning: None, list_popup: None, validation_choices: None, validation_rejected: None, validation_message_bounds: None, filter_panel: None, comment_hover: None, note_card: Default::default(), comment_scroll: ScrollHandle::new(), comment_popup: Default::default(), table_dialog: None, chart_edit: None, last_fill: None, last_paste: None, find: None, spelling: None, link: None, page_setup: false, print_panel: false, header_footer_edit: None, custom_format: None, format_tab: 0, conditional_edit: None, sort_edit: None, panels: Default::default(), links_notice: crate::shell::settings_dialog::links_warning_enabled() && presentation.workbook.as_ref().is_some_and(|w| w.external_books.iter().any(|b| !b.broken && !b.name.is_empty())), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), tab_reveal: None, tab_last_click: None, group: Vec::new(), right_key: None, dialog_pane_open: false, pivot_pane: Default::default(), show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, always_create_backup: None, show_all_notes: false, design_mode: false, status_summary_mask: STATUS_SUMMARY_DEFAULT, sheet_scrolls: HashMap::new(), pending_view_scroll: None })
+        Box::new(State { range_pick: None, range_pick_click_release: false, cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, drag_scroll: None, deselect_drag: None, split_drag: None, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), bar_marked_rect: Default::default(), bar_expanded: false, bar_visual_lines: Vec::new(), bar_caret_row:None, bar_shapes:Vec::new(), bar_scroll: ScrollHandle::new(), clip: None, copy_outline: false, header_geometry: Default::default(), header_drag: None, timeline_drag: None, control_drag: None, ruler_margin_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, cell_move: None, table_resize: None, fill_copy: false, move_overwrite: None, tab_start: None, painter: None, names: None, validation: None, validation_warning: None, list_popup: None, validation_choices: None, validation_rejected: None, validation_message_bounds: None, filter_panel: None, comment_hover: None, note_card: Default::default(), comment_scroll: ScrollHandle::new(), comment_popup: Default::default(), table_dialog: None, chart_edit: None, last_fill: None, last_paste: None, find: None, spelling: None, link: None, page_setup: false, print_panel: false, header_footer_edit: None, custom_format: None, format_tab: 0, conditional_edit: None, sort_edit: None, panels: Default::default(), links_notice: crate::shell::settings_dialog::links_warning_enabled() && presentation.workbook.as_ref().is_some_and(|w| w.external_books.iter().any(|b| !b.broken && !b.name.is_empty())), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), tab_reveal: None, tab_last_click: None, tab_plus_fixed: Default::default(), group: Vec::new(), right_key: None, dialog_pane_open: false, pivot_pane: Default::default(), show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, always_create_backup: None, show_all_notes: false, design_mode: false, status_summary_mask: STATUS_SUMMARY_DEFAULT, sheet_scrolls: HashMap::new(), pending_view_scroll: None })
     }
 
     /// A worksheet at its own zoom, as Excel shows it.
@@ -1404,12 +1436,21 @@ impl FormatEditor for Workbook {
             let target_w = (shape.frame.right() + extra_w).min(shape.frame.x + max_total_w);
             let target_h = (shape.frame.bottom() + extra_h).min(shape.frame.y + max_total_h);
 
-            page.width = page.width.max(target_w);
-            page.height = page.height.max(target_h);
+            // 限られたグリッド表示 (#273): the used range and a margin (grown by the selection), not the 1,000 rows and 50 columns of the whole grid.
+            if crate::shell::settings_dialog::limited_grid() {
+                let (columns, rows) = limited_grid::extent(sheet, editor.selected_range());
+                editor.resources.grid_limit.set(Some((columns, rows)));
+                page.width = shape.frame.x + limited_grid::offset_at(&sheet.columns, default_col, columns);
+                page.height = shape.frame.y + limited_grid::offset_at(&sheet.rows, default_row, rows);
+            } else {
+                editor.resources.grid_limit.set(None);
+                page.width = page.width.max(target_w);
+                page.height = page.height.max(target_h);
+            }
         }
         let before = if headings {
             let row_header_w = editor.current_sheet().map_or(sheet_ui::ROW_HEADER_WIDTH, |(_, s)| sheet_ui::row_header_width(s));
-            point(row_header_w, sheet_ui::COLUMN_HEADER_HEIGHT)
+            point(row_header_w, editor.current_sheet().map_or(sheet_ui::COLUMN_HEADER_HEIGHT, |(_, s)| crate::shell::sheet_metrics::column_header_height(s)))
         } else {
             point(0.0, 0.0)
         };
@@ -1445,6 +1486,13 @@ impl FormatEditor for Workbook {
         state.in_pivot = editor.pivot_at_selection().is_some();
         state.in_sparkline = editor.sparkline_group_at_selection().is_some();
     }
+
+    /// Where the user types, for the toolbar over the soft keyboard (K0064): a formula (it begins with `=`) or a value.
+    fn soft_keyboard_target(editor: &SlideEditor) -> Option<crate::shell::keyboard_toolbar::Target> {
+        use crate::shell::keyboard_toolbar::Target;
+        Some(if editor.cell_edit().is_some_and(|e| e.text.starts_with('=')) { Target::SheetFormula } else { Target::SheetValue })
+    }
+
 
     /// A worksheet opens where it was left (its scroll; its selected cell, its split panes and its zoom are kept too), at the top-left corner
     /// the first time, at its own zoom.
@@ -1511,23 +1559,69 @@ impl FormatEditor for Workbook {
         toolbar::menus(editor, menus);
     }
 
-    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
     fn scenarios() -> Vec<(&'static str, fn())> {
         scenarios::all()
     }
 
-    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
     fn ignored_scenarios() -> Vec<(&'static str, fn())> {
-        Vec::new()
+        scenarios::ignored()
     }
 
     // ----- Typing into cells (cell_edit.rs) or shapes (text_edit.rs) -------
 
     fn wants_text_input(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> bool {
+        // A book that cannot be edited takes no typing (nothing for the keyboard to type into).
+        if editor.is_read_only() {
+            return false;
+        }
         if editor.editing.is_some() {
             return true;
         }
+        // The name box (a reference is typed there) takes the keyboard too; it is an input of its own that the platform asks when it has the focus.
+        if editor.sheet_state().is_some_and(|s| s.jump.name_box.read(cx).focus_handle(cx).is_focused(window)) {
+            return !editor.is_read_only();
+        }
         editor.cells_take_typing(window, cx)
+    }
+
+    fn reveal_input_by_itself(editor: &mut SlideEditor, view: Bounds<Pixels>) -> bool {
+        // Before the cell's editor opens the current cell is brought in by the sheet's own scrolling (the headers and the frozen panes are not covered by it); the cell being typed into
+        // is the editor's box, which the generic way moves.
+        if editor.cell_edit().is_some() {
+            return false;
+        }
+        // The sheet's `scroll_cell_into_view` keeps the cell off the bottom edge by a scroll bar's room only; the room the keyboard's top should have is the margin: the part of the body
+        // the keyboard leaves is `view` and a cell that is within the margin of its bottom is moved by the difference.
+        editor.scroll_cell_into_view();
+        let Some(place) = Self::input_place(editor) else { return true };
+        let over = f32::from(place.bottom()) - (f32::from(view.bottom()) - crate::shell::keyboard_scroll::MARGIN);
+        if over > 0.0 {
+            let offset = editor.workspace_scroll.offset();
+            editor.workspace_scroll.set_offset(point(offset.x, offset.y - px(over)));
+        }
+        true
+    }
+
+    fn typing_outside_the_body(editor: &SlideEditor, window: &Window, cx: &App) -> bool {
+        // A press on the formula bar types into the cell through the bar (its caret is the bar's, outside the body), or the name box has the focus.
+        editor.cell_edit().is_some_and(|e| e.dragging_in_bar) || editor.sheet_state().is_some_and(|s| s.jump.name_box.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    fn input_place(editor: &SlideEditor) -> Option<Bounds<Pixels>> {
+        // The current cell's box (before its editor opens): `cell_corner` is its bottom right and `cell_center` its middle.
+        let (column, row) = editor.current_cell()?;
+        let (corner, centre) = (editor.cell_corner(column, row)?, editor.cell_center(column, row)?);
+        let origin = point(centre.x * 2.0 - corner.x, centre.y * 2.0 - corner.y);
+        Some(Bounds::new(origin, size(corner.x - origin.x, corner.y - origin.y)))
+    }
+
+    fn tap_on_text_field(editor: &SlideEditor, point: Point<Pixels>) -> bool {
+        // The formula bar (shown: it has been drawn, so its bounds are known) types into the selected cell.
+        // (Not in a read-only book: nothing is typed there.)
+        !editor.is_read_only()
+            && editor.sheet_state().is_some_and(|s| s.show_formula_bar && (s.bar_bounds.get().is_some_and(|b| b.contains(&point)) || s.jump.name_box_bounds.get().is_some_and(|b| b.contains(&point))))
     }
 
     fn text_for_range(editor: &mut SlideEditor, range: std::ops::Range<usize>, adjusted: &mut Option<std::ops::Range<usize>>, _: &mut Window, _: &mut Context<SlideEditor>) -> Option<String> {
@@ -1559,7 +1653,19 @@ impl FormatEditor for Workbook {
         editor.cell_unmark();
     }
 
-    fn replace_text_in_range(editor: &mut SlideEditor, range: Option<std::ops::Range<usize>>, text: &str, _: &mut Window, cx: &mut Context<SlideEditor>) {
+    fn replace_text_in_range(editor: &mut SlideEditor, range: Option<std::ops::Range<usize>>, text: &str, window: &mut Window, cx: &mut Context<SlideEditor>) {
+        // An Android soft keyboard may send its Enter as text ("\n", or "あ\n" with the letters before it): a cell's line break is Alt+Enter, so a newline typed
+        // in is the Enter key (the cell is committed and the selection goes down), after the letters in front of it.
+        if text.contains('\n') || text.contains('\r') {
+            let letters = text.trim_end_matches(['\n', '\r']);
+            if letters.len() < text.len() && !letters.contains(['\n', '\r']) {
+                if !letters.is_empty() {
+                    Self::replace_text_in_range(editor, range, letters, window, cx);
+                }
+                editor.cell_enter(window, cx);
+                return;
+            }
+        }
         if editor.editing.is_some() {
             editor.input_replace(range, text, cx);
             return;
@@ -1629,6 +1735,11 @@ impl FormatEditor for Workbook {
         }
     }
 
+    fn render_bottom_row(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<AnyElement> {
+        let hidden = editor.is_workbook_window_hidden() || editor.sheet_state().map_or(false, |s| !s.show_formula_bar || s.panels.query_editor.is_some());
+        (!hidden && crate::shell::narrow_layout::bars_at_bottom(editor, window)).then(|| editor.render_formula_bar(window, cx).into_any_element())
+    }
+
     /// Excel's layout: the formula bar over the sheet, the sheet tabs under
     /// it, and no page list.
     fn render_body(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> AnyElement {
@@ -1648,7 +1759,8 @@ impl FormatEditor for Workbook {
         if let Some(bar) = editor.render_infobar(cx) {
             body = body.child(bar);
         }
-        if show_formula_bar {
+        // K0089: in a narrow window of a touch device the formula bar is under the toolbar, at the window's bottom (`render_bottom_row`).
+        if show_formula_bar && !crate::shell::narrow_layout::bars_at_bottom(editor, window) {
             body = body.child(editor.render_formula_bar(window, cx));
         }
         if let Some(banner) = editor.render_recovery_banner(cx) {
@@ -1728,7 +1840,7 @@ impl SlideEditor {
     fn sheet_page_geometry(&self) -> Option<(f32, u32, i64)> {
         let (content, ws) = (self.workspace_content()?, self.workspace_bounds?);
         let headings = self.current_sheet().map_or(true, |(_, s)| s.headings);
-        let head_h = if headings { sheet_ui::COLUMN_HEADER_HEIGHT } else { 0.0 };
+        let head_h = if headings { self.current_sheet().map_or(sheet_ui::COLUMN_HEADER_HEIGHT, |(_, s)| crate::shell::sheet_metrics::column_header_height(s)) } else { 0.0 };
         let page = (f32::from(ws.size.height) - head_h).max(1.0);
         let default_row = self.current_sheet().map_or(20 * ibis_doc_model::EMU_PER_POINT, |(_, s)| {
             if s.default_row > 0 { s.default_row } else { 20 * ibis_doc_model::EMU_PER_POINT }

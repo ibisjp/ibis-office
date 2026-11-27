@@ -45,13 +45,40 @@ pub enum SlidesHtmlError {
     TooLarge { bytes: usize },
 }
 
+/// What draws a shape the page cannot (a chart, SmartArt, the other objects) as a picture, with the shapes attached to it (a SmartArt graphic's shapes are its members, drawn in
+/// its picture and left out of the page: [`ibis_doc_model::Slide::attached_to`]; the shapes over a chart stay on the page, over its picture): PNG bytes, or `None` where the shape cannot be drawn (the page keeps its dashed frame and label then).
+pub type Raster<'a> = &'a dyn Fn(&Shape, &[Shape]) -> Option<Vec<u8>>;
+
+/// The shapes the page cannot draw itself: the ones [`slides_to_html_with`] asks its [`Raster`] for. Of the slides that are shown, in order.
+pub fn shapes_needing_pictures(presentation: &Presentation) -> Vec<(ibis_doc_model::SlideId, ibis_doc_model::ShapeId)> {
+    let mut out = Vec::new();
+    for slide in presentation.slides.iter().filter(|s| !s.hidden) {
+        for shape in &slide.shapes {
+            if needs_picture(shape) {
+                out.push((slide.id, shape.id));
+            }
+        }
+    }
+    out
+}
+
+/// Whether the page draws `shape` as a picture the caller made (not as text, SVG, a table or a picture of the file).
+fn needs_picture(shape: &Shape) -> bool {
+    matches!(shape.kind, ShapeKind::Chart(_) | ShapeKind::Placeholder(_) | ShapeKind::Slicer(_) | ShapeKind::Timeline(_) | ShapeKind::Control(_))
+}
+
 /// The presentation as an HTML page. `title` is the page's title, `lang` its language (`ja`, `en`).
 pub fn slides_to_html(presentation: &Presentation, title: &str, lang: &str, labels: &Labels) -> Result<String, SlidesHtmlError> {
+    slides_to_html_with(presentation, title, lang, labels, &|_, _| None)
+}
+
+/// [`slides_to_html`] with the pictures of the shapes the page cannot draw (charts, SmartArt…): each is an `<img>` with its PNG as a data URI where `raster` made one.
+pub fn slides_to_html_with(presentation: &Presentation, title: &str, lang: &str, labels: &Labels, raster: Raster<'_>) -> Result<String, SlidesHtmlError> {
     let shown: Vec<usize> = presentation.slides.iter().enumerate().filter(|(_, s)| !s.hidden).map(|(i, _)| i).collect();
     if shown.is_empty() {
         return Err(SlidesHtmlError::NoSlides);
     }
-    let mut page = Page { presentation, labels, media: BTreeMap::new(), shown: &shown, defs: 0 };
+    let mut page = Page { presentation, labels, media: BTreeMap::new(), shown: &shown, defs: 0, raster, skip: Default::default() };
     let mut body = String::new();
     for (n, &index) in shown.iter().enumerate() {
         page.slide(&mut body, &presentation.slides[index], index, n + 1);
@@ -94,6 +121,7 @@ body{margin:0;padding:24px 0;background:#e8e8ec}
 .bu{display:inline-block}
 table.tb{position:absolute;left:0;top:0;width:100%;border-collapse:collapse;table-layout:fixed}
 table.tb td{padding:0;overflow:hidden}
+.obj{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain}
 .ph{position:absolute;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;border:1px dashed #8a8a8a;color:#6b6b6b;font:12px/1.2 sans-serif;text-align:center;background:rgba(0,0,0,.03)}
 @media screen{
 html.show,html.show body{height:100%;overflow:hidden;background:#000}
@@ -182,6 +210,9 @@ struct Page<'a> {
     shown: &'a [usize],
     /// The gradients written so far (for their ids).
     defs: usize,
+    raster: Raster<'a>,
+    /// The shapes of the slide being written that a SmartArt picture already holds.
+    skip: std::collections::HashSet<ibis_doc_model::ShapeId>,
 }
 
 /// A slide's size in EMU, to turn lengths into percentages of it.
@@ -236,8 +267,9 @@ impl Page<'_> {
                 self.shape(out, slide, shape, scale, false);
             }
         }
+        self.skip.clear();
         for shape in &slide.shapes {
-            if slide.hidden_shapes.contains(&shape.id) {
+            if slide.hidden_shapes.contains(&shape.id) || self.skip.contains(&shape.id) {
                 continue;
             }
             self.shape(out, slide, shape, scale, true);
@@ -311,6 +343,7 @@ impl Page<'_> {
                 }
             }
             ShapeKind::Table(table) => self.table(out, table, scale, f.height),
+            _ if needs_picture(shape) && self.picture_of(out, slide, shape, alt, own) => {}
             ShapeKind::Chart(_) => self.placeholder(out, if alt.is_empty() { &self.labels.chart } else { alt }),
             ShapeKind::Placeholder(p) => {
                 let name = match p {
@@ -327,6 +360,31 @@ impl Page<'_> {
             out.push_str("</a>");
         }
         out.push('\n');
+    }
+
+    /// The picture the caller made of `shape` (a chart, SmartArt…) as an `<img>` of the shape's box; `false` where it made none. Its `alt` is the shape's own, else its title or texts
+    /// ([`Shape::picture_label`]), else the name of its kind. A SmartArt graphic's picture holds the shapes attached to it, which the page then leaves out.
+    fn picture_of(&mut self, out: &mut String, slide: &Slide, shape: &Shape, alt: &str, own: bool) -> bool {
+        let is_diagram = matches!(shape.kind, ShapeKind::Placeholder(Placeholder::Diagram));
+        let members: Vec<Shape> = if own && is_diagram { slide.attached_to(shape.id).into_iter().filter_map(|id| slide.shape(id).cloned()).collect() } else { Vec::new() };
+        let Some(png) = (self.raster)(shape, &members) else { return false };
+        self.skip.extend(members.iter().map(|m| m.id));
+        let described = shape.picture_label(&members);
+        let label = if !alt.is_empty() {
+            alt
+        } else if let Some(text) = &described {
+            text
+        } else {
+            match &shape.kind {
+                ShapeKind::Chart(_) | ShapeKind::Placeholder(Placeholder::Chart) => &self.labels.chart,
+                ShapeKind::Placeholder(Placeholder::Diagram) => &self.labels.diagram,
+                _ => &self.labels.object,
+            }
+        };
+        let _ = write!(out, "<img class=\"obj\" alt=\"{}\" src=\"data:image/png;base64,", escape(label, true));
+        base64(&png, out);
+        out.push_str("\">");
+        true
     }
 
     fn placeholder(&self, out: &mut String, label: &str) {
@@ -845,7 +903,7 @@ mod tests {
                 Run { text: "Link".into(), style: RunStyle { underline: true, link: Some(SlideLink::Url("https://example.com/?a=1&b=2".into())), ..Default::default() } },
                 Run { text: "Evil".into(), style: RunStyle { link: Some(SlideLink::Url("javascript:alert(1)".into())), ..Default::default() } },
             ],
-            bullet: Some(ibis_doc_model::text::Bullet { text: "\u{2022}".into(), picture: None, size: 100_000, color: None, auto: None, symbol: None, font: None }),
+            bullet: Some(ibis_doc_model::text::Bullet { text: "\u{2022}".into(), picture: None, size: 100_000, color: None, color_theme: None, auto: None, symbol: None, font: None }),
             ..Default::default()
         }];
         p.slides[0].shapes.push(Shape::new(ShapeId(1), EmuRect::new(0, 0, 3_000_000, 1_000_000), ShapeKind::TextBox(body)));

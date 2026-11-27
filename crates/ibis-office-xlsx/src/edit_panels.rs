@@ -19,6 +19,10 @@ pub struct EditPanels {
     pub import_text: Option<super::import_text::ImportTextPanel>,
     /// データ > テーブルまたは範囲から: the クエリ エディター, which takes the place of the sheet.
     pub(crate) query_editor: Option<super::query_editor::QueryEditor>,
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) parquet_selection: Option<super::query_editor::ParquetSelection>,
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) record_source_selection: Option<super::query_editor::RecordSourceSelection>,
     /// データ > クエリと接続.
     pub(crate) queries: Option<super::query_editor::QueriesPanel>,
     /// 挿入… / 削除… of the cell menu.
@@ -172,6 +176,11 @@ impl EditPanels {
         self.text_columns = None;
         self.import_text = None;
         self.query_editor = None;
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        {
+            self.parquet_selection = None;
+            self.record_source_selection = None;
+        }
         self.queries = None;
         self.cells_dialog = None;
         self.paste_special_dialog = None;
@@ -241,6 +250,14 @@ impl EditPanels {
 impl crate::shell::editor::SlideEditor {
     /// The editing basics' panel open, for the sidebar.
     pub(crate) fn edit_panel(&mut self, cx: &mut gpui_kit::Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if let Some(panel) = self.parquet_columns_panel(cx) {
+            return Some(panel.modal_named("parquet_columns_panel"));
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        if let Some(panel) = self.record_sources_panel(cx) {
+            return Some(panel.modal_named("record_sources_panel"));
+        }
         self.dedupe_panel(cx).map(|panel| panel.modal_named("dedupe_panel"))
             .or_else(|| self.recommended_charts_panel(cx).map(|panel| panel.modal_named("recommended_charts_panel")))
             .or_else(|| self.text_columns_panel(cx).map(|panel| panel.modal_named("text_columns_panel")))

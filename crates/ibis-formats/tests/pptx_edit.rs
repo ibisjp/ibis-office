@@ -224,7 +224,7 @@ fn resolve_text(body: &mut TextBody) {
     let base = body.style.clone();
     let resolve = |run: &RunStyle| {
         let s = base.with_run(run);
-        RunStyle { font_size: Some(s.font_size), bold: Some(s.bold), italic: Some(s.italic), color: Some(s.color), font: None, fallback_font: None, lang: None, ..run.clone() }
+        RunStyle { font_size: Some(s.font_size), bold: Some(s.bold), italic: Some(s.italic), color: Some(s.color), color_theme: s.color_theme, font: None, fallback_font: None, lang: None, ..run.clone() }
     };
     for p in &mut body.paragraphs {
         p.align = Some(p.align.unwrap_or(base.align));
@@ -464,7 +464,7 @@ fn new_shapes(p: &mut Presentation) -> Vec<Shape> {
     let oval = Shape::new(
         p.new_shape_id(),
         EmuRect::new(4_572_000, 2_743_200, 1_371_600, 1_371_600),
-        ShapeKind::Auto(AutoShape::new(Geometry::Ellipse, Fill::Solid(Color { rgb: Rgb(0xed7d31), alpha: 128 }), None)),
+        ShapeKind::Auto(AutoShape::new(Geometry::Ellipse, Fill::Solid(Color { rgb: Rgb(0xed7d31), alpha: 128, theme: None }), None)),
     );
     let round = Shape::new(
         p.new_shape_id(),
@@ -524,6 +524,59 @@ fn fill_and_outline() {
         ]);
         s.run(vec![Command::SetStroke { slide, shape, stroke: None }, Command::SetFill { slide, shape, fill: Fill::None }]);
     }
+}
+
+/// A fill and a text colour that follow the theme (#159): a shape touched by an edit keeps `a:schemeClr` with its transforms,
+/// the file reads back with the reference, and replacing the theme changes only the colours that hold one.
+#[test]
+fn theme_colour_references_survive_edits_and_follow_the_theme() {
+    let mut s = Scenario::open("theme-ref", "editing/pptx-plan.pptx");
+    let (slide, shape) = s
+        .p()
+        .slides
+        .iter()
+        .find_map(|sl| sl.shapes.iter().find(|sh| matches!(&sh.kind, ShapeKind::Auto(a) if a.text.is_some())).map(|sh| (sl.id, sh.id)))
+        .expect("an auto shape with text");
+    let colors = s.p().theme_colors.clone();
+    assert!(!colors.is_empty());
+    let reference = ibis_doc_model::ThemeRef::with_brightness(ibis_doc_model::ThemeSlot::from_name("accent2").unwrap(), 0.4).unwrap();
+    let fill = reference.resolve(&colors).unwrap();
+    let text_ref = ibis_doc_model::ThemeRef::with_brightness(ibis_doc_model::ThemeSlot::Tx2, 0.0).unwrap().resolve(&colors).unwrap();
+    s.run(vec![
+        Command::SetFill { slide, shape, fill: Fill::Solid(fill) },
+        Command::SetCharacterFormat { slide, shape, start: 0, end: 1, format: ibis_doc_model::text::CharacterFormat { color: Some(text_ref.rgb), color_theme: text_ref.theme, ..Default::default() } },
+    ]);
+    let saved = s.check_saved();
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml_of = |name: &str| String::from_utf8(package.read(name).unwrap().to_vec()).unwrap();
+    let slide_xml: String = package.names().filter(|n| n.starts_with("ppt/slides/slide") && n.ends_with(".xml")).map(xml_of).collect();
+    assert!(slide_xml.contains(r#"<a:schemeClr val="accent2"><a:lumMod val="60000"/><a:lumOff val="40000"/></a:schemeClr>"#), "the fill keeps its reference");
+    assert!(slide_xml.contains(r#"<a:schemeClr val="tx2"/>"#), "the characters keep their reference");
+    // Read back: still references.
+    let reread = ibis_formats::read(&saved).unwrap();
+    let back = reread.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ShapeKind::Auto(a) => match &a.fill { Fill::Solid(c) if c.theme_ref().is_some_and(|t| t.name.name() == "accent2") => Some(*c), _ => None }, _ => None });
+    assert_eq!(back.map(|c| c.rgb), Some(fill.rgb));
+    // Replacing the theme: the referenced colours change, a colour chosen directly does not.
+    let mut doc = Document::new(s.p().clone());
+    let direct = Color::opaque(Rgb(0x123456));
+    let other_shape = s.p().slides.iter().flat_map(|sl| sl.shapes.iter().map(move |sh| (sl.id, sh.id))).find(|(sl, sh)| (*sl, *sh) != (slide, shape) && matches!(&s.p().slide(*sl).unwrap().shape(*sh).unwrap().kind, ShapeKind::Auto(_))).unwrap();
+    doc.execute(vec![Command::SetFill { slide: other_shape.0, shape: other_shape.1, fill: Fill::Solid(direct) }]).unwrap();
+    let new_colors: Vec<(String, Rgb)> = colors.iter().map(|(n, c)| (n.clone(), if n == "accent2" || n == "dk2" { Rgb(0x00AA00) } else { *c })).collect();
+    doc.execute(vec![Command::SetTheme { colors: new_colors.clone(), fonts: None }]).unwrap();
+    let after = doc.presentation();
+    let find = |sl: SlideId, sh: ShapeId| after.slide(sl).unwrap().shape(sh).unwrap().clone();
+    let ShapeKind::Auto(a) = &find(slide, shape).kind else { panic!() };
+    let Fill::Solid(c) = &a.fill else { panic!() };
+    assert_ne!(c.rgb, fill.rgb, "the referenced fill follows the theme");
+    assert_eq!(c.rgb, reference.resolve(&new_colors).unwrap().rgb);
+    let ShapeKind::Auto(b) = &find(other_shape.0, other_shape.1).kind else { panic!() };
+    assert_eq!(b.fill, Fill::Solid(direct), "a colour chosen directly stays");
+    let run = &a.text.as_ref().unwrap().paragraphs[0].runs[0].style;
+    assert_eq!(run.color, Some(Rgb(0x00AA00)), "the text colour follows the theme");
+    // Undo puts everything back.
+    assert!(doc.undo());
+    let ShapeKind::Auto(a) = &doc.presentation().slide(slide).unwrap().shape(shape).unwrap().kind else { panic!() };
+    assert_eq!(a.fill, Fill::Solid(fill));
 }
 
 #[test]
@@ -1080,6 +1133,7 @@ fn test_chart_series_and_plot_area_formatting_round_trip() {
             symbol: MarkerSymbol::Diamond,
             size: 9,
             fill: Fill::Solid(Color::opaque(Rgb(0x778899))),
+            edge: None,
         });
     }
 
@@ -2629,7 +2683,7 @@ fn shape_shadow_edit_keeps_unrelated_effects() {
     }
     let mut s=Scenario::open("shadow-edit-unknown","editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let id=s.document.ids().new_shape_id();let mut auto=AutoShape::new(Geometry::Rect,Fill::Solid(Color::BLACK),None);auto.glow=Some((Color::opaque(Rgb(0x4472C4)),63_500));auto.shadow=Some(ibis_doc_model::Shadow::simple(Color::BLACK,0,38100,0));let shape=Shape::new(id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(auto));let saved=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }]);
     let mut package=ibis_ooxml::Package::open(saved).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture",NS);xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignorable=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignorable.trim());let list=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.local_name(n)=="effectLst"&&xml.child(n,"outerShdw").is_some()).unwrap();xml.set_attr(list,"fixture:flag","shadow-effects");let shadow=xml.child(list,"outerShdw").unwrap();xml.set_attr(shadow,"fixture:keep","node");xml.set_attr(shadow,"fixture:unknown","120000");let payload=xml.append_element(shadow,"fixture:payload");xml.append_text(payload,"shadow opaque 😀");let foreign=xml.append_element(list,"fixture:outerShdw");xml.set_attr(foreign,"rad","7777");let color=xml.append_element(foreign,"a:srgbClr");xml.set_attr(color,"val","ABCDEF");s.data=package.save(SaveOptions::default()).unwrap();check(&s.data,true);s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());let slide=s.p().slides[0].id;let shape=s.p().slides[0].shapes[index].clone();
-    for value in [Some(ibis_doc_model::Shadow::simple(Color::BLACK,50_800,76_200,2_700_000)),Some(ibis_doc_model::Shadow::simple(Color {rgb:Rgb(0x123456),alpha:128},25_400,50_800,5_400_000)),None] {
+    for value in [Some(ibis_doc_model::Shadow::simple(Color::BLACK,50_800,76_200,2_700_000)),Some(ibis_doc_model::Shadow::simple(Color {rgb:Rgb(0x123456),alpha:128, theme: None },25_400,50_800,5_400_000)),None] {
         let mut auto=match &s.p().slide(slide).unwrap().shape(shape.id).unwrap().kind {ShapeKind::Auto(a)=>a.clone(),_=>panic!("auto")};auto.shadow=value;let saved=s.run(vec![Command::SetShapeKind {slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(auto))}]);check(&saved,value.is_some());
     }
 }
@@ -2674,7 +2728,7 @@ fn shape_glow_edit_keeps_unrelated_effects() {
     let mut package=ibis_ooxml::Package::open(saved).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture",NS);xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignorable=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignorable.trim());
     let list=xml.descendants(root).into_iter().find(|&n| xml.is_element(n)&&xml.local_name(n)=="effectLst"&&xml.child(n,"glow").is_some()).unwrap();xml.set_attr(list,"fixture:flag","effects");let glow=xml.child(list,"glow").unwrap();xml.set_attr(glow,"fixture:keep","node");let payload=xml.append_element(glow,"fixture:payload");xml.append_text(payload,"opaque 😀");let foreign=xml.append_element(list,"fixture:glow");xml.set_attr(foreign,"rad","7777");let color=xml.append_element(foreign,"a:srgbClr");xml.set_attr(color,"val","ABCDEF");let soft=xml.append_element(list,"a:softEdge");xml.set_attr(soft,"rad","12345");
     s.data=package.save(SaveOptions::default()).unwrap();check(&s.data,true);s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());let slide=s.p().slides[0].id;let shape=s.p().slides[0].shapes[index].clone();
-    for value in [Some((Color::opaque(Rgb(0x4472C4)),127_000)),Some((Color {rgb:Rgb(0x12ABCD),alpha:96},90_488)),Some((Color::BLACK,i32::MAX as i64)),None] {
+    for value in [Some((Color::opaque(Rgb(0x4472C4)),127_000)),Some((Color {rgb:Rgb(0x12ABCD),alpha:96, theme: None },90_488)),Some((Color::BLACK,i32::MAX as i64)),None] {
         let mut auto=match &s.p().slide(slide).unwrap().shape(shape.id).unwrap().kind {ShapeKind::Auto(a)=>a.clone(),_=>panic!("auto")};auto.glow=value;let saved=s.run(vec![Command::SetShapeKind {slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(auto))}]);check(&saved,value.is_some());
     }
 }
@@ -2685,8 +2739,8 @@ fn copy_shape_shadow_and_glow_round_trip() {
     for effects in 0..3 {
         let mut auto = AutoShape::new(Geometry::Rect,Fill::Solid(Color::opaque(Rgb(0x4472C4))),None);
         auto.text = Some(TextBody::plain("effects",TextStyle::default()));
-        if effects != 1 { auto.shadow = Some(ibis_doc_model::Shadow::simple(Color { rgb: Rgb(0x123456),alpha:128 }, 101_600,152_400,8_100_000)); }
-        if effects != 0 { auto.glow = Some((Color { rgb: Rgb(0x66CCFF),alpha:200 },63_500)); }
+        if effects != 1 { auto.shadow = Some(ibis_doc_model::Shadow::simple(Color { rgb: Rgb(0x123456),alpha:128, theme: None }, 101_600,152_400,8_100_000)); }
+        if effects != 0 { auto.glow = Some((Color { rgb: Rgb(0x66CCFF),alpha:200, theme: None },63_500)); }
         let id = s.document.ids().new_shape_id(); let shape = Shape::new(id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(auto));
         let index = s.p().slides[0].shapes.len(); s.run(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }]);
     }
@@ -3139,7 +3193,7 @@ fn character_shadow_round_trip() {
     let (slide, shape, _) = text_shapes(s.p(), 1).into_iter().next().unwrap();
 
     let shadow_preset = Shadow {
-        color: Color { rgb: Rgb(0x334455), alpha: 102 },
+        color: Color { rgb: Rgb(0x334455), alpha: 102, theme: None },
         blur: 25_400,
         distance: 19_050,
         direction: 5_400_000,
@@ -3280,11 +3334,11 @@ fn gradient_numeric_boundaries() {
 
 #[test]
 fn pattern_colour_edits_keep_unknown_properties() {
-    let mut s=Scenario::open("pattern-colour-edit-unknown","editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let auto_id=s.document.ids().new_shape_id();let table_id=s.document.ids().new_shape_id();let fill=Fill::Pattern {preset:"pct25".into(),foreground:Color {rgb:Rgb(0x112233),alpha:128},background:Color {rgb:Rgb(0xFEDCBA),alpha:64}};let mut table=ibis_doc_model::Table::new_grid(2,2,3_000_000,1_500_000);table.rows[0].cells[0].fill=fill.clone();let data=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(auto_id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,fill.clone(),None))))] },Command::InsertShape { slide, shapes: vec![(index+1, Shape::new(table_id,EmuRect::new(3_500_000,500_000,3_000_000,1_500_000),ShapeKind::Table(Box::new(table))))] },Command::SetBackground {slide,fill}]);
+    let mut s=Scenario::open("pattern-colour-edit-unknown","editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let auto_id=s.document.ids().new_shape_id();let table_id=s.document.ids().new_shape_id();let fill=Fill::Pattern {preset:"pct25".into(),foreground:Color {rgb:Rgb(0x112233),alpha:128, theme: None },background:Color {rgb:Rgb(0xFEDCBA),alpha:64, theme: None }};let mut table=ibis_doc_model::Table::new_grid(2,2,3_000_000,1_500_000);table.rows[0].cells[0].fill=fill.clone();let data=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(auto_id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,fill.clone(),None))))] },Command::InsertShape { slide, shapes: vec![(index+1, Shape::new(table_id,EmuRect::new(3_500_000,500_000,3_000_000,1_500_000),ShapeKind::Table(Box::new(table))))] },Command::SetBackground {slide,fill}]);
     let mut package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture","urn:ibis:test:pattern-colour-edit");xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignore=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignore.trim());let patterns=xml.descendants(root).into_iter().filter(|&n|xml.is_element(n)&&xml.local_name(n)=="pattFill").collect::<Vec<_>>();assert_eq!(patterns.len(),3);
     for (i,pattern) in patterns.into_iter().enumerate() {xml.set_attr(pattern,"fixture:target",&i.to_string());let payload=xml.append_element(pattern,"fixture:payload");xml.append_text(payload,"pattern root retained");for name in ["fgClr","bgClr"] {let container=xml.child(pattern,name).unwrap();xml.set_attr(container,"fixture:keep",name);let payload=xml.append_element(container,"fixture:payload");xml.append_text(payload,"container retained");let color=xml.child(container,"srgbClr").unwrap();xml.set_attr(color,"fixture:keep","colour");let payload=xml.append_element(color,"fixture:payload");xml.append_text(payload,"colour retained");let alpha=xml.child(color,"alpha").unwrap();xml.set_attr(alpha,"fixture:keep","alpha");for (name,value) in [("alphaMod","50000"),("alphaOff","10000")] {let node=xml.append_element(color,&format!("a:{name}"));xml.set_attr(node,"val",value);xml.set_attr(node,"fixture:keep",name);}let foreign=xml.append_element(color,"fixture:alpha");xml.set_attr(foreign,"val","0");let foreign=xml.insert_element(container,0,"fixture:srgbClr");xml.set_attr(foreign,"val","000000");}}
     s.data=package.save(SaveOptions::default()).unwrap();s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());let slide=s.p().slides[0].id;let auto_id=s.p().slides[0].shapes[index].id;let table_id=s.p().slides[0].shapes[index+1].id;
-    for (fg,bg) in [(Color {rgb:Rgb(0x445566),alpha:200},Color {rgb:Rgb(0x778899),alpha:40}),(Color::BLACK,Color::WHITE)] {let fill=Fill::Pattern {preset:"weave".into(),foreground:fg,background:bg};let ShapeKind::Table(table)=&s.p().slides[0].shapes[index+1].kind else {panic!("table")};let mut table=(**table).clone();table.rows[0].cells[0].fill=fill.clone();let data=s.run(vec![Command::SetFill {slide,shape:auto_id,fill:fill.clone()},Command::SetBackground {slide,fill},Command::SetShapeKind {slide,shape:table_id,kind:Box::new(ShapeKind::Table(Box::new(table)))}]);let package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();for target in ["0","1","2"] {let pattern=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.attr(n,"fixture:target")==Some(target)).expect("pattern root retained after colour edit");assert_eq!(xml.text(xml.child(pattern,"payload").unwrap()),"pattern root retained");for (name,value) in [("fgClr",fg),("bgClr",bg)] {let container=xml.child(pattern,name).unwrap();assert_eq!(xml.attr(container,"fixture:keep"),Some(name));assert_eq!(xml.text(xml.child(container,"payload").unwrap()),"container retained");let color=xml.elements(container).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/drawingml/2006/main")&&xml.local_name(n)=="srgbClr").unwrap();assert_eq!(xml.attr(color,"val"),Some(format!("{:06X}",value.rgb.0).as_str()));assert_eq!(xml.attr(color,"fixture:keep"),Some("colour"));assert_eq!(xml.text(xml.child(color,"payload").unwrap()),"colour retained");let alpha=xml.elements(color).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/drawingml/2006/main")&&xml.local_name(n)=="alpha").unwrap();assert_eq!(xml.attr(alpha,"fixture:keep"),Some("alpha"));for (name,value) in [("alphaMod","100000"),("alphaOff","0")] {let node=xml.elements(color).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/drawingml/2006/main")&&xml.local_name(n)==name).unwrap();assert_eq!(xml.attr(node,"val"),Some(value));assert_eq!(xml.attr(node,"fixture:keep"),Some(name));}let foreign=xml.elements(color).find(|&n|xml.namespace(n)==Some("urn:ibis:test:pattern-colour-edit")&&xml.local_name(n)=="alpha").unwrap();assert_eq!(xml.attr(foreign,"val"),Some("0"));let foreign=xml.elements(container).find(|&n|xml.namespace(n)==Some("urn:ibis:test:pattern-colour-edit")&&xml.local_name(n)=="srgbClr").unwrap();assert_eq!(xml.attr(foreign,"val"),Some("000000"));}}}
+    for (fg,bg) in [(Color {rgb:Rgb(0x445566),alpha:200, theme: None },Color {rgb:Rgb(0x778899),alpha:40, theme: None }),(Color::BLACK,Color::WHITE)] {let fill=Fill::Pattern {preset:"weave".into(),foreground:fg,background:bg};let ShapeKind::Table(table)=&s.p().slides[0].shapes[index+1].kind else {panic!("table")};let mut table=(**table).clone();table.rows[0].cells[0].fill=fill.clone();let data=s.run(vec![Command::SetFill {slide,shape:auto_id,fill:fill.clone()},Command::SetBackground {slide,fill},Command::SetShapeKind {slide,shape:table_id,kind:Box::new(ShapeKind::Table(Box::new(table)))}]);let package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();for target in ["0","1","2"] {let pattern=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.attr(n,"fixture:target")==Some(target)).expect("pattern root retained after colour edit");assert_eq!(xml.text(xml.child(pattern,"payload").unwrap()),"pattern root retained");for (name,value) in [("fgClr",fg),("bgClr",bg)] {let container=xml.child(pattern,name).unwrap();assert_eq!(xml.attr(container,"fixture:keep"),Some(name));assert_eq!(xml.text(xml.child(container,"payload").unwrap()),"container retained");let color=xml.elements(container).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/drawingml/2006/main")&&xml.local_name(n)=="srgbClr").unwrap();assert_eq!(xml.attr(color,"val"),Some(format!("{:06X}",value.rgb.0).as_str()));assert_eq!(xml.attr(color,"fixture:keep"),Some("colour"));assert_eq!(xml.text(xml.child(color,"payload").unwrap()),"colour retained");let alpha=xml.elements(color).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/drawingml/2006/main")&&xml.local_name(n)=="alpha").unwrap();assert_eq!(xml.attr(alpha,"fixture:keep"),Some("alpha"));for (name,value) in [("alphaMod","100000"),("alphaOff","0")] {let node=xml.elements(color).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/drawingml/2006/main")&&xml.local_name(n)==name).unwrap();assert_eq!(xml.attr(node,"val"),Some(value));assert_eq!(xml.attr(node,"fixture:keep"),Some(name));}let foreign=xml.elements(color).find(|&n|xml.namespace(n)==Some("urn:ibis:test:pattern-colour-edit")&&xml.local_name(n)=="alpha").unwrap();assert_eq!(xml.attr(foreign,"val"),Some("0"));let foreign=xml.elements(container).find(|&n|xml.namespace(n)==Some("urn:ibis:test:pattern-colour-edit")&&xml.local_name(n)=="srgbClr").unwrap();assert_eq!(xml.attr(foreign,"val"),Some("000000"));}}}
 }
 
 #[test]
@@ -3304,7 +3358,7 @@ fn pattern_alpha_edit_keeps_rgb_transform_and_refuses_rgb_conversion() {
 #[test]
 fn pattern_colours_ignore_foreign_colour_nodes_attributes_and_modifiers() {
     for (kind,scenario) in [("colour","pattern-colour-namespace"),("attribute","pattern-colour-attribute"),("modifier","pattern-colour-modifier")] {
-        let mut s=Scenario::open(scenario,"editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let id=s.document.ids().new_shape_id();let foreground=Color {rgb:Rgb(0x112233),alpha:128};let background=Color {rgb:Rgb(0xFEDCBA),alpha:64};let fill=Fill::Pattern {preset:"pct25".into(),foreground,background};let data=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,fill.clone(),None))))] }]);
+        let mut s=Scenario::open(scenario,"editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let id=s.document.ids().new_shape_id();let foreground=Color {rgb:Rgb(0x112233),alpha:128, theme: None };let background=Color {rgb:Rgb(0xFEDCBA),alpha:64, theme: None };let fill=Fill::Pattern {preset:"pct25".into(),foreground,background};let data=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,fill.clone(),None))))] }]);
         let mut package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture","urn:ibis:test:colour-namespace");xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignore=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignore.trim());let pattern=xml.descendants(root).into_iter().filter(|&n|xml.is_element(n)&&xml.local_name(n)=="pattFill").last().unwrap();xml.set_attr(pattern,"fixture:kind",kind);let fg=xml.child(pattern,"fgClr").unwrap();let color=xml.child(fg,"srgbClr").unwrap();
         match kind {"colour"=>{let foreign=xml.insert_element(fg,0,"fixture:srgbClr");xml.set_attr(foreign,"val","000000");},"attribute"=>{xml.remove_attr(color,"val");xml.set_attr(color,"fixture:val","000000");xml.set_attr(color,"val","112233");},"modifier"=>{let foreign=xml.append_element(color,"fixture:alpha");xml.set_attr(foreign,"val","0");},_=>unreachable!()}
         s.data=package.save(SaveOptions::default()).unwrap();s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());let ShapeKind::Auto(a)=&s.p().slides[0].shapes[index].kind else {panic!("auto")};assert_eq!(a.fill,fill,"foreign {kind} must not change known colour state");let slide=s.p().slides[0].id;let shape=s.p().slides[0].shapes[index].id;let data=s.run(vec![Command::SetFill {slide,shape,fill:Fill::Pattern {preset:"diagCross".into(),foreground,background}}]);let package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();let pattern=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.attr(n,"fixture:kind")==Some(kind)).unwrap();let fg=xml.child(pattern,"fgClr").unwrap();let color=xml.elements(fg).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/drawingml/2006/main")&&xml.local_name(n)=="srgbClr").unwrap();assert_eq!(xml.attr(color,"val"),Some("112233"));match kind {"colour"=>{let foreign=xml.elements(fg).find(|&n|xml.namespace(n)==Some("urn:ibis:test:colour-namespace")).unwrap();assert_eq!(xml.attr(foreign,"val"),Some("000000"));},"attribute"=>assert_eq!(xml.attr(color,"fixture:val"),Some("000000")),"modifier"=>{let foreign=xml.elements(color).find(|&n|xml.namespace(n)==Some("urn:ibis:test:colour-namespace")).unwrap();assert_eq!(xml.attr(foreign,"val"),Some("0"));},_=>unreachable!()}
@@ -3322,7 +3376,7 @@ fn pattern_unknown_presets_are_rejected_before_saving() {
 
 #[test]
 fn pattern_preset_edits_keep_unknown_properties_and_ignore_foreign_state() {
-    let mut s=Scenario::open("pattern-preset-unknown","editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let auto_id=s.document.ids().new_shape_id();let table_id=s.document.ids().new_shape_id();let foreground=Color {rgb:Rgb(0x12ABCD),alpha:128};let background=Color {rgb:Rgb(0xFEDCBA),alpha:64};let fill=Fill::Pattern {preset:"pct25".into(),foreground,background};let auto=AutoShape::new(Geometry::Rect,fill.clone(),None);let mut table=ibis_doc_model::Table::new_grid(2,2,3_000_000,1_500_000);table.rows[0].cells[0].fill=fill.clone();
+    let mut s=Scenario::open("pattern-preset-unknown","editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let auto_id=s.document.ids().new_shape_id();let table_id=s.document.ids().new_shape_id();let foreground=Color {rgb:Rgb(0x12ABCD),alpha:128, theme: None };let background=Color {rgb:Rgb(0xFEDCBA),alpha:64, theme: None };let fill=Fill::Pattern {preset:"pct25".into(),foreground,background};let auto=AutoShape::new(Geometry::Rect,fill.clone(),None);let mut table=ibis_doc_model::Table::new_grid(2,2,3_000_000,1_500_000);table.rows[0].cells[0].fill=fill.clone();
     let data=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(auto_id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(auto)))] },Command::InsertShape { slide, shapes: vec![(index+1, Shape::new(table_id,EmuRect::new(3_500_000,500_000,3_000_000,1_500_000),ShapeKind::Table(Box::new(table))))] },Command::SetBackground {slide,fill:fill.clone()}]);let mut package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture","urn:ibis:test:pattern-preset");xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignore=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignore.trim());let patterns=xml.descendants(root).into_iter().filter(|&n|xml.is_element(n)&&xml.local_name(n)=="pattFill").collect::<Vec<_>>();assert_eq!(patterns.len(),3);
     for (i,pattern) in patterns.into_iter().enumerate() {xml.set_attr(pattern,"fixture:target",&i.to_string());xml.remove_attr(pattern,"prst");xml.set_attr(pattern,"fixture:prst","pct90");xml.set_attr(pattern,"prst","pct25");for name in ["fgClr","bgClr"] {let known=xml.child(pattern,name).unwrap();xml.set_attr(known,"fixture:keep",name);let color=xml.child(known,"srgbClr").unwrap();xml.set_attr(color,"fixture:keep","colour");let payload=xml.append_element(color,"fixture:payload");xml.append_text(payload,"pattern colour retained");let foreign=xml.insert_element(pattern,0,&format!("fixture:{name}"));xml.set_attr(foreign,"fixture:keep","foreign");let colour=xml.append_element(foreign,"a:srgbClr");xml.set_attr(colour,"val","777777");}let payload=xml.append_element(pattern,"fixture:payload");xml.append_text(payload,"pattern retained");}
     s.data=package.save(SaveOptions::default()).unwrap();s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());assert_eq!(s.p().slides[0].background,fill,"foreign preset/colour state must not override known pattern");let ShapeKind::Auto(a)=&s.p().slides[0].shapes[index].kind else {panic!("auto")};assert_eq!(a.fill,fill);let slide=s.p().slides[0].id;let auto_id=s.p().slides[0].shapes[index].id;let table_id=s.p().slides[0].shapes[index+1].id;
@@ -3379,7 +3433,7 @@ fn gradient_type_changes_keep_root_stops_and_geometry_attributes() {
     use ibis_doc_model::{GradientPath,GradientStop};
     const A:&str="http://schemas.openxmlformats.org/drawingml/2006/main";
     for (old_path,scenario) in [(false,"gradient-type-linear-to-path"),(true,"gradient-type-path-to-linear")] {
-        let stops=vec![GradientStop {position:0,color:Color {rgb:Rgb(0x112233),alpha:128}},GradientStop {position:100_000,color:Color::WHITE}];
+        let stops=vec![GradientStop {position:0,color:Color {rgb:Rgb(0x112233),alpha:128, theme: None }},GradientStop {position:100_000,color:Color::WHITE}];
         let fill_of=|path:bool| if path {Fill::Path {path:GradientPath::Shape,focus:[12_345,23_456,34_567,45_678],stops:stops.clone()}} else {Fill::Linear {angle:7_407_360,scaled:false,stops:stops.clone()}};
         let mut s=Scenario::open(scenario,"editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let auto_id=s.document.ids().new_shape_id();let table_id=s.document.ids().new_shape_id();let fill=fill_of(old_path);let mut table=ibis_doc_model::Table::new_grid(2,2,3_000_000,1_500_000);table.rows[0].cells[0].fill=fill.clone();
         let data=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(auto_id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,fill.clone(),None))))] },Command::InsertShape { slide, shapes: vec![(index+1, Shape::new(table_id,EmuRect::new(3_500_000,500_000,3_000_000,1_500_000),ShapeKind::Table(Box::new(table))))] },Command::SetBackground {slide,fill}]);
@@ -3404,7 +3458,7 @@ fn gradient_stop_count_edits_keep_survivors_and_foreign_children() {
     const NS:&str="urn:ibis:test:gradient-stop-count";
     for (path_mode,scenario) in [(false,"gradient-stop-count-linear"),(true,"gradient-stop-count-path")] {
         let fill_of=|stops:Vec<GradientStop>| if path_mode {Fill::Path {path:GradientPath::Shape,focus:[10_000,20_000,30_000,40_000],stops}} else {Fill::Linear {angle:7_407_360,scaled:false,stops}};
-        let old_stops=vec![GradientStop {position:0,color:Color {rgb:Rgb(0x112233),alpha:128}},GradientStop {position:50_000,color:Color {rgb:Rgb(0x445566),alpha:64}},GradientStop {position:100_000,color:Color::WHITE}];
+        let old_stops=vec![GradientStop {position:0,color:Color {rgb:Rgb(0x112233),alpha:128, theme: None }},GradientStop {position:50_000,color:Color {rgb:Rgb(0x445566),alpha:64, theme: None }},GradientStop {position:100_000,color:Color::WHITE}];
         let mut s=Scenario::open(scenario,"editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let auto_id=s.document.ids().new_shape_id();let table_id=s.document.ids().new_shape_id();let fill=fill_of(old_stops.clone());let mut table=ibis_doc_model::Table::new_grid(2,2,3_000_000,1_500_000);table.rows[0].cells[0].fill=fill.clone();
         let data=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(auto_id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,fill.clone(),None))))] },Command::InsertShape { slide, shapes: vec![(index+1, Shape::new(table_id,EmuRect::new(3_500_000,500_000,3_000_000,1_500_000),ShapeKind::Table(Box::new(table))))] },Command::SetBackground {slide,fill}]);
         let mut package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture",NS);xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignore=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignore.trim());let grads=xml.descendants(root).into_iter().filter(|&n|xml.is_element(n)&&xml.namespace(n)==Some(A)&&xml.local_name(n)=="gradFill").collect::<Vec<_>>();assert_eq!(grads.len(),3);
@@ -3434,7 +3488,7 @@ fn gradient_colour_edits_keep_original_stop_nodes() {
     const NS:&str="urn:ibis:test:gradient-colour-edit";
     for (path_mode,scenario) in [(false,"gradient-colour-linear"),(true,"gradient-colour-path")] {
         let fill_of=|stops:Vec<GradientStop>,step:usize| if path_mode {Fill::Path {path:if step==0 {GradientPath::Circle} else {GradientPath::Rect},focus:if step==0 {[50_000;4]} else {[12_345,23_456,34_567,45_678]},stops}} else {Fill::Linear {angle:if step==0 {0} else {7_407_360},scaled:step>0,stops}};
-        let old_stops=vec![GradientStop {position:0,color:Color {rgb:Rgb(0x112233),alpha:128}},GradientStop {position:50_000,color:Color::opaque(Rgb(0x445566))},GradientStop {position:100_000,color:Color {rgb:Rgb(0x778899),alpha:64}}];
+        let old_stops=vec![GradientStop {position:0,color:Color {rgb:Rgb(0x112233),alpha:128, theme: None }},GradientStop {position:50_000,color:Color::opaque(Rgb(0x445566))},GradientStop {position:100_000,color:Color {rgb:Rgb(0x778899),alpha:64, theme: None }}];
         let mut s=Scenario::open(scenario,"editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let auto_id=s.document.ids().new_shape_id();let table_id=s.document.ids().new_shape_id();let fill=fill_of(old_stops.clone(),0);let mut table=ibis_doc_model::Table::new_grid(2,2,3_000_000,1_500_000);table.rows[0].cells[0].fill=fill.clone();
         let data=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(auto_id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,fill.clone(),None))))] },Command::InsertShape { slide, shapes: vec![(index+1, Shape::new(table_id,EmuRect::new(3_500_000,500_000,3_000_000,1_500_000),ShapeKind::Table(Box::new(table))))] },Command::SetBackground {slide,fill}]);
         let mut package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture",NS);xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignore=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignore.trim());let grads=xml.descendants(root).into_iter().filter(|&n|xml.is_element(n)&&xml.namespace(n)==Some(A)&&xml.local_name(n)=="gradFill").collect::<Vec<_>>();assert_eq!(grads.len(),3);
@@ -3450,7 +3504,7 @@ fn gradient_colour_edits_keep_original_stop_nodes() {
         }
         s.data=package.save(SaveOptions::default()).unwrap();s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());let slide=s.p().slides[0].id;let auto_id=s.p().slides[0].shapes[index].id;let table_id=s.p().slides[0].shapes[index+1].id;
         for (step,positions) in [(1,[50_000,50_000,90_000]),(2,[10_000,50_000,99_999])] {
-            let colours=[Color {rgb:Rgb(0x112244),alpha:200},Color {rgb:Rgb(0x445566),alpha:123},Color::opaque(Rgb(0x8899AA))];let stops=positions.into_iter().zip(colours).map(|(position,color)|GradientStop {position,color}).collect();let fill=fill_of(stops,step);let ShapeKind::Table(table)=&s.p().slides[0].shapes[index+1].kind else {panic!("table")};let mut table=(**table).clone();table.rows[0].cells[0].fill=fill.clone();
+            let colours=[Color {rgb:Rgb(0x112244),alpha:200, theme: None },Color {rgb:Rgb(0x445566),alpha:123, theme: None },Color::opaque(Rgb(0x8899AA))];let stops=positions.into_iter().zip(colours).map(|(position,color)|GradientStop {position,color}).collect();let fill=fill_of(stops,step);let ShapeKind::Table(table)=&s.p().slides[0].shapes[index+1].kind else {panic!("table")};let mut table=(**table).clone();table.rows[0].cells[0].fill=fill.clone();
             let data=s.run(vec![Command::SetFill {slide,shape:auto_id,fill:fill.clone()},Command::SetBackground {slide,fill},Command::SetShapeKind {slide,shape:table_id,kind:Box::new(ShapeKind::Table(Box::new(table)))}]);
             let package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();
             for target in ["0","1","2"] {
@@ -3563,7 +3617,7 @@ fn shape_fill_keeps_foreign_fill_siblings() {
     let mut s=Scenario::open("shape-fill-namespace","editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let id=s.document.ids().new_shape_id();let auto=AutoShape::new(Geometry::Rect,Fill::Solid(Color::opaque(Rgb(0x112233))),None);let saved=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(auto)))] }]);
     let mut package=ibis_ooxml::Package::open(saved).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture","urn:ibis:test:shape-fill");xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignorable=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignorable.trim());let pr=xml.descendants(root).into_iter().filter(|&n|xml.is_element(n)&&xml.local_name(n)=="spPr").last().unwrap();xml.set_attr(pr,"fixture:keep","shape");for name in ["solidFill","noFill","gradFill"] {let n=xml.append_element(pr,&format!("fixture:{name}"));xml.set_attr(n,"fixture:keep",name);let color=xml.append_element(n,"a:srgbClr");xml.set_attr(color,"val","ABCDEF");let payload=xml.append_element(n,"fixture:payload");xml.append_text(payload,"図形塗り保持 😀");}
     s.data=package.save(SaveOptions::default()).unwrap();s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());let slide=s.p().slides[0].id;let shape=s.p().slides[0].shapes[index].id;
-    for fill in [Fill::Solid(Color {rgb:Rgb(0x445566),alpha:128}),Fill::None,Fill::Pattern {preset:"diagCross".into(),foreground:Color::BLACK,background:Color::WHITE}] {
+    for fill in [Fill::Solid(Color {rgb:Rgb(0x445566),alpha:128, theme: None }),Fill::None,Fill::Pattern {preset:"diagCross".into(),foreground:Color::BLACK,background:Color::WHITE}] {
         let saved=s.run(vec![Command::SetFill {slide,shape,fill}]);let package=ibis_ooxml::Package::open(saved).unwrap();let xml=package.xml("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();let pr=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.attr(n,"fixture:keep")==Some("shape")).unwrap();for name in ["solidFill","noFill","gradFill"] {let n=xml.elements(pr).find(|&n|xml.namespace(n)==Some("urn:ibis:test:shape-fill")&&xml.local_name(n)==name).expect("foreign shape fill is retained");assert_eq!(xml.attr(n,"fixture:keep"),Some(name));assert_eq!(xml.attr(xml.child(n,"srgbClr").unwrap(),"val"),Some("ABCDEF"));assert_eq!(xml.text(xml.child(n,"payload").unwrap()),"図形塗り保持 😀");}
     }
 }
@@ -3573,7 +3627,7 @@ fn stroke_fill_keeps_foreign_fill_siblings() {
     let mut s=Scenario::open("stroke-fill-namespace","editing/pptx-plan.pptx");let slide=s.p().slides[0].id;let index=s.p().slides[0].shapes.len();let id=s.document.ids().new_shape_id();let auto=AutoShape::new(Geometry::Rect,Fill::None,Some(Stroke::solid(Color::opaque(Rgb(0x112233)),25_400)));let saved=s.run(vec![Command::InsertShape { slide, shapes: vec![(index, Shape::new(id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(auto)))] }]);
     let mut package=ibis_ooxml::Package::open(saved).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture","urn:ibis:test:stroke-fill");xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignorable=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignorable.trim());let pr=xml.descendants(root).into_iter().filter(|&n|xml.is_element(n)&&xml.local_name(n)=="ln").last().unwrap();xml.set_attr(pr,"fixture:keep","shape");for name in ["solidFill","noFill","gradFill"] {let n=xml.append_element(pr,&format!("fixture:{name}"));xml.set_attr(n,"fixture:keep",name);let color=xml.append_element(n,"a:srgbClr");xml.set_attr(color,"val","ABCDEF");let payload=xml.append_element(n,"fixture:payload");xml.append_text(payload,"図形塗り保持 😀");}
     s.data=package.save(SaveOptions::default()).unwrap();s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());let slide=s.p().slides[0].id;let shape=s.p().slides[0].shapes[index].id;
-    for stroke in [Some(Stroke::solid(Color {rgb:Rgb(0x445566),alpha:128},25_400)),None,Some(Stroke::solid(Color::opaque(Rgb(0x778899)),50_800))] {
+    for stroke in [Some(Stroke::solid(Color {rgb:Rgb(0x445566),alpha:128, theme: None },25_400)),None,Some(Stroke::solid(Color::opaque(Rgb(0x778899)),50_800))] {
         let saved=s.run(vec![Command::SetStroke {slide,shape,stroke}]);let package=ibis_ooxml::Package::open(saved).unwrap();let xml=package.xml("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();let pr=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.attr(n,"fixture:keep")==Some("shape")).unwrap();for name in ["solidFill","noFill","gradFill"] {let n=xml.elements(pr).find(|&n|xml.namespace(n)==Some("urn:ibis:test:stroke-fill")&&xml.local_name(n)==name).expect("foreign stroke fill is retained");assert_eq!(xml.attr(n,"fixture:keep"),Some(name));assert_eq!(xml.attr(xml.child(n,"srgbClr").unwrap(),"val"),Some("ABCDEF"));assert_eq!(xml.text(xml.child(n,"payload").unwrap()),"図形塗り保持 😀");}
     }
 }
@@ -3584,7 +3638,7 @@ fn stroke_ignores_foreign_dash_and_ends() {
     let mut package=ibis_ooxml::Package::open(saved).unwrap();let xml=package.xml_mut("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();xml.set_attr(root,"xmlns:fixture","urn:ibis:test:stroke-properties");xml.set_attr(root,"xmlns:mc","http://schemas.openxmlformats.org/markup-compatibility/2006");let ignorable=format!("{} fixture",xml.attr(root,"mc:Ignorable").unwrap_or(""));xml.set_attr(root,"mc:Ignorable",ignorable.trim());let pr=xml.descendants(root).into_iter().filter(|&n|xml.is_element(n)&&xml.local_name(n)=="ln").last().unwrap();xml.set_attr(pr,"fixture:keep","shape");for name in ["prstDash","headEnd","tailEnd"] {let n=xml.append_element(pr,&format!("fixture:{name}"));xml.set_attr(n,"fixture:keep",name);xml.set_attr(n,"val","dash");xml.set_attr(n,"type","triangle");xml.set_attr(n,"w","lg");xml.set_attr(n,"len","lg");let color=xml.append_element(n,"a:srgbClr");xml.set_attr(color,"val","ABCDEF");let payload=xml.append_element(n,"fixture:payload");xml.append_text(payload,"図形塗り保持 😀");}
     s.data=package.save(SaveOptions::default()).unwrap();s.opened=ibis_formats::open(s.data.clone()).unwrap();s.document=Document::new(s.opened.presentation.clone());let slide=s.p().slides[0].id;let shape=s.p().slides[0].shapes[index].id;
     let ShapeKind::Auto(auto)=&s.p().slides[0].shapes[index].kind else {panic!("auto")};let original=auto.stroke.as_ref().unwrap();assert_eq!(original.dash,ibis_doc_model::LineDash::Solid);assert_eq!(original.head,LineEnd::None);assert_eq!(original.tail,LineEnd::None);
-    for stroke in [Some(Stroke::solid(Color {rgb:Rgb(0x445566),alpha:128},25_400)),None,Some(Stroke::solid(Color::opaque(Rgb(0x778899)),50_800))] {
+    for stroke in [Some(Stroke::solid(Color {rgb:Rgb(0x445566),alpha:128, theme: None },25_400)),None,Some(Stroke::solid(Color::opaque(Rgb(0x778899)),50_800))] {
         let saved=s.run(vec![Command::SetStroke {slide,shape,stroke}]);let package=ibis_ooxml::Package::open(saved).unwrap();let xml=package.xml("ppt/slides/slide1.xml").unwrap();let root=xml.root_element().unwrap();let pr=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.attr(n,"fixture:keep")==Some("shape")).unwrap();for name in ["prstDash","headEnd","tailEnd"] {let n=xml.elements(pr).find(|&n|xml.namespace(n)==Some("urn:ibis:test:stroke-properties")&&xml.local_name(n)==name).expect("foreign stroke fill is retained");assert_eq!(xml.attr(n,"fixture:keep"),Some(name));assert_eq!(xml.attr(xml.child(n,"srgbClr").unwrap(),"val"),Some("ABCDEF"));assert_eq!(xml.text(xml.child(n,"payload").unwrap()),"図形塗り保持 😀");}
     }
 }
@@ -7103,6 +7157,9 @@ fn test_object_defaults_round_trip() {
         glow: Some(glow),
         reflection: Some(reflection),
         soft_edge: Some(soft_edge),
+        anchor: ibis_doc_model::VerticalAnchor::Middle,
+        insets: ibis_doc_model::Insets::default(),
+        wrap: true,
     };
 
     let new_line_default = Stroke::solid(Color::opaque(Rgb(0xc83232)), 38_100).with_dash(ibis_doc_model::LineDash::Dot);
@@ -7110,6 +7167,7 @@ fn test_object_defaults_round_trip() {
     let new_defaults = ObjectDefaults {
         shape: Some(new_shape_default.clone()),
         line: Some(new_line_default.clone()),
+        text_box: None,
     };
 
     // 2. Command::SetObjectDefaults で設定・Undo/Redo・保存
@@ -8140,7 +8198,7 @@ fn test_keep_slideshow_ink_shapes_round_trip() {
     let hl_id = s.document.ids().new_shape_id();
     let hl_frame = EmuRect::new(2_000_000, 3_000_000, 3_000_000, 100_000);
     let hl_points = vec![(0, 50_000), (1_500_000, 50_000), (3_000_000, 50_000)];
-    let mut hl_stroke = ibis_doc_model::Stroke::solid(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0xffff00), alpha: 128 }, 152_400);
+    let mut hl_stroke = ibis_doc_model::Stroke::solid(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0xffff00), alpha: 128, theme: None }, 152_400);
     hl_stroke.cap = ibis_doc_model::LineCap::Round;
     hl_stroke.join = ibis_doc_model::LineJoin::Round;
     let hl_shape = make_ink_shape(hl_id, hl_frame, &hl_points, hl_stroke);
@@ -8229,7 +8287,7 @@ fn test_pencil_ink_shape_round_trip() {
     let pencil_id = s.document.ids().new_shape_id();
     let pencil_frame = EmuRect::new(1_200_000, 1_200_000, 1_800_000, 1_000_000);
     let pencil_points = vec![(0, 0), (600_000, 500_000), (1_200_000, 300_000), (1_800_000, 1_000_000)];
-    let mut pencil_stroke = ibis_doc_model::Stroke::solid(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0x404040), alpha: 192 }, 6_350);
+    let mut pencil_stroke = ibis_doc_model::Stroke::solid(ibis_doc_model::Color { rgb: ibis_doc_model::Rgb(0x404040), alpha: 192, theme: None }, 6_350);
     pencil_stroke.cap = ibis_doc_model::LineCap::Round;
     pencil_stroke.join = ibis_doc_model::LineJoin::Round;
     let pencil_shape = make_ink_shape(pencil_id, pencil_frame, &pencil_points, pencil_stroke);
@@ -9783,4 +9841,90 @@ fn transition_effect_change_keeps_embedded_sound() {
         assert_eq!(rel.target, "../media/qa-tone.wav", "the sound still points at its own audio");
     }
     assert_eq!(package.read("ppt/media/qa-tone.wav").unwrap(), tone);
+}
+
+/// K0071 P9 (T12): PowerPoint writes `p14:dur` for a transition of 2 s or 3 s and leaves it out for 1 s (`spd="slow"` is 1 s); each reads back as it was.
+#[test]
+fn transition_duration_of_one_second_is_left_out_of_the_file() {
+    for (duration, written) in [(1000u32, false), (2000, true), (3000, true)] {
+        let mut s = Scenario::open("k0071-dur", "editing/pptx-plan.pptx");
+        let slide = s.p().slides[0].id;
+        let saved = s.run(vec![Command::SetTransition { slide, transition: Some(ibis_doc_model::Transition { duration, ..ibis_doc_model::Transition::new("fade") }) }]);
+        let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+        let xml: String = package.names().filter(|n| n.starts_with("ppt/slides/slide") && n.ends_with(".xml")).map(|n| String::from_utf8(package.read(n).unwrap().to_vec()).unwrap()).collect();
+        assert_eq!(xml.contains(&format!("dur=\"{duration}\"")), written, "p14:dur of {duration} ms");
+        let reread = ibis_formats::read(&saved).unwrap();
+        assert_eq!(reread.slides[0].transition.as_ref().map(|t| t.duration), Some(duration), "{duration} ms reads back");
+    }
+}
+
+/// The colours that followed no reference after a theme change (#159): a hyperlink's colour, a bullet's, a chart's, a table's and the
+/// presentation's object defaults follow the theme colours they name, in a file read and in a shape changed since.
+#[test]
+fn links_bullets_charts_tables_and_defaults_follow_the_theme() {
+    let s = Scenario::open("theme-follow", "benchmark/earnings-presentation.pptx");
+    let new_colors: Vec<(String, Rgb)> = s.p().theme_colors.iter().map(|(n, c)| (n.clone(), Rgb(c.0 ^ 0x00FF_FF00 ^ (n.len() as u32 * 0x11)))).collect();
+    let mut doc = Document::new(s.p().clone());
+    doc.execute(vec![Command::SetTheme { colors: new_colors.clone(), fonts: None }]).unwrap();
+    let (mut chart_colours, mut cell_fills) = (0, 0);
+    for (sb, sa) in s.p().slides.iter().flat_map(|b| &b.shapes).zip(doc.presentation().slides.iter().flat_map(|a| &a.shapes)) {
+        match (&sb.kind, &sa.kind) {
+            (ShapeKind::Chart(x), ShapeKind::Chart(y)) => {
+                for (ssx, ssy) in x.groups.iter().flat_map(|g| &g.series).zip(y.groups.iter().flat_map(|g| &g.series)) {
+                    if let (ibis_doc_model::Fill::Solid(cx), ibis_doc_model::Fill::Solid(cy)) = (&ssx.fill, &ssy.fill) && cx.theme_ref().is_some() {
+                        chart_colours += 1;
+                        assert_eq!(Some(cy.rgb), cx.theme_ref().and_then(|t| t.resolve(&new_colors)).map(|c| c.rgb), "a chart series follows the theme");
+                    }
+                }
+            }
+            (ShapeKind::Table(x), ShapeKind::Table(y)) => {
+                for (cx, cy) in x.rows.iter().flat_map(|r| &r.cells).zip(y.rows.iter().flat_map(|r| &r.cells)) {
+                    if let (ibis_doc_model::Fill::Solid(fx), ibis_doc_model::Fill::Solid(fy)) = (&cx.fill, &cy.fill) && fx.theme_ref().is_some() {
+                        cell_fills += 1;
+                        assert_eq!(Some(fy.rgb), fx.theme_ref().and_then(|t| t.resolve(&new_colors)).map(|c| c.rgb), "a table cell follows the theme");
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(chart_colours > 0 && cell_fills > 0, "{chart_colours} {cell_fills}");
+
+    // A link, a bullet and the object defaults, from a file written for it.
+    let mut s = Scenario::open("theme-follow", "editing/pptx-theme-follow.pptx");
+    let slide = &s.p().slides[0];
+    let (paragraphs, shape_id) = slide.shapes.iter().find_map(|sh| match &sh.kind { ShapeKind::Auto(a) => a.text.as_ref().filter(|t| t.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.style.link.is_some()))).map(|t| (t.paragraphs.clone(), sh.id)), ShapeKind::TextBox(t) if t.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.style.link.is_some())) => Some((t.paragraphs.clone(), sh.id)), _ => None }).expect("the shape with the link");
+    let slide_id = slide.id;
+    let link = paragraphs.iter().flat_map(|p| &p.runs).find(|r| r.style.link.is_some()).unwrap();
+    assert_eq!(link.style.color_theme.map(|t| t.name.name()), Some("hlink"), "a link names the hlink colour");
+    let bullet = paragraphs.iter().find_map(|p| p.bullet.as_ref()).expect("a bullet");
+    assert_eq!(bullet.color_theme.map(|t| t.name.name()), Some("accent2"), "a bullet names its colour");
+    let defaults = s.p().object_defaults.shape.clone().expect("spDef");
+    assert!(matches!(&defaults.fill, ibis_doc_model::Fill::Solid(c) if c.theme_ref().is_some_and(|t| t.name.name() == "accent3")));
+    assert_eq!(defaults.stroke.as_ref().and_then(|st| st.color.theme_ref()).map(|t| t.name.name()), Some("accent4"));
+    assert_eq!(defaults.text.color_theme.map(|t| t.name.name()), Some("accent5"));
+    let colors: Vec<(String, Rgb)> = s.p().theme_colors.iter().map(|(n, c)| (n.clone(), if ["hlink", "accent2", "accent3", "accent4", "accent5"].contains(&n.as_str()) { Rgb(c.0 ^ 0x0F0F0F) } else { *c })).collect();
+    let (old_link, old_bullet) = (link.style.color, bullet.color);
+    // Another change to the shape first (it is no longer what the file redraws), then the theme.
+    s.run(vec![Command::SetFrame { slide: slide_id, frames: vec![(shape_id, s.p().slides[0].shape(shape_id).unwrap().frame.translated(12_700, 0))], with_attached: true }]);
+    s.run(vec![Command::SetTheme { colors: colors.clone(), fonts: None }]);
+    let after = s.p();
+    let text = match &after.slides[0].shape(shape_id).unwrap().kind { ShapeKind::Auto(a) => a.text.clone().unwrap(), ShapeKind::TextBox(t) => t.clone(), _ => panic!() };
+    let new_link = text.paragraphs.iter().flat_map(|p| &p.runs).find(|r| r.style.link.is_some()).unwrap();
+    assert_ne!(new_link.style.color, old_link);
+    assert_eq!(new_link.style.color.map(|c| c.0), colors.iter().find(|(n, _)| n == "hlink").map(|(_, c)| c.0));
+    let new_bullet = text.paragraphs.iter().find_map(|p| p.bullet.as_ref()).unwrap();
+    assert_ne!(new_bullet.color, old_bullet);
+    assert_eq!(new_bullet.color, colors.iter().find(|(n, _)| n == "accent2").map(|(_, c)| *c));
+    let d = after.object_defaults.shape.as_ref().unwrap();
+    assert!(matches!(&d.fill, ibis_doc_model::Fill::Solid(c) if Some(c.rgb) == colors.iter().find(|(n, _)| n == "accent3").map(|(_, c)| *c)));
+    assert_eq!(Some(d.text.color), colors.iter().find(|(n, _)| n == "accent5").map(|(_, c)| *c));
+    // The file saved keeps every reference (the theme part names the colours, the slide too).
+    let saved = s.check_saved();
+    let package = ibis_ooxml::Package::open(saved).unwrap();
+    let theme = String::from_utf8(package.read("ppt/theme/theme1.xml").unwrap().to_vec()).unwrap();
+    assert!(theme.contains(r#"<a:solidFill><a:schemeClr val="accent3"/></a:solidFill>"#), "spDef keeps its reference: {theme}");
+    assert!(theme.contains(r#"<a:schemeClr val="accent5"/>"#));
+    let slide_xml = String::from_utf8(package.read("ppt/slides/slide1.xml").unwrap().to_vec()).unwrap();
+    assert!(slide_xml.contains(r#"<a:buClr><a:schemeClr val="accent2"/></a:buClr>"#), "{slide_xml}");
 }

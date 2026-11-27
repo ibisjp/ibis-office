@@ -77,7 +77,8 @@ pub(super) fn run() {
     s.key("enter");
     assert_eq!(s.value("A10"),CellValue::Text("Microsoft".into()));
     s.key("enter");
-    assert!(s.value("A10").is_empty(),"dismissal clears an old value as well as the invalid draft");
+    // Excel measurement (#284, tasks/doc/requests/2026-11-24-284-ignore-blank-result.md): dismissing the message keeps the old value.
+    assert_eq!(s.value("A10"),CellValue::Text("Microsoft".into()),"dismissal keeps the old value and drops the invalid draft");
     // A cell near the right edge cannot accommodate the message on its right.
     let target=s.with(|e,_|(0..30).filter_map(|c|e.cell_center(c,9)).find(|p|f32::from(p.x)>900. && f32::from(p.x)<1100.).unwrap());
     s.click((f32::from(target.x),f32::from(target.y)));

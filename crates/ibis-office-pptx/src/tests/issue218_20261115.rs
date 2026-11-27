@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 2026-11-15 (#218): a shape that waits for its entrance effect is not shown while a 変形 into its slide plays.
 use crate::shell::scenario::Scenario;
-use crate::slideshow::SlideshowExt;
+use crate::ext::*;
 use ibis_doc_model::{Color, Command, Fill, Rgb, Transition};
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {

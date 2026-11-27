@@ -63,17 +63,18 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      # version.txt on GitHub's main is pushed only after the release is out (the
-      # installed apps update from it), so a release build takes its version
-      # from the tag (v0.8.5 -> 0.8.5).
+      # The build takes its version from crates/build-version.txt, which the release's
+      # source carries (version.txt on GitHub's main is pushed only after the release
+      # is out, the installed apps update from it). Tags made before build-version.txt
+      # existed have an older one, so write it from the tag (v0.8.5 -> 0.8.5).
       - name: Use the release tag's version
         if: inputs.release_tag != ''
         env:
           TAG: ${{ inputs.release_tag }}
         run: |
           v="${TAG#v}"
-          printf 'Windows\t%s\nmacOS\t%s\nwasm\t%s\nLinux\t%s\n' "$v" "$v" "$v" "$v" > version.txt
-          cat version.txt
+          printf 'Windows\t%s\nmacOS\t%s\nwasm\t%s\nLinux\t%s\n' "$v" "$v" "$v" "$v" > crates/build-version.txt
+          cat crates/build-version.txt
 
       - name: Build AppImage
         timeout-minutes: 60
@@ -156,17 +157,18 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      # version.txt on GitHub's main is pushed only after the release is out (the
-      # installed apps update from it), so a release build takes its version
-      # from the tag (v0.8.5 -> 0.8.5).
+      # The build takes its version from crates/build-version.txt, which the release's
+      # source carries (version.txt on GitHub's main is pushed only after the release
+      # is out, the installed apps update from it). Tags made before build-version.txt
+      # existed have an older one, so write it from the tag (v0.8.5 -> 0.8.5).
       - name: Use the release tag's version
         if: inputs.release_tag != ''
         env:
           TAG: ${{ inputs.release_tag }}
         run: |
           v="${TAG#v}"
-          printf 'Windows\t%s\nmacOS\t%s\nwasm\t%s\nLinux\t%s\n' "$v" "$v" "$v" "$v" > version.txt
-          cat version.txt
+          printf 'Windows\t%s\nmacOS\t%s\nwasm\t%s\nLinux\t%s\n' "$v" "$v" "$v" "$v" > crates/build-version.txt
+          cat crates/build-version.txt
 
       - name: Build Flatpak bundle
         timeout-minutes: 60

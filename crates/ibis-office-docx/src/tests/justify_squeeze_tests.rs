@@ -151,10 +151,15 @@ fn a_number_and_an_indent_keep_their_spaces() {
     }
 }
 
-/// ： and ； give up their half em in compatibility mode 15 only: paragraph 6 of the compat 14 file keeps 44 characters, as Word's PDF does.
+/// Compatibility mode 14 (GitHub issue #164, DrK-Labo): Word 365's PDF of `justify-squeeze-or-break-compat14.docx` (this PC, 2026-11-26) has first lines of
+/// 46, 46, 44, 46, 46, 44, 46 and 45 characters (not counting the full-width space). ： ； and a full-width space inside the line give up their half em as the
+/// dots do (paragraphs 5, 7, 8); a ： that would end the line does not (paragraph 6: 44).
 fn colons_are_squeezed_only_in_mode_15() {
     let lines = first_lines("test/editing/justify-squeeze-or-break-compat14.docx");
-    assert_eq!(count(&lines[5]), 44, "paragraph 6 of the mode 14 file");
+    let word = [46usize, 46, 44, 46, 46, 44, 46, 45];
+    for (n, &w) in word.iter().enumerate() {
+        assert_eq!(count(&lines[n]), w, "paragraph {} of the mode 14 file: {} characters, Word has {w}", n + 1, count(&lines[n]));
+    }
 }
 
 /// Without the setting every space is squeezed, a line's first ones too (the same file without `balanceSingleByteDoubleByteWidth`): the stop gives

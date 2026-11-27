@@ -23,7 +23,19 @@ pub fn upright(c: char) -> bool {
 /// all five typefaces measured). The arrows, the box drawing characters, the Greek letters and the mathematical operators are turned by
 /// UAX #50 already. Not found as a rule: ✂ U+2702 is turned and ✓ ❶ ➀ stand in the same Dingbats block; the block stays UAX #50's.
 pub fn powerpoint_upright(c: char) -> bool {
+    // ☞ (U+261E, UAX #50 R) stands in PowerPoint's vertical text in 20 of the 21 typefaces of the reporter's n5 file (GitHub issue #188). ‚ ‛ „ (R) stand
+    // in 14 of the 21 only: the typeface decides, not asked here.
+    if c == '\u{261E}' {
+        return true;
+    }
     if !upright(c) {
+        return false;
+    }
+    // PowerPoint turns these though UAX #50 stands them, in every one of the 21 typefaces of the reporter's n5 file (GitHub issue #188; Windows
+    // PowerPoint, `vert="eaVert"`): the Hangzhou numerals 〡..〩 and 〸 〹 〺, 〾 〿, the parenthesized and circled Hangul-and-ideograph numbers
+    // ㉠..㉿ (U+3260..327F). Of the characters of the same file that differ in only some of the typefaces (Ⓐ..Ⓩ 7 of 21, ㉈..㉏ 15, ⓪ ⓫.. ▷ ◁ 2) the
+    // typeface decides, which this table does not ask.
+    if matches!(c as u32, 0x3021..=0x3029 | 0x3038..=0x303A | 0x303E | 0x303F | 0x3260..=0x327F) {
         return false;
     }
     !matches!(c as u32, 0x00A0..=0x00FF | 0x2100..=0x218F | 0x2300..=0x23FF | 0x1D400..=0x1D7FF | 0x1F000..=0x1F0FF | 0xE000..=0xF8FF | 0xF0000..=0x10FFFF)

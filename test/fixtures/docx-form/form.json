@@ -1,0 +1,12 @@
+{
+  "form": {
+    "id": "elementary-school-record",
+    "version": 1
+  },
+  "fields": {
+    "pupil.name": "text",
+    "pupil.birthDate": "date-ja",
+    "nextSchool": "text"
+  },
+  "templateSha256": "4e47538c817ceb4a3d93534d7dab301b066cf43941f1f615d22a7358641cb53d"
+}

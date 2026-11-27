@@ -65,60 +65,6 @@ pub(crate) fn valid_table_name(name: &str) -> bool {
     !looks_like_cell && !matches!(upper.as_str(), "R" | "C")
 }
 
-/// The formats the old style laid on `sheet`'s cells taken off: each of a
-/// cell's fill, borders, bold and colour that is what the style gives it.
-fn without_style(sheet: &Sheet, table: &SheetTable, theme: &[(String, Rgb)]) -> Sheet {
-    let r = table.range;
-    let mut bare = sheet.clone();
-    for c in bare.cells.iter_mut().filter(|c| (r.first_row..=r.last_row).contains(&c.row) && (r.first_column..=r.last_column).contains(&c.column)) {
-        let mut st = sheet.styles[c.style as usize].clone();
-        st.fill = None;
-        st.left = None;
-        st.right = None;
-        st.top = None;
-        st.bottom = None;
-        st.bold = false;
-        st.color = Rgb::BLACK;
-        bare.styles.push(st);
-        c.style = (bare.styles.len() - 1) as u32;
-    }
-    let overlay = ibis_formats::styled_with_table(&bare, table, theme);
-    let mut out = sheet.clone();
-    for row in r.first_row..=r.last_row {
-        for column in r.first_column..=r.last_column {
-            let (Some(cell), Some(o)) = (sheet.cell(row, column), overlay.cell(row, column)) else { continue };
-            let o = &overlay.styles[o.style as usize];
-            let mut st = sheet.styles[cell.style as usize].clone();
-            let before = st.clone();
-            if o.fill.is_some() && st.fill == o.fill {
-                st.fill = None;
-            }
-            let strip = |side: &mut Option<Border>, given: &Option<Border>| {
-                if given.is_some() && side == given {
-                    *side = None;
-                }
-            };
-            strip(&mut st.left, &o.left);
-            strip(&mut st.right, &o.right);
-            strip(&mut st.top, &o.top);
-            strip(&mut st.bottom, &o.bottom);
-            if o.bold && st.bold {
-                st.bold = false;
-            }
-            if o.color != Rgb::BLACK && st.color == o.color {
-                st.color = Rgb::BLACK;
-            }
-            if st != before {
-                let id = out.style_index(st);
-                if let Some(c) = out.cells.iter_mut().find(|c| (c.row, c.column) == (row, column)) {
-                    c.style = id;
-                }
-            }
-        }
-    }
-    out
-}
-
 #[ibis_office_macros::editor_ext(TableDesign)]
 impl SlideEditor {
     /// The table the selected cell is in.
@@ -177,40 +123,7 @@ impl SlideEditor {
             Ok(c) => c,
             Err(message) => return self.table_message(message, cx),
         };
-        let mut base = without_style(&sheet, &old, &theme);
-        for (row, column, input) in &contents {
-            if matches!(input, CellInput::Clear) {
-                // A row the table leaves (its 集計行, its headings) loses its look.
-                if let Some(c) = base.cells.iter_mut().find(|c| (c.row, c.column) == (*row, *column)) {
-                    c.style = 0;
-                }
-            }
-        }
-        let styled = ibis_formats::styled_with_table(&base, &table, &theme);
-        let area = |r: CellRange| (r.first_row..=r.last_row).flat_map(move |row| (r.first_column..=r.last_column).map(move |c| (row, c)));
-        let mut cells: Vec<PutCell> = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for (row, column) in area(old.range).chain(area(table.range)) {
-            if !seen.insert((row, column)) {
-                continue;
-            }
-            let inside = (table.range.first_row..=table.range.last_row).contains(&row) && (table.range.first_column..=table.range.last_column).contains(&column);
-            let style_before = sheet.cell(row, column).map(|c| sheet.styles[c.style as usize].clone());
-            let style_after: Option<CellStyle> = if inside { styled.cell(row, column).map(|c| styled.styles[c.style as usize].clone()) } else { base.cell(row, column).map(|c| base.styles[c.style as usize].clone()) };
-            let content = contents.iter().find(|(a, b, _)| (*a, *b) == (row, column)).map(|(_, _, i)| i.clone());
-            if style_before == style_after && content.is_none() {
-                continue;
-            }
-            let input = content.unwrap_or_else(|| match sheet.cell(row, column) {
-                Some(c) => match &c.formula {
-                    Some(f) => CellInput::Formula(f.clone()),
-                    None if c.value.is_empty() => CellInput::Clear,
-                    None => CellInput::Value(c.value.clone()),
-                },
-                None => CellInput::Clear,
-            });
-            cells.push(PutCell { row, column, input, style: Some(style_after.unwrap_or_else(|| sheet.styles.first().cloned().unwrap_or_default())) });
-        }
+        let cells = ibis_formats::restyled_cells(&sheet, &old, &table, &theme, &contents);
         self.status = match self.document.execute(vec![Command::Sheet(SheetCommand::SetTable { sheet: slide, index, table: Some(table), cells })]) {
             Ok(_) => None,
             Err(err) => Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into()),
@@ -509,7 +422,7 @@ impl SlideEditor {
                     this.set_table_style(index, move |s| s.name = chosen, cx)
                 }));
             // The scenario tests press it by its rendered bounds.
-            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux", windows)))]
             let item = crate::shell::scenario::button_probe::observe_control(item, id.into());
             items.push(item);
         }

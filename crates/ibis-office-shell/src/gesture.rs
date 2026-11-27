@@ -67,9 +67,20 @@ impl SlideEditor {
     pub(crate) fn on_touch_session(&mut self, event: &TouchSessionEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event.phase {
             TouchPhase::Started => {
+                // A finger touched this window: it is on a touch device (K0061, `narrow_layout.rs`).
+                if !self.touch_seen {
+                    self.touch_seen = true;
+                    cx.notify();
+                }
                 // (A session still open means the end was lost: it is final as it stands.)
                 self.end_touch_session(true, window, cx);
                 let in_page = self.workspace_bounds.is_some_and(|bounds| bounds.contains(&event.position));
+                // A tap on the page is the user going to type there: the keyboard the ⌄ closed may come back (K0091). The toolbar, the bars and the panes are not the page.
+                // The worksheet's formula bar is outside the workspace but a place to type too (a press on it types into the cell).
+                if self.keyboard_closed && ((in_page && with_format!(self, tap_on_text_place(self, event.position))) || with_format!(self, tap_on_text_field(self, event.position))) {
+                    self.keyboard_closed = false;
+                    cx.notify();
+                }
                 if self.has_document && in_page && !self.dialog_is_modal() {
                     self.begin_touch_session();
                 }

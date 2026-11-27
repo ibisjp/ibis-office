@@ -997,6 +997,9 @@ pub struct FloatingAnchor {
     pub wrap_polygon: Option<WrapPolygon>,
     /// For a connector: the shapes its ends are attached to.
     pub glue: Glue,
+    /// A shape that follows a frame (a SmartArt graphic's shapes): the frame's size. An alignment (`align_h`, `align_v`) then places the frame, and `offset_x`/`offset_y` are
+    /// from the frame's corner.
+    pub frame_size: Option<(Emu, Emu)>,
 }
 
 /// A 2D point (in EMUs or local coordinates) used in a text wrapping polygon (`wp:wrapPolygon`).
@@ -1249,6 +1252,7 @@ impl Default for FloatingAnchor {
             relative_height: Self::DEFAULT_RELATIVE_HEIGHT,
             wrap_polygon: None,
             glue: Glue::default(),
+            frame_size: None,
         }
     }
 }
@@ -1329,6 +1333,19 @@ impl Shape {
             ShapeKind::Auto(shape) => shape.fill.backdrop_rgb(),
             _ => None,
         }
+    }
+
+    /// What to say of this shape where it is shown as a picture (the `alt` of an `<img>`): a chart's title; a SmartArt graphic's texts (those of `members`, the shapes attached
+    /// to its frame: [`Slide::attached_to`]) in reading order, separated by ", ". `None` where there is nothing to say.
+    pub fn picture_label(&self, members: &[Shape]) -> Option<String> {
+        let text = match &self.kind {
+            ShapeKind::Chart(chart) => chart.title.as_ref().map(|t| t.text.split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default(),
+            ShapeKind::Placeholder(Placeholder::Diagram) => {
+                members.iter().filter_map(|m| m.text_body().map(|b| b.text().split_whitespace().collect::<Vec<_>>().join(" "))).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", ")
+            }
+            _ => String::new(),
+        };
+        (!text.is_empty()).then_some(text)
     }
 
     pub fn text_body(&self) -> Option<&TextBody> {
@@ -1503,6 +1520,10 @@ pub struct Slide {
     /// Whether shapes are printed with the sheet (オブジェクトを印刷する: `fPrintsWithSheet`).
     /// Shapes not present are printed (default `true`).
     pub shape_prints: std::collections::HashMap<ShapeId, bool>,
+    /// Shapes the file anchors by two cells (`xdr:twoCellAnchor`, whatever its `editAs`). Excel for Windows prints such a shape
+    /// from the printed top-left cell to the printed bottom-right one, not at the size it is on the screen (a box of 6 rows of 15 pt
+    /// prints 82.8 pt tall where the rows print 13.8 pt); a `oneCellAnchor` or `absoluteAnchor` shape keeps its own size.
+    pub shape_two_cell: std::collections::HashSet<ShapeId>,
     /// Formulas linked to shapes (セルの値を表示する数式連動: `xdr:f`).
     pub shape_formulas: std::collections::HashMap<ShapeId, String>,
     /// Shapes that return to the zoom source slide after viewing (ズーム後に元へ戻る: `p16:zoom/@returnToZoom="1"`).
@@ -1575,6 +1596,14 @@ pub struct Transition {
 }
 
 impl Transition {
+    /// How long the slide show plays this transition, milliseconds: its `duration` when it has an effect that moves (a cut that is
+    /// not through black, or no effect, does not), else 0. A `p14:dur` left on a transition with no effect is not time to wait
+    /// (K0071: PowerPoint moves on `advTm` after the slide came in, the leftover is ignored).
+    pub fn played_ms(&self) -> u32 {
+        let plays = !self.effect.is_empty() && (self.effect != "cut" || self.direction.as_deref() == Some("thruBlk")) && self.duration > 0;
+        if plays { self.duration } else { 0 }
+    }
+
     /// The effects of the base schema (the others are PowerPoint 2010's, `p14:`).
     pub const BASE_EFFECTS: [&'static str; 21] = [
         "blinds", "checker", "circle", "comb", "cover", "cut", "diamond", "dissolve", "fade", "newsflash", "plus", "pull", "push", "random",
@@ -1589,7 +1618,7 @@ impl Transition {
 
 impl Slide {
     pub fn new(id: SlideId) -> Self {
-        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, transition_sound: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, guides: Vec::new(), shape_links: Default::default(), group_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), zoom_objects: Default::default(), shape_glues: Default::default(), ibis_wrap: Default::default(), ibis_wrap_ignore: Default::default(), text_chains: Vec::new() }
+        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, transition_sound: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, guides: Vec::new(), shape_links: Default::default(), group_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_two_cell: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), zoom_objects: Default::default(), shape_glues: Default::default(), ibis_wrap: Default::default(), ibis_wrap_ignore: Default::default(), text_chains: Vec::new() }
     }
 
     /// A new empty slide following `layout`, as PowerPoint's "New Slide"
@@ -1736,6 +1765,9 @@ pub struct Presentation {
     pub layout_scale: LayoutScale,
     /// The guides of the normal view (`p15:sldGuideLst` of `presentation.xml`).
     pub guides: Vec<SlideGuide>,
+    /// グリッドとガイドの設定 (`viewProps.xml`: `p:gridSpacing`, `p:cSldViewPr@snapToGrid|snapToObjects|showGuides`). Not part of the
+    /// model's equality (a view setting is not an edit); the saving compares it with what was read.
+    pub view_grid: ViewGrid,
     /// The zoom the file was saved at, in percent (a document's `w:zoom/@w:percent` of `settings.xml`, a presentation's slide view scale
     /// `p:scale` of `viewProps.xml`), or the zoom the window has been put at since: written by the saving when it differs from what was read.
     /// Not part of the model's equality (a zoom is not an edit).
@@ -1878,6 +1910,7 @@ impl Presentation {
             // Not compared: the window's zoom is not an edit (the saving compares it with what was read).
             view_zoom: _,
             view_fit: _,
+            view_grid: _,
         } = self;
         *slide_size == other.slide_size
             && *slides == other.slides
@@ -1906,11 +1939,63 @@ impl Presentation {
     }
 }
 
+/// グリッドとガイドの設定（PowerPoint の「グリッドとガイド」）。`viewProps.xml` の `p:gridSpacing`（EMU）と
+/// `p:cSldViewPr` の `snapToGrid`・`snapToObjects`・`showGuides`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewGrid {
+    /// The grid's spacing (`p:gridSpacing@cx|cy`, EMU).
+    pub spacing: EmuSize,
+    /// オブジェクトをグリッドに合わせる (`snapToGrid`).
+    pub snap_to_grid: bool,
+    /// 他のオブジェクトに合わせる (`snapToObjects`).
+    pub snap_to_objects: bool,
+    /// ガイドを表示 (`showGuides`).
+    pub show_guides: bool,
+}
+
+impl ViewGrid {
+    /// PowerPoint's own spacing: 1/12 inch (`<p:gridSpacing cx="76200" cy="76200"/>`).
+    pub const DEFAULT_SPACING: i64 = 76_200;
+    /// The least and the most a spacing is in the dialog (limits ibisOffice puts: 0.03 cm to 14.2 cm; a file's own value is kept as it is).
+    pub const MIN_SPACING: i64 = 10_800;
+    pub const MAX_SPACING: i64 = 5_112_000;
+}
+
+impl Default for ViewGrid {
+    fn default() -> Self {
+        Self { spacing: EmuSize::new(Self::DEFAULT_SPACING, Self::DEFAULT_SPACING), snap_to_grid: false, snap_to_objects: false, show_guides: false }
+    }
+}
+
 /// 既定の図形・線の書式設定（`<a:objectDefaults>`）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ObjectDefaults {
     pub shape: Option<ShapeDefault>,
     pub line: Option<Stroke>,
+    /// テキスト ボックスの既定（`<a:txDef>`）: what the next text box drawn has.
+    pub text_box: Option<ShapeDefault>,
+}
+
+impl ObjectDefaults {
+    /// A text box just made, with the look of 既定のテキスト ボックス (`a:txDef`): the text's style, where it sits, its margins and wrapping;
+    /// a fill or an outline makes it a rectangle with text (as a presentation stores a text box that has them). Without a definition: as it is.
+    pub fn apply_to_text_box(&self, mut shape: Shape) -> Shape {
+        let (Some(d), ShapeKind::TextBox(body)) = (&self.text_box, &mut shape.kind) else { return shape };
+        body.style = d.text.clone();
+        body.anchor = d.anchor;
+        body.insets = d.insets;
+        body.wrap = d.wrap;
+        if d.fill != Fill::None || d.stroke.is_some() {
+            let mut auto = AutoShape::text_box(d.fill.clone(), body.clone());
+            auto.stroke = d.stroke.clone();
+            auto.shadow = d.shadow;
+            auto.glow = d.glow;
+            auto.reflection = d.reflection;
+            auto.soft_edge = d.soft_edge;
+            shape.kind = ShapeKind::Auto(auto);
+        }
+        shape
+    }
 }
 
 /// 既定の図形の書式（`<a:spDef>`）。
@@ -1923,6 +2008,10 @@ pub struct ShapeDefault {
     pub glow: Option<(Color, i64)>,
     pub reflection: Option<crate::Reflection>,
     pub soft_edge: Option<i64>,
+    /// Where the text sits in the shape (`a:bodyPr@anchor`), the margins round it (`lIns`, `tIns`, `rIns`, `bIns`) and whether lines wrap (`wrap`).
+    pub anchor: crate::VerticalAnchor,
+    pub insets: crate::Insets,
+    pub wrap: bool,
 }
 
 /// A custom slide show (目的別スライド ショー, `<p:custShow>`).
@@ -2283,7 +2372,7 @@ impl Presentation {
     /// A presentation with no slides yet, for a reader to fill. It must end up
     /// with at least one slide.
     pub fn empty(slide_size: EmuSize) -> Self {
-        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), typeface_traits: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), guides: Vec::new(), notes_pane: NotesPaneOpening::default(), view_zoom: None, view_fit: false, pdf_bytes: None, notes_pane_save: None, show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, opened_from_legacy: false, ibis_extensions: false, cmyk: Default::default(), modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
+        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), typeface_traits: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), guides: Vec::new(), view_grid: ViewGrid::default(), notes_pane: NotesPaneOpening::default(), view_zoom: None, view_fit: false, pdf_bytes: None, notes_pane_save: None, show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, opened_from_legacy: false, ibis_extensions: false, cmyk: Default::default(), modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
     }
 
     /// Look up a custom show by its numeric identifier.

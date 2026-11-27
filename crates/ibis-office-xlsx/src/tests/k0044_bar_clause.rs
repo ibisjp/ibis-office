@@ -62,9 +62,12 @@ fn the_bar_thick_line_in_pixels() {
     let mid = (left + right) / 2;
     // The frame under the bar's text: a row of blue (the clip is its inner edge).
     let frame = (y0..y1).find(|&y| { let p = a.get_pixel(x0 + 20, y).0; p[2] > 120 && p[0] < 90 && dark(a, x0 + 20, y - 1) == false && y > y0 + 20 }).expect("the bar's frame");
-    // The rows of lines (dark for 8 pixels or more) in the 4.5 logical pixels above the frame, in the part [from, to) of a picture: under the text.
+    // The rows of lines (dark along the whole clause) in the 4.5 logical pixels above the frame, in the part [from, to) of a picture: under the text.
     let rows = |i: &image::RgbaImage, from: u32, to: u32| -> Vec<u32> {
-        (frame - (4.5 * scale) as u32..frame).filter(|&y| (from..to).filter(|&x| dark(i, x, y)).count() >= 8).collect()
+        // A line is dark along the whole clause; the bottoms of the glyphs (a face that reaches down to the lines, as the Windows ones
+        // do) are dark in a part of it only, so they are not counted as a line.
+        let (from, to) = (from + 2, to.saturating_sub(2));
+        (frame - (4.5 * scale) as u32..frame).filter(|&y| (from..to).filter(|&x| dark(i, x, y)).count() * 10 >= (to - from) as usize * 9).collect()
     };
     let (thick, thin) = (rows(a, left, mid), rows(a, mid, right + 1));
     let (thick_b, thin_b) = (rows(b, mid, right + 1), rows(b, left, mid));
@@ -86,12 +89,17 @@ fn the_underlines_stay_inside_the_clip() {
     let k = 4.0 / 3.0;
     for (font, ascent_em) in [("Meiryo UI", 1.060f32), ("Yu Gothic UI", 1.079), ("Segoe UI", 1.079), ("Hiragino Sans", 0.88)] {
         let natural = row_top + ascent_em * size_px;
-        let baseline = crate::render::ime_text::underline_baseline_within(natural, clip, size_px / k, k);
-        assert!(baseline <= natural + 1e-3, "{font}: never lower than the typeface's own baseline");
         for style in [U::Single, U::Thick, U::Dotted, U::DottedHeavy, U::Wave, U::WavyHeavy] {
+            let baseline = crate::render::ime_text::underline_baseline_within(natural, clip, size_px / k, k, style);
+            assert!(baseline <= natural + 1e-3, "{font}: never lower than the typeface's own baseline");
             let (boxes, strokes) = crate::render::ime_text::underline_shapes(style, size_px / k, 0.0, 1.0, baseline / k);
             let bottom = boxes.iter().map(|[_, y, _, h]| (y + h) * k).chain(strokes.iter().map(|[_, y, _, y2, w]| (y.max(*y2) + w / 2.0) * k)).fold(0.0f32, f32::max);
             assert!(bottom <= clip - 1.0 + 1e-3, "{font} {style:?}: the line ends at {bottom} px, inside the clip at {clip}");
         }
+        // A thin line is not lifted for the sake of the thick one: where the typeface leaves room it stays at the baseline (K0044: on
+        // Windows the thin dotted line was lifted into the glyphs by the depth of the wavy one and was not seen).
+        let thin = crate::render::ime_text::underline_baseline_within(natural, clip, size_px / k, k, U::Single);
+        let wavy = crate::render::ime_text::underline_baseline_within(natural, clip, size_px / k, k, U::WavyHeavy);
+        assert!(thin >= wavy, "{font}: the thin line is no higher than the wavy one");
     }
 }

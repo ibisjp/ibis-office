@@ -166,7 +166,7 @@ impl SlideEditor {
         ];
         if let Some((dir, dist, blur)) = preset.shadow {
             let shadow = Shadow {
-                color: Color { rgb: Rgb(0), alpha: 102 },
+                color: Color { rgb: Rgb(0), alpha: 102, theme: None },
                 blur,
                 distance: dist,
                 direction: dir,

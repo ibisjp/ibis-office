@@ -128,6 +128,8 @@ pub struct ShapeEditState {
     pub gridlines: bool,
     pub snap_to_grid: bool,
     pub snap_to_shape: bool,
+    /// スマート ガイド (the lines drawn when a moved shape lines up with another) are off.
+    pub hide_smart_guides: bool,
     pub align_to_slide: bool,
     pub chart_panel: Option<crate::chart_panel::ChartPanel>,
     pub chart_data: Option<crate::chart_data::DataWindow>,

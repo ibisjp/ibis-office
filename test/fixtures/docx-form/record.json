@@ -1,0 +1,8 @@
+{
+  "form": {"id": "elementary-school-record", "version": 1},
+  "data": {
+    "pupil.name": "紅葉 葵",
+    "pupil.birthDate": "2019-04-02",
+    "nextSchool": "架空市立そよかぜ中学校\n架空市ひなた町１丁目"
+  }
+}

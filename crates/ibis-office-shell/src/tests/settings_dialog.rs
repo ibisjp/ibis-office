@@ -31,7 +31,7 @@ pub fn all() -> Vec<(&'static str, fn())> {
 struct Fresh;
 impl Fresh {
     fn new(name: &str) -> Self {
-        let dir = crate::scenario::repo_root().join("target/scenario").join(name).join("settings");
+        let dir = crate::scenario::scenario_dir(name).join("settings");
         let _ = std::fs::remove_dir_all(&dir);
         // SAFETY: the scenarios run one at a time on the main thread; nothing else reads the environment meanwhile.
         unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
@@ -94,7 +94,7 @@ fn splitter_kept() {
     s.drag(from, (from.0 + 60., from.1));
     s.settle();
     assert_eq!(width(&mut s), dialog::NAV_WIDTH_DEFAULT + 60., "dragged right by 60");
-    assert!(std::fs::read_to_string(crate::scenario::repo_root().join("target/scenario/shell::settings_dialog_splitter_kept/settings/settings.txt")).unwrap_or_default().contains("settings.nav-width=240"), "kept in the settings file");
+    assert!(std::fs::read_to_string(crate::scenario::scenario_dir("shell::settings_dialog_splitter_kept").join("settings/settings.txt")).unwrap_or_default().contains("settings.nav-width=240"), "kept in the settings file");
     s.screenshot("wider");
     // Beyond the limits it stops at them.
     let from = splitter(&mut s);
@@ -149,7 +149,7 @@ fn one_font_size() {
 fn formula_bar_font_default() {
     use crate::chrome::MenuEntry;
     let _fresh = Fresh::new("shell::settings_dialog_formula_bar_font_default");
-    let file = crate::scenario::repo_root().join("target/scenario/shell::settings_dialog_formula_bar_font_default/settings/settings.txt");
+    let file = crate::scenario::scenario_dir("shell::settings_dialog_formula_bar_font_default").join("settings/settings.txt");
     let has_line = || std::fs::read_to_string(&file).unwrap_or_default().lines().any(|l| l.starts_with("xlsx.formula-bar.font="));
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     s.size(1200., 800.);

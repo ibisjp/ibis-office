@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::h_flex;
 use gpui_kit::*;
 
 use crate::chrome::data_table::{REORDER_MOVE_MS, lifted_row_shadow, reorder_ease};
@@ -327,6 +328,10 @@ impl SlideEditor {
             } else {
                 slot.left(px(x + want)).into_any_element()
             });
+        }
+        if is_qat {
+            // The クイック アクセス ツール バー is the title row's: the app's mark of the screen at its left end, as the real title row has it (#241).
+            return h_flex().items_center().gap(px(8.)).child(self.start_window_button(editor)).child(div().flex_1().min_w_0().child(bar)).into_any_element();
         }
         bar.into_any_element()
     }

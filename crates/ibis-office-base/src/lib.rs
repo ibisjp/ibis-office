@@ -7,6 +7,7 @@
 //! The crate below the drawing (`ibis-office-render`) and the window (`ibis-office-app`): see tasks/doc/crate-split-plan.md.
 
 pub mod app_data;
+pub mod plain_path;
 pub mod clock;
 pub mod cmyk;
 pub mod i18n;

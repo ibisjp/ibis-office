@@ -93,30 +93,33 @@ pub fn underline_shapes(style: UnderlineStyle, size_pt: f32, x_pt: f32, width_pt
     (crate::shape_view::format_hooks::hooks().underline_shapes)(style, size_pt, x_pt, width_pt, baseline_pt)
 }
 
-/// The baseline (pixels from the top of the clip) to draw the composing text's underlines at, so that every one of them (the thickest and
-/// the dotted and wavy ones too) ends at least a pixel above `clip_bottom_px`, the bottom edge of what is painted (the formula bar's text is
-/// `overflow_hidden`: a line below it is not seen, K0020 and K0044). `natural_px` is where the typeface's own baseline is (top of the text
-/// plus its ascent); a typeface with a deep descent (Meiryo UI, Yu Gothic UI, Segoe UI) has it low, and the lines come up as far as they
-/// must, whatever the typeface. `size_pt` the font size and `k` pixels to a point.
-pub fn underline_baseline_within(natural_px: f32, clip_bottom_px: f32, size_pt: f32, k: f32) -> f32 {
-    use UnderlineStyle::*;
-    let deepest = [Single, Thick, Dotted, DottedHeavy, Wave, WavyHeavy]
-        .into_iter()
-        .map(|style| {
-            let (boxes, strokes) = underline_shapes(style, size_pt, 0.0, 1.0, 0.0);
-            let a = boxes.iter().map(|[_, y, _, h]| y + h * 1.0);
-            let b = strokes.iter().map(|[_, y, _, y2, w]| y.max(*y2) + w / 2.0);
-            a.chain(b).fold(0.0f32, f32::max)
-        })
-        .fold(0.0f32, f32::max);
+/// The baseline (pixels from the top of the clip) to draw the composing text's underline of `style` at, so that it ends at least a pixel
+/// above `clip_bottom_px`, the bottom edge of what is painted (the formula bar's text is `overflow_hidden`: a line below it is not seen,
+/// K0020 and K0044). `natural_px` is where the typeface's own baseline is (top of the text plus its ascent, the line centred in the row);
+/// the line goes there, under the glyphs, and comes up only as far as the line's own depth below the baseline (a thin line needs less than
+/// a thick, dotted or wavy one) and the room between the baseline and the clip need it, whatever the typeface: it is not lifted by a fixed
+/// pixel, nor by the deepest style's depth, which would put the thin lines into the glyphs (K0044). `size_pt` the font size and `k`
+/// pixels to a point.
+pub fn underline_baseline_within(natural_px: f32, clip_bottom_px: f32, size_pt: f32, k: f32, style: UnderlineStyle) -> f32 {
+    let (boxes, strokes) = underline_shapes(style, size_pt, 0.0, 1.0, 0.0);
+    let a = boxes.iter().map(|[_, y, _, h]| y + h * 1.0);
+    let b = strokes.iter().map(|[_, y, _, y2, w]| y.max(*y2) + w / 2.0);
+    let depth = a.chain(b).fold(0.0f32, f32::max);
     // Painted at least one pixel tall, and a pixel clear of the edge.
-    natural_px.min(clip_bottom_px - 1.0 - (deepest * k).max(1.0))
+    natural_px.min(clip_bottom_px - 1.0 - (depth * k).max(1.0))
 }
 
 /// Draw those shapes with `k` pixels to a point, the point (0, 0) at `origin`, in `color`.
 pub(crate) fn paint_shapes(window: &mut Window, origin: Point<Pixels>, k: f32, shapes: &(Vec<[f32; 4]>, Vec<[f32; 5]>), color: Hsla) {
     for [x, y, w, h] in &shapes.0 {
-        window.paint_quad(fill(Bounds::new(origin + point(px(x * k), px(y * k)), size(px(w * k), px((h * k).max(1.0)))), color));
+        // The edges on whole device pixels: the baseline comes from the typeface's ascent and descent (fractional), and an edge between two
+        // pixels paints the row it falls in half-covered, so how thick a line looks (and whether it counts as a line) depended on where the
+        // row fell (K0020: the same thick line was 4 rows in one picture and 5 in the other). A line is at least one (logical) pixel tall, as before.
+        let top = window.pixel_snap(origin.y + px(y * k));
+        let left = window.pixel_snap(origin.x + px(x * k));
+        let bottom = window.pixel_snap(top + px((h * k).max(1.0)));
+        let right = window.pixel_snap(left + px(w * k)).max(left + px(1.0 / window.scale_factor()));
+        window.paint_quad(fill(Bounds::new(point(left, top), size(right - left, bottom - top)), color));
     }
     for [x, y, x2, y2, w] in &shapes.1 {
         let mut path = PathBuilder::stroke(px((w * k).max(1.0)));

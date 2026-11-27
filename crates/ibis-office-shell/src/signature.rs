@@ -6,12 +6,13 @@
 //! document, spreadsheet and presentation screens alike).
 //!
 //! What is looked at is only the file as it was opened: whether the signature value and the digests of the parts the signature
-//! covers agree with the file. The certificate's trust and revocation, time stamps, and whether the signature covers the whole
-//! document are not looked at, and the report says so. A file changed here is checked by saving it and opening the saved file again.
+//! covers agree with the file, and (stage 2) whether the signing certificate is trusted, which the operating system judges
+//! (`signature_trust`). Time stamps, and whether the signature covers the whole document are not looked at, and the report says so. A file changed here is checked by saving it and opening the saved file again.
 
 use std::rc::Rc;
 
 use gpui_kit::*;
+use crate::signature_trust::{self, Trust};
 use ibis_formats::ibis_ooxml::signature::{Check, Inspection, Malformed, Reason, SignatureReport, Status};
 
 use crate::editor::SlideEditor;
@@ -127,19 +128,42 @@ impl SlideEditor {
         }
         let Some(source) = self.source.clone() else { return };
         let inspection = source.inspect_signatures();
-        self.show_alert(text("shell.signature.report.title"), report_text(&inspection).into(), cx);
+        // The report is shown at once with the certificates "being checked"; the system's judgment (it may fetch revocation lists,
+        // a few seconds) is made off the screen's thread and fills the lines in.
+        let certificates: Vec<Vec<Vec<u8>>> = match &inspection {
+            Inspection::Signed(reports) => reports.iter().map(|r| r.certificates.clone()).collect(),
+            _ => Vec::new(),
+        };
+        let title = text("shell.signature.report.title");
+        let pending = vec![None; certificates.len()];
+        self.show_alert(title.clone(), report_text(&inspection, &pending).into(), cx);
+        if certificates.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let trusts = cx.background_executor().spawn(async move { certificates.iter().map(|c| Some(signature_trust::evaluate(c))).collect::<Vec<_>>() }).await;
+            this.update(cx, |this, cx| {
+                // Only if this report is still the one on the screen.
+                if this.alert.as_ref().is_some_and(|(t, _)| *t == title) {
+                    this.show_alert(title, report_text(&inspection, &trusts).into(), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
 /// The words of the report for what `ibis_ooxml::signature::inspect` found.
-pub(crate) fn report_text(inspection: &Inspection) -> String {
+/// `trusts[i]` is the system's judgment of signature `i`'s certificate, or `None` while it is being made.
+pub(crate) fn report_text(inspection: &Inspection, trusts: &[Option<Trust>]) -> String {
     let mut lines: Vec<String> = Vec::new();
     match inspection {
         Inspection::Unsigned => lines.push(text("shell.signature.report.none").to_string()),
         Inspection::Malformed(why) => lines.push(format("shell.signature.report.broken", &[("reason", &malformed_word(why))])),
         Inspection::Signed(reports) => {
             for (i, report) in reports.iter().enumerate() {
-                lines.extend(signature_lines(i + 1, report));
+                lines.extend(signature_lines(i + 1, report, trusts.get(i).copied().flatten()));
             }
         }
     }
@@ -148,7 +172,7 @@ pub(crate) fn report_text(inspection: &Inspection) -> String {
     lines.join("\n")
 }
 
-fn signature_lines(n: usize, report: &SignatureReport) -> Vec<String> {
+fn signature_lines(n: usize, report: &SignatureReport, trust: Option<Trust>) -> Vec<String> {
     let mut lines = Vec::new();
     let result = match (report.status, &report.malformed) {
         (Status::Consistent, _) => text("shell.signature.result.consistent").to_string(),
@@ -163,6 +187,9 @@ fn signature_lines(n: usize, report: &SignatureReport) -> Vec<String> {
     }
     if let Some(value) = &report.signature_value {
         lines.push(format("shell.signature.report.value", &[("state", &check_word(value))]));
+    }
+    if report.malformed.is_none() {
+        lines.push(format("shell.signature.report.trust", &[("state", &trust_word(trust))]));
     }
     if !report.references.is_empty() {
         let matched = report.references.iter().filter(|r| r.check == Check::Match).count();
@@ -184,6 +211,21 @@ fn reference_name(uri: &str) -> String {
         Some(path) if !path.is_empty() => path.trim_start_matches('/').to_string(),
         _ => uri.to_string(),
     }
+}
+
+fn trust_word(trust: Option<Trust>) -> String {
+    let Some(trust) = trust else { return text("shell.signature.trust.checking").to_string() };
+    text(match trust {
+        Trust::Trusted => "shell.signature.trust.trusted",
+        Trust::RevocationUnknown => "shell.signature.trust.revocation-unknown",
+        Trust::Expired => "shell.signature.trust.expired",
+        Trust::PartialChain => "shell.signature.trust.partial-chain",
+        Trust::UntrustedRoot => "shell.signature.trust.untrusted-root",
+        Trust::Revoked => "shell.signature.trust.revoked",
+        Trust::NotChecked => "shell.signature.trust.not-checked",
+        Trust::Failed => "shell.signature.trust.failed",
+    })
+    .to_string()
 }
 
 fn check_word(check: &Check) -> String {

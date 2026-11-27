@@ -17,10 +17,10 @@ fn env(name: &str) -> Option<PathBuf> {
 
 /// The directory the scenarios keep the user's data in (instead of the user's own), if this is a scenario or test build.
 pub(crate) fn scenario_dir() -> Option<PathBuf> {
-    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    #[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "scenarios"))]
     {
         // The repository's root: this crate is crates/ibis-office-base.
-        let root = std::fs::canonicalize(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("the repository");
+        let root = crate::plain_path::canonical(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).expect("the repository");
         return Some(root.join("target/scenario-user-data"));
     }
     // Unreachable when the scenarios block above is compiled in too (it returns first).
