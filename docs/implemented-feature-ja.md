@@ -548,7 +548,7 @@ ibisOffice が実装している Word (.docx)・Excel (.xlsx)・PowerPoint (.ppt
 | 536 | docx: 文書内の SmartArt を描画部分から読んで配置する | <nobr>一部</nobr> |
 | 537 | docx: OpenDocument テキスト（.odt）の読み込み（ヘッダー・フッター・タブ位置・セクション・文字位置・図形） | <nobr>一部</nobr> |
 | 538 | docx: 一太郎（.jtd）の読み取り専用の表示と docx への変換 | <nobr>一部</nobr> |
-| 539 | docx: DocuWorks（.xdw・.xbd）の読み取り | <nobr>一部</nobr> |
+| 539 | docx: DocuWorks（.xdw）の読み取り | <nobr>一部</nobr> |
 | 540 | docx: Markdown の PlantUML（plantuml・puml のコードブロックを図として描く） | <nobr>完了</nobr> |
 | 541 | docx: PDF・XPS・OFD の Markdown への書き出し（ページの図形つき）と EMF・WMF 画像の保持 | <nobr>完了</nobr> |
 | 542 | docx: PDF の表示：軸・放射のグラデーションとソフトマスク | <nobr>完了</nobr> |

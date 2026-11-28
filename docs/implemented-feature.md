@@ -548,7 +548,7 @@ This document lists all features implemented in ibisOffice across Word (.docx), 
 | 536 | docx: Read and place SmartArt in a document from its drawing part | Partial |
 | 537 | docx: OpenDocument Text (.odt) import (headers, footers, tab stops, sections, text position, shapes) | Partial |
 | 538 | docx: Read-only preview of Ichitaro (.jtd) and conversion to docx | Partial |
-| 539 | docx: DocuWorks (.xdw, .xbd) reading | Partial |
+| 539 | docx: DocuWorks (.xdw) reading | Partial |
 | 540 | docx: PlantUML in Markdown (plantuml and puml code blocks are drawn as diagrams) | Completed |
 | 541 | docx: Export PDF, XPS and OFD to Markdown with page graphics, and keep EMF and WMF pictures | Completed |
 | 542 | docx: PDF display: axial and radial gradients and soft masks | Completed |
